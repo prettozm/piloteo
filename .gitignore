@@ -14,3 +14,4 @@ __pycache__/
 
 # Baseline de snapshot (fixture locale de refactoring, régénérable)
 tests/e2e/snapshot.baseline.json
+tests/e2e/csvexport.baseline.json

@@ -84,14 +84,21 @@ python -m py_compile server.py
 
 Un test réel recommandé avant mise en production : ouvrir deux navigateurs avec deux utilisateurs distincts, saisir un temps de chaque côté, vérifier la synchronisation, puis vérifier qu'un utilisateur ne peut ni ouvrir les vues société ni obtenir leurs données via `/api/state`.
 
-## Documentation de reprise
+## Documentation
 
-Lire dans cet ordre :
+**Utilisateurs et exploitation :**
+
+- [`docs/GUIDE_UTILISATEUR.md`](docs/GUIDE_UTILISATEUR.md) — pour les consultants (connexion, temps, frais, pilotage, synchro) ;
+- [`docs/GUIDE_ADMINISTRATEUR.md`](docs/GUIDE_ADMINISTRATEUR.md) — comptes, référentiels, sauvegardes, audit ;
+- [`docs/DEPLOIEMENT.md`](docs/DEPLOIEMENT.md) — mise en production pas à pas (Docker, reverse proxy HTTPS, checklist) ;
+- [`docs/EXPLOITATION.md`](docs/EXPLOITATION.md) — installation, support, sauvegarde, restauration, incidents.
+
+**Conception et reprise (dev / IA), à lire dans cet ordre :**
 
 1. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — point d'entrée pour une autre IA ou un nouveau développeur ;
 2. [`docs/ARCHITECTURE_V1.md`](docs/ARCHITECTURE_V1.md) — composants, données, synchro et droits ;
 3. [`docs/SECURITY.md`](docs/SECURITY.md) — hypothèses de sécurité et niveau attendu ;
-4. [`docs/EXPLOITATION.md`](docs/EXPLOITATION.md) — installation, support, sauvegarde, restauration et incidents ;
+4. [`docs/AUDIT_V1.md`](docs/AUDIT_V1.md) — audit de robustesse et corrections avant production ;
 5. [`docs/cahier-des-charges.md`](docs/cahier-des-charges.md) — référence fonctionnelle ;
 6. [`docs/modele-de-donnees.md`](docs/modele-de-donnees.md) — modèle métier historique.
 
