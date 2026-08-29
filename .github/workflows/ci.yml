@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Vérifier la syntaxe du serveur
+        run: python -m py_compile server.py scripts/restore_backup.py
+
+      - name: Lancer les tests
+        run: python -m unittest discover -s tests -v
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construire l'image
+        run: docker build -t piloteo:ci .
+
+      - name: Démarrer et vérifier le healthcheck
+        run: |
+          docker run -d --name piloteo-ci \
+            -e PILOTEO_ADMIN_USERNAME=admin \
+            -e PILOTEO_ADMIN_PASSWORD=mot-de-passe-de-ci-long \
+            -e PILOTEO_ADMIN_CONSULTANT_ID=SMR \
+            -e PILOTEO_ADMIN_NAME="Admin CI" \
+            -p 127.0.0.1:8080:8080 \
+            piloteo:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/health >/dev/null 2>&1; then
+              echo "healthcheck OK"; ok=1; break
+            fi
+            sleep 1
+          done
+          docker logs piloteo-ci
+          test "${ok:-0}" = "1"
+
+      - name: Vérifier l'arrêt propre (SIGTERM)
+        run: |
+          # docker stop envoie SIGTERM ; un arrêt propre sort avant le timeout de 10 s.
+          start=$(date +%s)
+          docker stop piloteo-ci
+          end=$(date +%s)
+          echo "arrêt en $((end - start)) s"
+          test $((end - start)) -lt 10
+
+      - name: Nettoyage
+        if: always()
+        run: docker rm -f piloteo-ci 2>/dev/null || true

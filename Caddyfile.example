@@ -2,5 +2,16 @@
 # Remplacer piloteo.example.fr par le nom DNS interne/public réellement utilisé.
 piloteo.example.fr {
     encode zstd gzip
-    reverse_proxy 127.0.0.1:8080
+
+    reverse_proxy 127.0.0.1:8080 {
+        # Transmet l'IP réelle du client. Pilotéo ne lit X-Forwarded-For que
+        # si le pair TCP est un proxy de confiance (PILOTEO_TRUSTED_PROXIES,
+        # 127.0.0.0/8 par défaut) et n'en retient que le dernier hop : c'est
+        # ce que Caddy ajoute ici. Indispensable pour un rate-limiting de
+        # connexion et un journal d'audit fiables.
+        header_up X-Forwarded-For {remote_host}
+    }
+
+    # En-têtes de sécurité : Pilotéo les pose déjà lui-même, on ne double pas.
+    # HSTS est ajouté par Pilotéo quand PILOTEO_FORCE_HTTPS=1.
 }

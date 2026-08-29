@@ -1,10 +1,13 @@
 services:
   piloteo:
     build: .
+    # L'uid applicatif du conteneur (1000). Les volumes ./data et ./backups
+    # sur l'hôte doivent lui appartenir : `sudo chown -R 1000:1000 data backups`.
+    user: "1000:1000"
     restart: unless-stopped
     env_file: .env
     ports:
-      # Production: garder Pilotéo derrière le reverse proxy HTTPS du SI.
+      # Production : garder Pilotéo derrière le reverse proxy HTTPS du SI.
       - "127.0.0.1:8080:8080"
     volumes:
       - ./data:/data
@@ -14,6 +17,16 @@ services:
       - /tmp
     security_opt:
       - no-new-privileges:true
+    # Garde-fous de ressources (une dérive ne doit pas emporter l'hôte).
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 256
+    # Journalisation bornée (pas de croissance infinie des logs).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3).read()"]
       interval: 30s
