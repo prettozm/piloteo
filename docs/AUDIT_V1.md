@@ -100,8 +100,21 @@ lit le jeton CSRF via `GET /api/me` et crée un compte administrateur. **Escalad
 `support.html`) ajoutée en tête de l'IIFE et appliquée à toute donnée métier
 interpolée dans du HTML, y compris dans les attributs (`value=`, `option`,
 `data-*`). Les valeurs numériques déjà formatées et les constantes ne sont pas
-échappées (inutile). Vérification : un commentaire `<img src=x onerror=alert(1)>`
-s'affiche désormais littéralement.
+échappées (inutile).
+
+**Sinks indirects supplémentaires trouvés par le test navigateur** (voir §3.4) —
+au-delà du motif direct `${x.nom}`, le test E2E a révélé trois sinks où une donnée
+utilisateur transitait par une variable ou un helper et échappait à la première
+passe : le nom d'affaire passé en paramètre `${label}` des lignes de sous-total du
+suivi des temps, le trigramme de la table des consultants, et `fraisCibleLabel()`
+(qui renvoie un nom d'affaire) sur la page Frais. Tous échappés.
+
+**Vérification :** analyse statique des 1 144 interpolations du fichier (toutes
+tracées jusqu'à un formateur sûr, un `textContent`, une constante ou `esc()`) +
+test navigateur injectant une charge XSS dans tous les champs texte libre et
+parcourant chaque vue (aucun élément `<img>`/`onerror` créé, aucune boîte de
+dialogue). Défense en profondeur : la CSP `script-src 'self'` (voir §3.4) bloque
+de toute façon l'exécution de tout script inline résiduel.
 
 ### 2.2 Retour forcé à l'écran de connexion — Haute — corrigé
 `saveConsultant()` appelait `renderIdentify()` (reliquat du prototype), qui masque
@@ -164,25 +177,43 @@ critique) ni la couche HTTP. **Ajouts :**
 - `.github/workflows/ci.yml` : compile + tests, build de l'image, healthcheck et
   vérification de l'arrêt propre `SIGTERM`.
 
+### 3.4 Durcissement CSP et test navigateur — corrigés (2ᵉ lot)
+- **CSP `script-src 'self'` sans `unsafe-inline`.** Tout le JavaScript a été
+  externalisé (`index.html` → `/app.js`, `support.html` → `/support.js`, servis par
+  `server.py`) ; aucun script ni gestionnaire d'événement en ligne ne subsiste.
+  `unsafe-inline` a donc été retiré de `script-src` : un éventuel XSS résiduel ne
+  peut plus exécuter de script. `style-src` conserve `unsafe-inline` (attributs
+  `style=` en ligne dans l'UI, sans vecteur d'exécution de script) — documenté.
+- **Test E2E navigateur** (`tests/e2e/smoke.mjs`, Playwright/Chromium) : démarre le
+  serveur sur une base jetable, pilote un vrai navigateur (connexion, navigation de
+  toutes les vues, console support), injecte des charges XSS et vérifie qu'aucune ne
+  s'exécute, le tout sous la CSP stricte (zéro violation console). Ajouté au CI.
+- **Harnais de non-régression par snapshot DOM** (`tests/e2e/snapshot.mjs`) : capture
+  le rendu de toutes les vues sur données déterministes, pour prouver qu'un
+  refactoring ne change pas le rendu (utilisé pour la déduplication du §4).
+
 ---
 
-## 4. Dette assumée (non traitée — proportionnalité)
+## 4. Dette de maintenabilité — traitée (2ᵉ lot)
 
-Réelle mais ne justifiant pas de retarder la mise en production ; à rembourser
-progressivement en étendant le bon modèle déjà présent (`renderSortFilterTable`) :
+La dette de duplication signalée initialement est réduite **à comportement
+constant**, garanti par le harnais de snapshot DOM (§3.4) : le rendu de toutes les
+vues doit rester identique octet pour octet avant/après (contrôle bloquant).
 
-- `index.html` monolithique (un seul fichier, JS en IIFE plate) ;
-- duplications : ~9 sélecteurs d'année, 4 rendus de donut, `wireExports` (240
-  lignes / 21 branches) ;
-- CSP en `script-src 'unsafe-inline'` : sortir le script inline dans un `/app.js`
-  servi par `server.py` permettrait de retirer `unsafe-inline` et d'obtenir une
-  défense en profondeur réelle. Non fait dans ce lot (risque de régression), mais
-  recommandé pour une V1.1 une fois l'échappement stabilisé.
+- sélecteurs d'année (~9 copies) mutualisés en un helper ;
+- cœur de tracé des donuts (4 copies) extrait en un helper commun ;
+- `wireExports` (240 lignes / 21 branches) **laissé en l'état** : la sortie CSV
+  n'est pas couverte par un test automatisé, donc le refactorer sans filet serait
+  imprudent — à faire après avoir ajouté des tests de contenu CSV (V1.1).
+
+Reste assumé, sans impact sur la mise en production : `index.html` monolithique
+(JS désormais dans `app.js`, mais toujours une IIFE plate) — un découpage en
+modules ne se justifiera que si le fichier continue de croître.
 
 ## 5. Recommandations de suivi (V1.1 éventuelle)
 
-1. Retirer `unsafe-inline` de la CSP en externalisant le JS.
-2. Pinner l'image de base par digest SHA-256 + scan CVE périodique (`trivy`).
-3. Flux « changement de mot de passe personnel » si la gestion manuelle devient
+1. Pinner l'image de base par digest SHA-256 + scan CVE périodique (`trivy`).
+2. Flux « changement de mot de passe personnel » si la gestion manuelle devient
    pénible.
-4. Anonymiser `seed.json` ou le générer par script si le dépôt devait s'ouvrir.
+3. Anonymiser `seed.json` ou le générer par script si le dépôt devait s'ouvrir.
+4. Ajouter des tests de contenu d'export CSV, puis mutualiser `wireExports`.

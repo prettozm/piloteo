@@ -11,3 +11,6 @@ __pycache__/
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
+
+# Baseline de snapshot (fixture locale de refactoring, régénérable)
+tests/e2e/snapshot.baseline.json
