@@ -1020,17 +1020,29 @@
     });
   }
 
+  // Remplit un <select> d'années. `years` est déjà calculé (source propre à chaque vue) ; le helper
+  // garantit la présence de CURRENT_YEAR en tête, ajoute une année supplémentaire optionnelle
+  // (opts.extraYear, ex. CURRENT_YEAR+1), puis fixe la valeur sélectionnée : soit forcée à
+  // CURRENT_YEAR (opts.forceCurrent), soit la valeur précédente si toujours disponible. `onChange`
+  // est branché tel quel sur sel.onchange.
+  function populateAnneeSelect(sel, years, onChange, opts){
+    opts = opts || {};
+    const prevValue = sel.value;
+    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
+    if(opts.extraYear && !years.includes(opts.extraYear)) years.unshift(opts.extraYear);
+    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
+    sel.value = opts.forceCurrent ? String(CURRENT_YEAR) : (years.includes(prevValue) ? prevValue : String(CURRENT_YEAR));
+    sel.onchange = onChange;
+  }
+
   function renderSelectAnnee(){
     const sel = document.getElementById("select-annee");
     const years = Array.from(new Set(saisies.map(s=>s.date.slice(0,4)))).sort().reverse();
-    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
-    sel.value = String(CURRENT_YEAR);
-    sel.onchange = ()=>{
+    populateAnneeSelect(sel, years, ()=>{
       renderSuiviTemps();
       renderRepartitionChart("chart-repartition-moi", "hatch-repartition-moi", sel.value, currentUser);
       renderDonutChart("chart-donut-moi", sel.value, currentUser);
-    };
+    }, { forceCurrent:true });
   }
 
   function renderSuiviTemps(){
@@ -1584,13 +1596,8 @@
 
   function renderSelectAnneeSociete(){
     const sel = document.getElementById("select-annee-societe");
-    const prevValue = sel.value;
     const years = Array.from(new Set(saisies.map(s=>s.date.slice(0,4)))).sort().reverse();
-    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
-    if(anneeSuivanteActivable(today.getMonth()) && !years.includes(String(CURRENT_YEAR+1))) years.unshift(String(CURRENT_YEAR+1));
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
-    sel.value = years.includes(prevValue) ? prevValue : String(CURRENT_YEAR);
-    sel.onchange = renderSociete;
+    populateAnneeSelect(sel, years, renderSociete, { extraYear: anneeSuivanteActivable(today.getMonth()) ? String(CURRENT_YEAR+1) : null });
   }
 
   // --- Histogramme "Production facturable — vue mensuelle" (Société ET Ma page) ---
@@ -1867,10 +1874,14 @@
     return `M${o1.x.toFixed(2)},${o1.y.toFixed(2)} A${rOuter},${rOuter} 0 ${largeArc} 1 ${o2.x.toFixed(2)},${o2.y.toFixed(2)} L${i1.x.toFixed(2)},${i1.y.toFixed(2)} A${rInner},${rInner} 0 ${largeArc} 0 ${i2.x.toFixed(2)},${i2.y.toFixed(2)} Z`;
   }
 
-  function renderDonutChart(hostId, year, consultantId){
-    const host = document.getElementById(hostId);
-    if(!host) return;
-    const data = repartitionAnnuelle(year, consultantId);
+  // Cœur de tracé commun aux trois donuts (renderDonutChart, renderFraisDonutChart,
+  // renderCommercialDonutChart) : mêmes dimensions, mêmes secteurs, même légende, même infobulle.
+  // L'appelant prépare `data` ([{label,value,color}]) puis fournit via opts les seules parties qui
+  // varient : le texte d'infobulle par secteur (opts.tip(d)), le total central (opts.centerTotal(total)),
+  // le sous-titre central (opts.centerCaption), le message "vide" (opts.emptyLabel) et l'aria-label
+  // du <svg> (opts.ariaLabel). Les valeurs déjà destinées à esc() (caption/ariaLabel des frais) sont
+  // passées pré-échappées, comme dans le code d'origine.
+  function drawDonut(host, data, opts){
     const total = data.reduce((s,d)=>s+d.value,0);
 
     const W=260, H=260, cx=130, cy=130, rOuter=104, rInner=58;
@@ -1884,7 +1895,7 @@
         const start = angle + gapDeg/2;
         const end = angle + sweep - gapDeg/2;
         if(end>start){
-          const tip = `${d.label} : ${jr(Math.round(d.value*10)/10)}`;
+          const tip = opts.tip(d);
           slices += `<path d="${donutSlicePath(cx,cy,rOuter,rInner,start,end)}" fill="${d.color}" data-tip="${esc(tip)}"></path>`;
         }
         angle += sweep;
@@ -1892,9 +1903,9 @@
     }
 
     const centerLabel = total>0
-      ? `<text x="${cx}" y="${cy-4}" text-anchor="middle" class="chart-donut-total">${jr(Math.round(total*10)/10)}</text>
-         <text x="${cx}" y="${cy+16}" text-anchor="middle" class="chart-donut-caption">saisis ${year}</text>`
-      : `<text x="${cx}" y="${cy}" text-anchor="middle" class="chart-donut-caption">Aucune donnée</text>`;
+      ? `<text x="${cx}" y="${cy-4}" text-anchor="middle" class="chart-donut-total">${opts.centerTotal(total)}</text>
+         <text x="${cx}" y="${cy+16}" text-anchor="middle" class="chart-donut-caption">${opts.centerCaption}</text>`
+      : `<text x="${cx}" y="${cy}" text-anchor="middle" class="chart-donut-caption">${opts.emptyLabel}</text>`;
 
     const legend = data.map(d=>{
       const pct = total>0 ? Math.round((d.value/total)*100) : 0;
@@ -1903,7 +1914,7 @@
 
     host.innerHTML = `
       <div class="chart-donut-wrap">
-        <svg viewBox="0 0 ${W} ${H}" class="chart-svg chart-donut-svg" role="img" aria-label="Répartition des temps ${year}">
+        <svg viewBox="0 0 ${W} ${H}" class="chart-svg chart-donut-svg" role="img" aria-label="${opts.ariaLabel}">
           ${slices}
           ${centerLabel}
         </svg>
@@ -1913,6 +1924,19 @@
     wireChartTooltips(host);
   }
 
+  function renderDonutChart(hostId, year, consultantId){
+    const host = document.getElementById(hostId);
+    if(!host) return;
+    const data = repartitionAnnuelle(year, consultantId);
+    drawDonut(host, data, {
+      tip: d=>`${d.label} : ${jr(Math.round(d.value*10)/10)}`,
+      centerTotal: total=>jr(Math.round(total*10)/10),
+      centerCaption: `saisis ${year}`,
+      emptyLabel: "Aucune donnée",
+      ariaLabel: `Répartition des temps ${year}`,
+    });
+  }
+
   // Donut générique pour les répartitions de frais (montants en euros, pas en jours) — même anatomie
   // que renderDonutChart ci-dessus (secteurs, total central, légende), réutilisé pour les deux donuts
   // « Frais non refacturables » (Mes frais et Cabinet > Frais, voir plus bas).
@@ -1920,46 +1944,13 @@
     const host = document.getElementById(hostId);
     if(!host) return;
     opts = opts || {};
-    const total = data.reduce((s,d)=>s+d.value,0);
-
-    const W=260, H=260, cx=130, cy=130, rOuter=104, rInner=58;
-    const gapDeg = total>0 ? 1.4 : 0;
-
-    let slices = "";
-    if(total>0){
-      let angle = 0;
-      data.forEach(d=>{
-        const sweep = (d.value/total)*360;
-        const start = angle + gapDeg/2;
-        const end = angle + sweep - gapDeg/2;
-        if(end>start){
-          const tip = `${d.label} : ${euroCents(d.value)}`;
-          slices += `<path d="${donutSlicePath(cx,cy,rOuter,rInner,start,end)}" fill="${d.color}" data-tip="${esc(tip)}"></path>`;
-        }
-        angle += sweep;
-      });
-    }
-
-    const centerLabel = total>0
-      ? `<text x="${cx}" y="${cy-4}" text-anchor="middle" class="chart-donut-total">${euroCompact(total)}</text>
-         <text x="${cx}" y="${cy+16}" text-anchor="middle" class="chart-donut-caption">${esc(opts.caption||"")}</text>`
-      : `<text x="${cx}" y="${cy}" text-anchor="middle" class="chart-donut-caption">Aucun frais non refacturable</text>`;
-
-    const legend = data.map(d=>{
-      const pct = total>0 ? Math.round((d.value/total)*100) : 0;
-      return `<div class="chart-summary-item"><span class="chart-swatch" style="background:${d.color};"></span>${d.label} <strong>${pct}%</strong></div>`;
-    }).join("");
-
-    host.innerHTML = `
-      <div class="chart-donut-wrap">
-        <svg viewBox="0 0 ${W} ${H}" class="chart-svg chart-donut-svg" role="img" aria-label="${esc(opts.ariaLabel||"Répartition des frais non refacturables")}">
-          ${slices}
-          ${centerLabel}
-        </svg>
-        <div class="chart-summary chart-legend-wrap chart-donut-legend">${legend}</div>
-      </div>
-    `;
-    wireChartTooltips(host);
+    drawDonut(host, data, {
+      tip: d=>`${d.label} : ${euroCents(d.value)}`,
+      centerTotal: total=>euroCompact(total),
+      centerCaption: esc(opts.caption||""),
+      emptyLabel: "Aucun frais non refacturable",
+      ariaLabel: esc(opts.ariaLabel||"Répartition des frais non refacturables"),
+    });
   }
 
   // --- Infobulle personnalisée pour les graphiques (remplace les <title> natifs, peu fiables
@@ -2163,15 +2154,10 @@
 
   function renderSelectAnneeMoiChart(){
     const sel = document.getElementById("select-annee-moi-chart");
-    const prevValue = sel.value;
     const years = Array.from(new Set(saisies.filter(s=>s.consultantId===currentUser).map(s=>s.date.slice(0,4)))).sort().reverse();
-    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
-    if(anneeSuivanteActivable(today.getMonth()) && !years.includes(String(CURRENT_YEAR+1))) years.unshift(String(CURRENT_YEAR+1));
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
-    sel.value = years.includes(prevValue) ? prevValue : String(CURRENT_YEAR);
-    sel.onchange = ()=>{
+    populateAnneeSelect(sel, years, ()=>{
       renderProductionChartMoi(sel.value);
-    };
+    }, { extraYear: anneeSuivanteActivable(today.getMonth()) ? String(CURRENT_YEAR+1) : null });
   }
 
   function renderSociete(){
@@ -2496,12 +2482,8 @@
 
   function renderSelectAnneeFrais(){
     const sel = document.getElementById("select-annee-frais");
-    const prevValue = sel.value;
     const years = Array.from(new Set(notesFrais.map(n=>n.date.slice(0,4)))).sort().reverse();
-    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
-    sel.value = years.includes(prevValue) ? prevValue : String(CURRENT_YEAR);
-    sel.onchange = renderFraisSociete;
+    populateAnneeSelect(sel, years, renderFraisSociete);
   }
 
   // Vue "Frais" du cabinet (Cabinet > Frais) : tous les frais de tous les consultants, sur une année
@@ -2806,13 +2788,9 @@
   }
   function renderSelectAnneeMesTemps(){
     const sel = document.getElementById("select-annee-mestemps");
-    const prevValue = sel.value;
     const years = Array.from(new Set(saisies.filter(s=>s.consultantId===currentUser).map(s=>s.date.slice(0,4)))).sort().reverse();
-    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
-    sel.value = years.includes(prevValue) ? prevValue : String(CURRENT_YEAR);
+    populateAnneeSelect(sel, years, ()=>{ mesTempsYear = sel.value; renderMesTemps(); });
     mesTempsYear = sel.value;
-    sel.onchange = ()=>{ mesTempsYear = sel.value; renderMesTemps(); };
   }
   function renderMesTemps(){
     const isMois = mesTempsMode === "mois";
@@ -2926,13 +2904,9 @@
   }
   function renderSelectAnneeMesFrais(){
     const sel = document.getElementById("select-annee-mesfrais");
-    const prevValue = sel.value;
     const years = Array.from(new Set(notesFrais.filter(n=>n.consultantId===currentUser).map(n=>n.date.slice(0,4)))).sort().reverse();
-    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
-    sel.value = years.includes(prevValue) ? prevValue : String(CURRENT_YEAR);
+    populateAnneeSelect(sel, years, ()=>{ mesFraisYear = sel.value; renderMesFrais(); });
     mesFraisYear = sel.value;
-    sel.onchange = ()=>{ mesFraisYear = sel.value; renderMesFrais(); };
   }
   function renderMesFrais(){
     const isMois = mesFraisMode === "mois";
@@ -4026,42 +4000,14 @@
     const host = document.getElementById(hostId);
     if(!host) return;
     const data = commercialDonutData(k, metric);
-    const total = data.reduce((s,d)=>s+d.value,0);
     const fmt = metric==="montant" ? euro : (n=>Math.round(n).toLocaleString("fr-FR"));
-    const W=260, H=260, cx=130, cy=130, rOuter=104, rInner=58;
-    const gapDeg = total>0 ? 1.4 : 0;
-    let slices = "";
-    if(total>0){
-      let angle = 0;
-      data.forEach(d=>{
-        const sweep = (d.value/total)*360;
-        const start = angle + gapDeg/2;
-        const end = angle + sweep - gapDeg/2;
-        if(end>start){
-          const tip = `${d.label} : ${fmt(d.value)}${metric==="nb" ? " offre"+(d.value>1?"s":"") : ""}`;
-          slices += `<path d="${donutSlicePath(cx,cy,rOuter,rInner,start,end)}" fill="${d.color}" data-tip="${esc(tip)}"></path>`;
-        }
-        angle += sweep;
-      });
-    }
-    const centerLabel = total>0
-      ? `<text x="${cx}" y="${cy-4}" text-anchor="middle" class="chart-donut-total">${fmt(total)}</text>
-         <text x="${cx}" y="${cy+16}" text-anchor="middle" class="chart-donut-caption">${metric==="nb"?"offres déposées":"déposés"}</text>`
-      : `<text x="${cx}" y="${cy}" text-anchor="middle" class="chart-donut-caption">Aucune donnée</text>`;
-    const legend = data.map(d=>{
-      const pct = total>0 ? Math.round((d.value/total)*100) : 0;
-      return `<div class="chart-summary-item"><span class="chart-swatch" style="background:${d.color};"></span>${d.label} <strong>${pct}%</strong></div>`;
-    }).join("");
-    host.innerHTML = `
-      <div class="chart-donut-wrap">
-        <svg viewBox="0 0 ${W} ${H}" class="chart-svg chart-donut-svg" role="img" aria-label="Répartition gagné / perdu / en décision">
-          ${slices}
-          ${centerLabel}
-        </svg>
-        <div class="chart-summary chart-legend-wrap chart-donut-legend">${legend}</div>
-      </div>
-    `;
-    wireChartTooltips(host);
+    drawDonut(host, data, {
+      tip: d=>`${d.label} : ${fmt(d.value)}${metric==="nb" ? " offre"+(d.value>1?"s":"") : ""}`,
+      centerTotal: total=>fmt(total),
+      centerCaption: metric==="nb"?"offres déposées":"déposés",
+      emptyLabel: "Aucune donnée",
+      ariaLabel: "Répartition gagné / perdu / en décision",
+    });
   }
   function wireCommercialDonutToggle(wrapId, onToggle){
     const wrap = document.getElementById(wrapId);
@@ -4306,12 +4252,7 @@
 
   function renderSelectAnneeCommercial(){
     const sel = document.getElementById("select-annee-commercial");
-    const prevValue = sel.value;
-    const years = anneesDepot();
-    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
-    sel.value = years.includes(prevValue) ? prevValue : String(CURRENT_YEAR);
-    sel.onchange = renderCommercialSociete;
+    populateAnneeSelect(sel, anneesDepot(), renderCommercialSociete);
   }
   function renderCommercialSociete(){
     const pipeline = pipelineEnAttente();
@@ -4412,12 +4353,7 @@
 
   function renderSelectAnneeCommercialMoi(){
     const sel = document.getElementById("select-annee-commercial-moi");
-    const prevValue = sel.value;
-    const years = anneesDepot();
-    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
-    sel.value = years.includes(prevValue) ? prevValue : String(CURRENT_YEAR);
-    sel.onchange = renderCommercialMoi;
+    populateAnneeSelect(sel, anneesDepot(), renderCommercialMoi);
   }
   // Stats "en commercialisation" (décision pas encore prise) / "gagnées" (en production ou terminée)
   // d'un lot d'affaires, avec leur montant ventilé selon la part du consultant sur chacune — sert à
@@ -5625,7 +5561,6 @@
   }
   function renderSelectAnneeFacturation(){
     const sel = document.getElementById("select-annee-facturation");
-    const prevValue = sel.value;
     // Inclut aussi les années de paiement effectif (datePaiement) : une facture échéancée en année
     // N-1 mais payée en année N doit pouvoir être vue via "Total payé N" même si aucune autre facture
     // n'a d'échéance prévisionnelle cette année-là.
@@ -5633,10 +5568,7 @@
       ...factures.filter(f=>f.echeancePrev).map(f=>f.echeancePrev.slice(0,4)),
       ...factures.filter(f=>f.statut==="payée" && f.datePaiement).map(f=>f.datePaiement.slice(0,4)),
     ])).sort().reverse();
-    if(!years.includes(String(CURRENT_YEAR))) years.unshift(String(CURRENT_YEAR));
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
-    sel.value = years.includes(prevValue) ? prevValue : String(CURRENT_YEAR);
-    sel.onchange = renderFacturation;
+    populateAnneeSelect(sel, years, renderFacturation);
   }
 
   // Totaux mensuels des factures effectivement émises (missions HT / frais refacturables TTC /
