@@ -45,7 +45,7 @@ Le fichier `seed.json` reprend le jeu de données de démonstration du prototype
 
 **En production, ne pas publier directement le port HTTP 8080.** Placer Pilotéo derrière le reverse proxy HTTPS déjà utilisé par l'entreprise et passer `PILOTEO_FORCE_HTTPS=1`. `Caddyfile.example` montre le cas minimal si aucun proxy n'existe déjà.
 
-Le proxy doit conserver l'adresse d'origine (`X-Forwarded-For`) et ne doit pas exposer `data/`, `backups/` ou `seed.json`. Le serveur Pilotéo lui-même ne sert que `index.html`, `support.html` et les API prévues.
+Le proxy doit conserver l'adresse d'origine (`X-Forwarded-For`) et ne doit pas exposer `data/`, `backups/` ou `seed.json`. Le serveur Pilotéo lui-même ne sert que ses fichiers statiques (`index.html`, `app.js`, `support.html`, `support.js`) et les API prévues. Tout le JavaScript vit dans `app.js`/`support.js` (aucun script en ligne), ce qui permet une CSP `script-src 'self'` stricte.
 
 ## Administration courante
 

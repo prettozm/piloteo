@@ -17,7 +17,15 @@ Pilotéo n'est pas conçu pour héberger des secrets, des données de santé, de
 - contrôle des permissions côté serveur sur chaque entité modifiée ;
 - filtrage des données côté serveur avant envoi au navigateur ;
 - pas de stockage métier dans `localStorage` ;
-- CSP, interdiction d'iframe, `no-referrer`, `nosniff`, permissions navigateur minimales ;
+- échappement systématique des données affichées (`esc()`) contre le XSS stocké,
+  vérifié par un test navigateur automatisé (`tests/e2e/smoke.mjs`) ;
+- CSP `script-src 'self'` **sans `unsafe-inline`** : tout le JavaScript est servi
+  depuis des fichiers (`/app.js`, `/support.js`), aucun script ni gestionnaire
+  d'événement en ligne — un éventuel XSS résiduel ne peut pas exécuter de script ;
+- neutralisation de l'injection de formules dans les exports CSV ;
+- `X-Forwarded-For` cru uniquement derrière un proxy de confiance
+  (`PILOTEO_TRUSTED_PROXIES`) pour un rate-limiting et un audit fiables ;
+- interdiction d'iframe, `no-referrer`, `nosniff`, permissions navigateur minimales ;
 - aucune police, analytics ou bibliothèque chargée depuis un service tiers ;
 - audit des connexions, échecs, gestion des comptes et mises à jour d'état ;
 - fichiers SQLite, `.env` et sauvegardes exclus de Git.

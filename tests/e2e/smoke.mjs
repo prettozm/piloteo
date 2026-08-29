@@ -8,8 +8,11 @@
 //   - que les vues principales se rendent sans exception.
 //
 // Usage : node tests/e2e/smoke.mjs   (nécessite server.py au repo root)
-import pw from "/opt/node22/lib/node_modules/playwright/index.js";
-const { chromium } = pw;
+// Import portable : "playwright" installé localement (CI) sinon le module global.
+let _pw;
+try { _pw = await import("playwright"); }
+catch { _pw = await import("/opt/node22/lib/node_modules/playwright/index.js"); }
+const chromium = _pw.chromium || _pw.default.chromium;
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -50,7 +53,10 @@ async function waitHealth() {
 let browser;
 try {
   await waitHealth();
-  browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" });
+  // Chemin du binaire : PW_CHROMIUM si fourni, sinon la résolution Playwright
+  // (fonctionne aussi bien dans ce sandbox qu'après `playwright install` en CI).
+  const exe = process.env.PW_CHROMIUM || chromium.executablePath();
+  browser = await chromium.launch({ executablePath: exe });
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
 
@@ -127,6 +133,15 @@ try {
   ok(xssAsText, "le payload est présent sous forme échappée dans le DOM");
 
   ok(consoleErrors.length === 0, `aucune erreur console (${consoleErrors.length})`);
+  if (consoleErrors.length) consoleErrors.slice(0, 5).forEach((e) => console.log("    console:", e));
+
+  // --- console support /support : doit fonctionner sous CSP stricte (support.js externe) ---
+  consoleErrors.length = 0;
+  await page.goto(`${BASE}/support`, { waitUntil: "networkidle" });
+  await page.waitForSelector("#users tbody tr", { timeout: 8000 });
+  const userRows = await page.locator("#users tbody tr").count();
+  ok(userRows > 0, `console support: table des comptes peuplée (${userRows}) — support.js exécuté sous CSP`);
+  ok(consoleErrors.length === 0, `console support: aucune erreur console/CSP (${consoleErrors.length})`);
   if (consoleErrors.length) consoleErrors.slice(0, 5).forEach((e) => console.log("    console:", e));
 } catch (e) {
   failures.push("exception: " + e.message);

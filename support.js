@@ -1,0 +1,23 @@
+let me=null, csrf=null, consultants=[];
+async function api(path,opt={}){
+  const headers={Accept:"application/json",...(opt.headers||{})};
+  if(opt.body&&typeof opt.body!=="string"){headers["Content-Type"]="application/json";opt.body=JSON.stringify(opt.body)}
+  if(csrf&&opt.method&&!['GET','HEAD'].includes(opt.method.toUpperCase())) headers['X-CSRF-Token']=csrf;
+  const r=await fetch(path,{credentials:'same-origin',...opt,headers}); let d={}; try{d=await r.json()}catch(e){}
+  if(!r.ok){const e=new Error(d.error||`HTTP ${r.status}`);e.status=r.status;throw e} return d;
+}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function init(){
+  try{const m=await api('/api/me');me=m.user;csrf=me.csrf_token;if(me.role!=='admin')throw new Error('Accès administrateur requis');
+    const s=await api('/api/state');consultants=s.state.consultants||[];renderConsultants();await Promise.all([loadUsers(),loadAudit()]);
+  }catch(e){document.querySelector('main').innerHTML=`<div class="panel"><div class="body"><h2>Accès refusé</h2><p>${esc(e.message)}</p><a class="btn" href="/">Retour</a></div></div>`}
+}
+function renderConsultants(){const sel=document.getElementById('consultant');sel.innerHTML=consultants.filter(c=>c.statut!=='parti').map(c=>`<option value="${esc(c.id)}">${esc(c.nom)} (${esc(c.id)})</option>`).join('');onConsultant()}
+function onConsultant(){const c=consultants.find(x=>String(x.id)===document.getElementById('consultant').value);if(c){document.getElementById('display-name').value=c.nom;document.getElementById('username').value=(c.trigramme||c.id||'').toLowerCase()}}
+document.getElementById('consultant').addEventListener('change',onConsultant);
+document.getElementById('create-user').addEventListener('submit',async e=>{e.preventDefault();const st=document.getElementById('create-status');st.textContent='Création…';st.className='status';try{await api('/api/admin/users',{method:'POST',body:{consultant_id:document.getElementById('consultant').value,username:document.getElementById('username').value.trim(),display_name:document.getElementById('display-name').value.trim(),role:document.getElementById('role').value,password:document.getElementById('password').value}});document.getElementById('password').value='';st.textContent='Compte créé.';await loadUsers();}catch(err){st.textContent=err.message;st.className='status error'}});
+async function loadUsers(){const d=await api('/api/admin/users');const tb=document.querySelector('#users tbody');tb.innerHTML=d.users.map(u=>`<tr><td><strong>${esc(u.username)}</strong><div class="muted">${esc(u.display_name)}</div></td><td><code>${esc(u.consultant_id)}</code></td><td>${esc(u.role)}</td><td>${u.active?'Actif':'Désactivé'}</td><td><div class="actions"><button class="btn" data-pass="${u.id}">Mot de passe</button><button class="btn" data-role="${u.id}" data-current="${esc(u.role)}">${u.role==='admin'?'Passer utilisateur':'Passer admin'}</button><button class="btn danger" data-active="${u.id}" data-current="${u.active?'1':'0'}">${u.active?'Désactiver':'Réactiver'}</button></div></td></tr>`).join('');wireUsers()}
+function wireUsers(){document.querySelectorAll('[data-pass]').forEach(b=>b.onclick=async()=>{const p=prompt('Nouveau mot de passe (12 caractères minimum) :');if(!p)return;try{await api(`/api/admin/users/${b.dataset.pass}`,{method:'PATCH',body:{password:p}});alert('Mot de passe modifié.')}catch(e){alert(e.message)}});document.querySelectorAll('[data-role]').forEach(b=>b.onclick=async()=>{const role=b.dataset.current==='admin'?'user':'admin';try{await api(`/api/admin/users/${b.dataset.role}`,{method:'PATCH',body:{role}});await loadUsers()}catch(e){alert(e.message)}});document.querySelectorAll('[data-active]').forEach(b=>b.onclick=async()=>{const active=b.dataset.current!=='1';try{await api(`/api/admin/users/${b.dataset.active}`,{method:'PATCH',body:{active}});await loadUsers()}catch(e){alert(e.message)}})}
+document.getElementById('backup').addEventListener('click',async()=>{const st=document.getElementById('backup-status');st.textContent='Sauvegarde…';st.className='status';try{const d=await api('/api/admin/backup',{method:'POST'});st.textContent=`Sauvegarde créée : ${d.file}`;await loadAudit()}catch(e){st.textContent=e.message;st.className='status error'}});
+async function loadAudit(){const d=await api('/api/admin/audit');document.querySelector('#audit tbody').innerHTML=d.audit.map(a=>`<tr><td>${esc(a.created_at)}</td><td>${esc(a.username||'—')}</td><td><code>${esc(a.action)}</code></td><td>${esc(a.target||'—')}</td><td>${esc(a.detail||'—')}</td></tr>`).join('')}
+init();

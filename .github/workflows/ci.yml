@@ -25,6 +25,29 @@ jobs:
       - name: Lancer les tests
         run: python -m unittest discover -s tests -v
 
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Installer Playwright + Chromium
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Test E2E navigateur (sécurité XSS + CSP + parcours)
+        run: node tests/e2e/smoke.mjs
+
   docker:
     runs-on: ubuntu-latest
     steps:

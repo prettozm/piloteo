@@ -5,7 +5,7 @@ FROM python:3.13-slim
 RUN useradd --system --uid 1000 --create-home --home-dir /home/piloteo piloteo
 
 WORKDIR /app
-COPY server.py index.html support.html seed.json ./
+COPY server.py index.html app.js support.html support.js seed.json ./
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

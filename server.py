@@ -617,7 +617,11 @@ class PilotHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-        self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+        # script-src sans 'unsafe-inline' : tout le JS est servi depuis /app.js
+        # (aucun script inline, aucun gestionnaire on* dans le HTML). style-src
+        # garde 'unsafe-inline' car l'UI utilise des attributs style= en ligne ;
+        # ce n'est pas un vecteur d'exécution de script.
+        self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
         self.send_header("Cache-Control", "public, max-age=300" if cache else "no-store")
         if FORCE_HTTPS:
             self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -747,15 +751,19 @@ class PilotHandler(BaseHTTPRequestHandler):
                 self.send_json(200, {"audit": [dict(r) for r in rows]})
             finally: conn.close()
             return
-        if path in {"/support", "/support.html"}:
+        if path in {"/support", "/support.html", "/support.js"}:
             auth = self.auth(require_admin=True)
             if not auth: return
             conn, user, csrf = auth
             conn.close()
-            self.serve_file(ROOT / "support.html")
+            self.serve_file(ROOT / ("support.js" if path == "/support.js" else "support.html"),
+                            cache=(path == "/support.js"))
             return
         if path in {"/", "/index.html"}:
             self.serve_file(ROOT / "index.html")
+            return
+        if path == "/app.js":
+            self.serve_file(ROOT / "app.js", cache=True)
             return
         if path == "/favicon.ico":
             # Pas d'icône dédiée : répondre 204 plutôt que 404 (évite du bruit
@@ -766,14 +774,17 @@ class PilotHandler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
-    def serve_file(self, path: Path):
+    def serve_file(self, path: Path, cache: bool = False):
         if not path.exists():
             self.send_error(404); return
         raw = path.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if path.suffix == ".js":
+            ctype = "text/javascript; charset=utf-8"
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(raw)))
-        self.security_headers(False)
+        self.security_headers(cache)
         self.end_headers()
         self.wfile.write(raw)
 

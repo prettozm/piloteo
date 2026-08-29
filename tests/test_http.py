@@ -199,6 +199,34 @@ class HttpTests(unittest.TestCase):
         self.assertIsNotNone(r.getheader("Content-Security-Policy"))
         c.close()
 
+    def test_csp_script_src_has_no_unsafe_inline(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request("GET", "/")
+        r = c.getresponse(); r.read()
+        csp = r.getheader("Content-Security-Policy")
+        c.close()
+        # script-src doit être 'self' sans 'unsafe-inline' (défense en profondeur XSS)
+        script_src = next(d for d in csp.split(";") if d.strip().startswith("script-src"))
+        self.assertIn("'self'", script_src)
+        self.assertNotIn("unsafe-inline", script_src)
+
+    def test_app_js_served_as_javascript(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request("GET", "/app.js")
+        r = c.getresponse(); body = r.read()
+        c.close()
+        self.assertEqual(r.status, 200)
+        self.assertIn("javascript", r.getheader("Content-Type"))
+        self.assertTrue(len(body) > 1000)
+
+    def test_support_js_requires_admin(self):
+        st, _, _ = self.call("GET", "/support.js")
+        self.assertEqual(st, 401)
+
+    def test_favicon_no_content(self):
+        st, _, _ = self.call("GET", "/favicon.ico")
+        self.assertEqual(st, 204)
+
 
 if __name__ == "__main__":
     unittest.main()
