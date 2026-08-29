@@ -1045,6 +1045,39 @@
     }, { forceCurrent:true });
   }
 
+  // Helpers partagés UNIQUEMENT par renderSuiviTemps et renderSuiviTempsSociete : la ligne mensuelle,
+  // la ligne de sous-total, et la table complète (thead mois / tbody / tfoot sous-totaux). Noms
+  // préfixés « suivi » pour ne pas entrer en collision avec les nombreuses fonctions locales rowHTML
+  // du fichier (signatures différentes). Chaque fonction appelante garde sa propre préparation de données.
+  function suiviRowHTML(label, arr, cls){
+    const total = arr.reduce((a,b)=>a+b,0);
+    return `<tr class="${cls==='total'?'row-affaire-total':''}">
+        <td style="${cls==='sub'?'padding-left:24px;color:var(--text-muted);':cls==='total'?'font-weight:600;':''}">${esc(label)}</td>
+        ${arr.map(v=>`<td class="num">${v? jr(v).replace(' j','') : "–"}</td>`).join("")}
+        <td class="num" style="font-weight:600;">${jr(total)}</td>
+      </tr>`;
+  }
+  function suiviSubtotRow(label, arr){
+    const total = arr.reduce((a,b)=>a+b,0);
+    return `<tr><td>${esc(label)}</td>${arr.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(total)}</td></tr>`;
+  }
+  function renderSuiviTempsTable(tableId, rows, missionFact, missionNonFact, interne, absence, year){
+    const colTotals = new Array(12).fill(0);
+    [missionFact,missionNonFact,interne,absence].forEach(arr=>arr.forEach((v,i)=>colTotals[i]+=v));
+
+    const table = document.getElementById(tableId);
+    table.innerHTML = `
+      <thead><tr><th>Type de temps</th>${MOIS.map(m=>`<th class="num">${m}</th>`).join("")}<th class="num">Total</th></tr></thead>
+      <tbody>${rows.length? rows.join("") : `<tr><td colspan="14" class="empty-note">Aucune saisie sur ${year}.</td></tr>`}</tbody>
+      <tfoot>
+        ${suiviSubtotRow("Sous-total — missions facturable", missionFact)}
+        ${suiviSubtotRow("Sous-total — missions non facturable", missionNonFact)}
+        ${suiviSubtotRow("Sous-total — temps internes", interne)}
+        ${suiviSubtotRow("Sous-total — absences", absence)}
+        <tr class="row-grand-total"><td>Total</td>${colTotals.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(colTotals.reduce((a,b)=>a+b,0))}</td></tr>
+      </tfoot>`;
+  }
+
   function renderSuiviTemps(){
     const year = document.getElementById("select-annee").value;
     const mine = saisies.filter(s=>s.consultantId===currentUser && s.date.slice(0,4)===year);
@@ -1066,50 +1099,24 @@
         const mo = +s.date.slice(5,7)-1;
         fact[mo]+=s.jFact; nonFact[mo]+=s.jNonFact;
       });
-      rows.push(rowHTML(a.nom, fact.map((v,i)=>v+nonFact[i]), "total"));
-      rows.push(rowHTML("Facturable", fact, "sub"));
-      rows.push(rowHTML("Non facturable", nonFact, "sub"));
+      rows.push(suiviRowHTML(a.nom, fact.map((v,i)=>v+nonFact[i]), "total"));
+      rows.push(suiviRowHTML("Facturable", fact, "sub"));
+      rows.push(suiviRowHTML("Non facturable", nonFact, "sub"));
       for(let i=0;i<12;i++){ subtot.missionFact[i]+=fact[i]; subtot.missionNonFact[i]+=nonFact[i]; }
     });
 
     tempsInternes.forEach(cat=>{
       const arr = new Array(12).fill(0);
       mine.filter(s=>s.type==="interne" && s.categorie===cat.code).forEach(s=>{ arr[+s.date.slice(5,7)-1]+=s.dureeJ; });
-      rows.push(rowHTML(cat.label, arr, "")); for(let i=0;i<12;i++) subtot.interne[i]+=arr[i];
+      rows.push(suiviRowHTML(cat.label, arr, "")); for(let i=0;i<12;i++) subtot.interne[i]+=arr[i];
     });
     tempsAbsences.forEach(cat=>{
       const arr = new Array(12).fill(0);
       mine.filter(s=>s.type==="absence" && s.categorie===cat.code).forEach(s=>{ arr[+s.date.slice(5,7)-1]+=s.dureeJ; });
-      rows.push(rowHTML(cat.label, arr, "")); for(let i=0;i<12;i++) subtot.absence[i]+=arr[i];
+      rows.push(suiviRowHTML(cat.label, arr, "")); for(let i=0;i<12;i++) subtot.absence[i]+=arr[i];
     });
 
-    function rowHTML(label, arr, cls){
-      const total = arr.reduce((a,b)=>a+b,0);
-      return `<tr class="${cls==='total'?'row-affaire-total':''}">
-        <td style="${cls==='sub'?'padding-left:24px;color:var(--text-muted);':cls==='total'?'font-weight:600;':''}">${esc(label)}</td>
-        ${arr.map(v=>`<td class="num">${v? jr(v).replace(' j','') : "–"}</td>`).join("")}
-        <td class="num" style="font-weight:600;">${jr(total)}</td>
-      </tr>`;
-    }
-    function subtotRow(label, arr){
-      const total = arr.reduce((a,b)=>a+b,0);
-      return `<tr><td>${esc(label)}</td>${arr.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(total)}</td></tr>`;
-    }
-
-    const colTotals = new Array(12).fill(0);
-    [subtot.missionFact,subtot.missionNonFact,subtot.interne,subtot.absence].forEach(arr=>arr.forEach((v,i)=>colTotals[i]+=v));
-
-    const table = document.getElementById("table-suivi-temps");
-    table.innerHTML = `
-      <thead><tr><th>Type de temps</th>${MOIS.map(m=>`<th class="num">${m}</th>`).join("")}<th class="num">Total</th></tr></thead>
-      <tbody>${rows.length? rows.join("") : `<tr><td colspan="14" class="empty-note">Aucune saisie sur ${year}.</td></tr>`}</tbody>
-      <tfoot>
-        ${subtotRow("Sous-total — missions facturable", subtot.missionFact)}
-        ${subtotRow("Sous-total — missions non facturable", subtot.missionNonFact)}
-        ${subtotRow("Sous-total — temps internes", subtot.interne)}
-        ${subtotRow("Sous-total — absences", subtot.absence)}
-        <tr class="row-grand-total"><td>Total</td>${colTotals.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(colTotals.reduce((a,b)=>a+b,0))}</td></tr>
-      </tfoot>`;
+    renderSuiviTempsTable("table-suivi-temps", rows, subtot.missionFact, subtot.missionNonFact, subtot.interne, subtot.absence, year);
   }
 
   // Statut de couleur d'un TJM (vendu ou réel) par rapport à l'objectif — mêmes seuils/couleurs que la
@@ -1305,11 +1312,8 @@
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
-  function wireExports(){
-    document.querySelectorAll("[data-export]").forEach(btn=>{
-      btn.addEventListener("click", ()=>{
-        const kind = btn.dataset.export;
-        if(kind==="mes-affaires"){
+  const EXPORTERS = {
+    "mes-affaires"(){
           const rows=[["Affaire","Organisation","Statut","Jours vendus","Budget","RAF jours","RAF euros"]];
           affaires.filter(a=>a.pilote===currentUser && filtreStatuts.has(a.statut)).forEach(a=>{
             const consommeJ = missions.filter(m=>m.affaireId===a.id).reduce((s,m)=>s+joursFactConsommes(m.id),0);
@@ -1317,14 +1321,16 @@
             rows.push([a.nom,orgName(a.organisationId),a.statut,a.jours,a.budget,rafJ,+(rafJ*(a.budget/a.jours)).toFixed(0)]);
           });
           exportCSV(rows,"mes-affaires.csv");
-        } else if(kind==="mes-missions"){
+    },
+    "mes-missions"(){
           const rows=[["Mission","Affaire","Statut","Jours prévus","Budget","RAF jours","RAF euros"]];
           missions.filter(m=>m.consultantId===currentUser && m.statut==="en cours").forEach(m=>{
             const rafJ = Math.max(0,m.enveloppe-joursFactConsommes(m.id));
             rows.push([m.nom, affaires.find(a=>a.id===m.affaireId).nom, m.statut, m.enveloppe, m.enveloppe*m.taux, rafJ, +(rafJ*m.taux).toFixed(0)]);
           });
           exportCSV(rows,"mes-missions.csv");
-        } else if(kind==="suivi-temps"){
+    },
+    "suivi-temps"(){
           const year = document.getElementById("select-annee").value;
           const rows=[["Date","Type","Détail","Durée (j)","Jours facturables","Jours non facturables"]];
           saisies.filter(s=>s.consultantId===currentUser && s.date.slice(0,4)===year).forEach(s=>{
@@ -1334,7 +1340,8 @@
             rows.push([s.date, s.type, detail, s.dureeJ, s.jFact, s.jNonFact]);
           });
           exportCSV(rows, `suivi-temps-${year}.csv`);
-        } else if(kind==="mes-temps"){
+    },
+    "mes-temps"(){
           const isMois = mesTempsMode === "mois";
           const monthKey = today.toISOString().slice(0,7);
           const rows=[["Date","Type de temps","Durée (j)","Commentaires","Jours facturables","Jours non facturables"]];
@@ -1344,7 +1351,8 @@
               rows.push([s.date, saisieTypeLabel(s), s.dureeJ, s.commentaire||"", s.jFact, s.jNonFact]);
             });
           exportCSV(rows, `mes-temps-${isMois ? monthKey : mesTempsYear}.csv`);
-        } else if(kind==="mes-frais"){
+    },
+    "mes-frais"(){
           const isMois = mesFraisMode === "mois";
           const monthKey = today.toISOString().slice(0,7);
           const rows=[["Date","Affaire / Interne","Sous-catégorie","Catégorie","Refacturable","Montant HT","Taux TVA","Montant TVA","Montant TTC","Statut","Note de frais","Commentaires"]];
@@ -1356,7 +1364,8 @@
                 n.montantHT, tvaTauxListLabel(n.lignesTVA), n.montantTVA, n.montantTTC, fraisStatut(n), n.numeroBordereau, n.commentaire||""]);
             });
           exportCSV(rows, `mes-frais-${isMois ? monthKey : mesFraisYear}.csv`);
-        } else if(kind==="portefeuille"){
+    },
+    "portefeuille"(){
           const rows=[["Affaire","Organisation","Statut","Pilote","Pilote commercial","Date début prévue","Date fin prévue","Budget","Jours vendus","RAF jours","Méthodes","Types de territoire","Domaines d'intervention","Mots-clés"]];
           affaires.filter(a=>filtrePortefeuille.has(a.statut)).forEach(a=>{
             const consommeJ = missions.filter(m=>m.affaireId===a.id).reduce((s,m)=>s+joursFactConsommes(m.id),0);
@@ -1369,7 +1378,8 @@
               a.motsCles||""]);
           });
           exportCSV(rows, "portefeuille-affaires.csv");
-        } else if(kind==="missions-affaire"){
+    },
+    "missions-affaire"(){
           const a = affaires.find(x=>x.id===currentAffaireDetailId);
           const rows=[["Mission","Consultant","Statut","Enveloppe (j)","Budget","Consommé facturable (j)","RAF (j)"]];
           missions.filter(m=>m.affaireId===a.id).forEach(m=>{
@@ -1377,7 +1387,8 @@
             rows.push([m.nom, consultantName(m.consultantId), m.statut, m.enveloppe, m.enveloppe*m.taux, cons, Math.max(0,m.enveloppe-cons)]);
           });
           exportCSV(rows, `missions-${a.nomAbrege}.csv`);
-        } else if(kind==="effectifs"){
+    },
+    "effectifs"(){
           const year = document.getElementById("select-annee-societe").value;
           const rows=[["Consultant","Statut","Embauche","TJM objectif","TJM vendu","TJM réel","Affaires en production","Jours facturables","Taux de charge %","Production"]];
           consultants.forEach(c=>{
@@ -1388,7 +1399,8 @@
               s.nbAffairesEnCours, s.jFact, s.tauxCharge, +s.production.toFixed(0)]);
           });
           exportCSV(rows, `effectifs-${year}.csv`);
-        } else if(kind==="ca-affaires"){
+    },
+    "ca-affaires"(){
           const year = document.getElementById("select-annee-societe").value;
           const rows=[["Affaire","Client","Statut","Pilote","Budget vendu","Production réalisée","% réalisé"]];
           affaires.forEach(a=>{
@@ -1397,7 +1409,8 @@
             rows.push([a.nom, orgName(a.organisationId), a.statut, consultantName(a.pilote), a.budget, +ca.toFixed(0), pct]);
           });
           exportCSV(rows, `production-par-affaire-${year}.csv`);
-        } else if(kind==="suivi-temps-societe"){
+    },
+    "suivi-temps-societe"(){
           const year = document.getElementById("select-annee-societe").value;
           const rows=[["Date","Consultant","Type","Détail","Durée (j)","Jours facturables","Jours non facturables"]];
           saisies.filter(s=>s.date.slice(0,4)===year).forEach(s=>{
@@ -1407,7 +1420,8 @@
             rows.push([s.date, consultantName(s.consultantId), s.type, detail, s.dureeJ, s.jFact, s.jNonFact]);
           });
           exportCSV(rows, `suivi-temps-societe-${year}.csv`);
-        } else if(kind==="detail-temps"){
+    },
+    "detail-temps"(){
           if(detailTempsMode === "affaire"){
             const a = affaires.find(x=>x.id===detailTempsAffaireId);
             const missionIds = new Set(missions.filter(m=>m.affaireId===a.id).map(m=>m.id));
@@ -1438,7 +1452,8 @@
               });
             exportCSV(rows, `detail-temps-${isAll?"societe":detailTempsScope}-${year}.csv`);
           }
-        } else if(kind==="consultants"){
+    },
+    "consultants"(){
           const year = String(CURRENT_YEAR);
           const rows=[["Consultant","Trigramme","Statut","Arrivée","Départ","TJM objectif","Temps partiel",`ETP ${year}`]];
           consultants.forEach(c=>{
@@ -1449,14 +1464,16 @@
             rows.push([c.nom, c.trigramme||"", c.statut, c.dateEmbauche, c.dateDepart||"", c.tjmBase, partiel, etp]);
           });
           exportCSV(rows, `consultants.csv`);
-        } else if(kind==="bordereaux"){
+    },
+    "bordereaux"(){
           const rows=[["Numéro","Consultant","Année","Nb frais","Montant TTC","Statut","Date de paiement"]];
           bordereauxFrais.slice().sort((a,b)=>b.numero.localeCompare(a.numero)).forEach(b=>{
             const frais = notesFrais.filter(n=>n.numeroBordereau===b.numero);
             rows.push([b.numero, consultantName(b.consultantId), b.annee, frais.length, frais.reduce((s,n)=>s+n.montantTTC,0), b.statut, b.datePaiement||""]);
           });
           exportCSV(rows, `notes-de-frais.csv`);
-        } else if(kind==="frais-societe"){
+    },
+    "frais-societe"(){
           const year = document.getElementById("select-annee-frais").value;
           // Taux et montant de TVA sur des colonnes numériques séparées pour chacune des 4 lignes
           // possibles (une note peut cumuler plusieurs taux, ex. restaurant) — exploitable tel quel
@@ -1475,14 +1492,16 @@
               n.montantTTC, fraisStatut(n), n.numeroBordereau, n.commentaire||""]);
           });
           exportCSV(rows, `frais-societe-${year}.csv`);
-        } else if(kind==="commercial-societe"){
+    },
+    "commercial-societe"(){
           const year = document.getElementById("select-annee-commercial").value;
           const rows=[["Organisation","Affaire","Date de dépôt","Montant","Jours","% de réussite","Statut","Type de vente","Pilote commercial"]];
           affairesDeposeesAnnee(year).slice().sort((a,b)=>b.dateDepot.localeCompare(a.dateDepot)).forEach(a=>{
             rows.push([orgName(a.organisationId), a.nom, a.dateDepot, a.budget, a.jours, a.pctReussite, a.statut, a.typeVente, consultantName(a.piloteCommercial)]);
           });
           exportCSV(rows, `suivi-commercial-${year}.csv`);
-        } else if(kind==="commercial-moi"){
+    },
+    "commercial-moi"(){
           const year = document.getElementById("select-annee-commercial-moi").value;
           const rows=[["Organisation","Affaire","Date de dépôt","Statut","Mon rôle","Ma part (%)","Montant total de l'offre","Montant ventilé","Jours ventilés","% de réussite"]];
           affairesDeposeesAnnee(year).filter(a=>creditConsultantSurAffaire(a,currentUser)>0)
@@ -1492,7 +1511,8 @@
               rows.push([orgName(a.organisationId), a.nom, a.dateDepot, a.statut, role==="pilote"?"Pilote":"Contributeur", Math.round(part*100), a.budget, Math.round(budgetMissionsPrevisionnel(a)*part), +((a.jours||0)*part).toFixed(2), a.pctReussite]);
             });
           exportCSV(rows, `mon-commercial-${currentUser}-${year}.csv`);
-        } else if(kind==="factures-affaire"){
+    },
+    "factures-affaire"(){
           const a = affaires.find(x=>x.id===currentAffaireDetailId);
           const rows=[["Numéro","Statut","Formation","Échéance prévisionnelle","Dépôt","Échéance paiement","Payée","Date de paiement","Montant mission HT","Montant frais TTC","Montant sous-traitance HT","Total HT","Total TTC","Commentaires"]];
           facturesAffaire(a.id).forEach(f=>{
@@ -1501,7 +1521,8 @@
               +factureTotalHT(f).toFixed(2), +factureTotalTTC(f).toFixed(2), f.commentaires||""]);
           });
           exportCSV(rows, `factures-${a.nomAbrege}.csv`);
-        } else if(kind==="factures-societe"){
+    },
+    "factures-societe"(){
           const year = document.getElementById("select-annee-facturation").value;
           const rows=[["Affaire","Numéro","Statut","Formation","Échéance prévisionnelle","Dépôt","Échéance paiement","Payée","Date de paiement","Montant mission HT","Montant frais TTC","Montant sous-traitance HT","Total HT","Total TTC","Commentaires"]];
           factures.filter(f=>(f.echeancePrev||"").slice(0,4)===year).forEach(f=>{
@@ -1510,7 +1531,13 @@
               +factureTotalHT(f).toFixed(2), +factureTotalTTC(f).toFixed(2), f.commentaires||""]);
           });
           exportCSV(rows, `factures-societe-${year}.csv`);
-        }
+    },
+  };
+  function wireExports(){
+    document.querySelectorAll("[data-export]").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        const fn = EXPORTERS[btn.dataset.export];
+        if(fn) fn();
       });
     });
   }
@@ -2562,49 +2589,24 @@
     });
 
     let rows = [];
-    function rowHTML(label, arr, cls){
-      const total = arr.reduce((a,b)=>a+b,0);
-      return `<tr class="${cls==='total'?'row-affaire-total':''}">
-        <td style="${cls==='sub'?'padding-left:24px;color:var(--text-muted);':cls==='total'?'font-weight:600;':''}">${esc(label)}</td>
-        ${arr.map(v=>`<td class="num">${v? jr(v).replace(' j','') : "–"}</td>`).join("")}
-        <td class="num" style="font-weight:600;">${jr(total)}</td>
-      </tr>`;
-    }
-    function subtotRow(label, arr){
-      const total = arr.reduce((a,b)=>a+b,0);
-      return `<tr><td>${esc(label)}</td>${arr.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(total)}</td></tr>`;
-    }
 
-    rows.push(rowHTML("Missions", fact.map((v,i)=>v+nonFact[i]), "total"));
-    rows.push(rowHTML("Facturable", fact, "sub"));
-    rows.push(rowHTML("Non facturable", nonFact, "sub"));
+    rows.push(suiviRowHTML("Missions", fact.map((v,i)=>v+nonFact[i]), "total"));
+    rows.push(suiviRowHTML("Facturable", fact, "sub"));
+    rows.push(suiviRowHTML("Non facturable", nonFact, "sub"));
 
     const subtot = { interne:new Array(12).fill(0), absence:new Array(12).fill(0) };
     tempsInternes.forEach(cat=>{
       const arr = new Array(12).fill(0);
       all.filter(s=>s.type==="interne" && s.categorie===cat.code).forEach(s=>{ arr[+s.date.slice(5,7)-1]+=s.dureeJ; });
-      rows.push(rowHTML(cat.label, arr, "")); for(let i=0;i<12;i++) subtot.interne[i]+=arr[i];
+      rows.push(suiviRowHTML(cat.label, arr, "")); for(let i=0;i<12;i++) subtot.interne[i]+=arr[i];
     });
     tempsAbsences.forEach(cat=>{
       const arr = new Array(12).fill(0);
       all.filter(s=>s.type==="absence" && s.categorie===cat.code).forEach(s=>{ arr[+s.date.slice(5,7)-1]+=s.dureeJ; });
-      rows.push(rowHTML(cat.label, arr, "")); for(let i=0;i<12;i++) subtot.absence[i]+=arr[i];
+      rows.push(suiviRowHTML(cat.label, arr, "")); for(let i=0;i<12;i++) subtot.absence[i]+=arr[i];
     });
 
-    const colTotals = new Array(12).fill(0);
-    [fact,nonFact,subtot.interne,subtot.absence].forEach(arr=>arr.forEach((v,i)=>colTotals[i]+=v));
-
-    const table = document.getElementById("table-suivi-temps-societe");
-    table.innerHTML = `
-      <thead><tr><th>Type de temps</th>${MOIS.map(m=>`<th class="num">${m}</th>`).join("")}<th class="num">Total</th></tr></thead>
-      <tbody>${rows.length? rows.join("") : `<tr><td colspan="14" class="empty-note">Aucune saisie sur ${year}.</td></tr>`}</tbody>
-      <tfoot>
-        ${subtotRow("Sous-total — missions facturable", fact)}
-        ${subtotRow("Sous-total — missions non facturable", nonFact)}
-        ${subtotRow("Sous-total — temps internes", subtot.interne)}
-        ${subtotRow("Sous-total — absences", subtot.absence)}
-        <tr class="row-grand-total"><td>Total</td>${colTotals.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(colTotals.reduce((a,b)=>a+b,0))}</td></tr>
-      </tfoot>`;
+    renderSuiviTempsTable("table-suivi-temps-societe", rows, fact, nonFact, subtot.interne, subtot.absence, year);
   }
 
   /* ================= Détail des temps ================= */

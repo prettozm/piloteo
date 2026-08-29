@@ -200,11 +200,14 @@ La dette de duplication signalée initialement est réduite **à comportement
 constant**, garanti par le harnais de snapshot DOM (§3.4) : le rendu de toutes les
 vues doit rester identique octet pour octet avant/après (contrôle bloquant).
 
-- sélecteurs d'année (~9 copies) mutualisés en un helper ;
-- cœur de tracé des donuts (4 copies) extrait en un helper commun ;
-- `wireExports` (240 lignes / 21 branches) **laissé en l'état** : la sortie CSV
-  n'est pas couverte par un test automatisé, donc le refactorer sans filet serait
-  imprudent — à faire après avoir ajouté des tests de contenu CSV (V1.1).
+- sélecteurs d'année (~9 copies) mutualisés en un helper (`populateAnneeSelect`) ;
+- cœur de tracé des donuts (4 copies) extrait en un helper commun (`drawDonut`) ;
+- exports CSV : `wireExports` (chaîne de 18 branches `if/else`) transformé en table
+  de fonctions (`EXPORTERS`), corps de chaque branche déplacé verbatim ; validé par
+  un second filet, `tests/e2e/csvexport.mjs`, qui capture le contenu de chaque
+  export et confirme « CSV IDENTIQUE » avant/après ;
+- suivi des temps : parties communes de `renderSuiviTemps`/`renderSuiviTempsSociete`
+  extraites en helpers dédiés (`suiviRowHTML`, `suiviSubtotRow`, `renderSuiviTempsTable`).
 
 Reste assumé, sans impact sur la mise en production : `index.html` monolithique
 (JS désormais dans `app.js`, mais toujours une IIFE plate) — un découpage en
@@ -216,4 +219,3 @@ modules ne se justifiera que si le fichier continue de croître.
 2. Flux « changement de mot de passe personnel » si la gestion manuelle devient
    pénible.
 3. Anonymiser `seed.json` ou le générer par script si le dépôt devait s'ouvrir.
-4. Ajouter des tests de contenu d'export CSV, puis mutualiser `wireExports`.
