@@ -1973,6 +1973,18 @@
 (function(){
   "use strict";
 
+  // Échappement HTML — appliqué à TOUTE donnée métier interpolée dans un innerHTML ou un attribut
+  // (commentaires, noms, libellés, adresses, mots-clés saisis par les utilisateurs). Indispensable :
+  // le contenu remonte du serveur tel qu'il a été saisi, sans assainissement, et est réinjecté ici en
+  // HTML brut — sans cet échappement, un commentaire malveillant devient du code exécuté (XSS stocké).
+  const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+  // Filet global : toute exception non interceptée dans un gestionnaire d'événement (ex. une donnée
+  // devenue incohérente après un changement de périmètre) laisserait sinon l'interface muette. On
+  // signale l'incident à l'utilisateur plutôt que de laisser un bouton « sans effet ».
+  window.addEventListener("error", e => { console.error(e.error || e.message); try{ toast("Une erreur est survenue — rechargez la page si l'affichage est incohérent."); }catch(_){} });
+  window.addEventListener("unhandledrejection", e => { console.error(e.reason); });
+
   /* ================= Données ================= */
   const MOIS = ["Janv","Févr","Mars","Avr","Mai","Juin","Juil","Août","Sept","Oct","Nov","Déc"];
   const today = new Date();
@@ -2350,7 +2362,7 @@
         <button type="button" data-act="none">Tout décocher</button>
       </div>
       <div class="cfp-list">
-        ${values.map(v=>`<label><input type="checkbox" value="${v.replace(/"/g,"&quot;")}" ${(!active || active.has(v)) ? "checked":""}> ${v||"—"}</label>`).join("")}
+        ${values.map(v=>`<label><input type="checkbox" value="${esc(v)}" ${(!active || active.has(v)) ? "checked":""}> ${esc(v)||"—"}</label>`).join("")}
       </div>`;
     document.body.appendChild(pop);
     const r = btn.getBoundingClientRect();
@@ -2634,11 +2646,55 @@
     return out;
   }
 
+  // Bannière persistante (non un toast fugace) pour les incidents de synchronisation qui exigent une
+  // action ou une relecture de l'utilisateur — conflit de version, modification refusée, session
+  // expirée. Créée à la volée et réutilisée ; reste affichée jusqu'à fermeture explicite.
+  let syncBannerEl = null;
+  function showSyncBanner(message, kind="error"){
+    if(!syncBannerEl){
+      syncBannerEl = document.createElement("div");
+      syncBannerEl.id = "sync-banner";
+      syncBannerEl.setAttribute("role", "alert");
+      syncBannerEl.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:9999;max-width:min(680px,92vw);display:flex;gap:12px;align-items:flex-start;padding:13px 16px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:.9rem;line-height:1.35;";
+      const txt = document.createElement("span");
+      txt.id = "sync-banner-text";
+      txt.style.cssText = "flex:1;";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.textContent = "✕";
+      close.setAttribute("aria-label", "Fermer");
+      close.style.cssText = "background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;color:inherit;padding:0 2px;";
+      close.addEventListener("click", hideSyncBanner);
+      syncBannerEl.appendChild(txt);
+      syncBannerEl.appendChild(close);
+      document.body.appendChild(syncBannerEl);
+    }
+    syncBannerEl.style.background = kind==="warn" ? "#8a6d1f" : "#8f2f1a";
+    syncBannerEl.style.color = "#fff";
+    document.getElementById("sync-banner-text").textContent = message;
+    syncBannerEl.hidden = false;
+  }
+  function hideSyncBanner(){ if(syncBannerEl) syncBannerEl.hidden = true; }
+
+  // Session expirée / non authentifiée pendant l'utilisation : on arrête proprement le moteur de
+  // synchro (timers + polling) et on ramène à l'écran de connexion en avertissant explicitement que
+  // les dernières modifications ne sont pas encore enregistrées — plutôt que de recharger la page en
+  // silence (ce qui masquerait la perte) ou de boucler indéfiniment sur des PUT voués à échouer.
+  function handleSessionExpired(){
+    clearTimeout(syncTimer);
+    clearTimeout(syncRetryTimer);
+    if(syncPolling){ clearInterval(syncPolling); syncPolling = null; }
+    appSessionUser = null;
+    setSyncStatus("Session expirée", "error");
+    renderIdentify("Votre session a expiré. Reconnectez-vous — vos dernières modifications ne sont pas encore enregistrées.");
+  }
+
   function scheduleSync(delay=450){
     if(!appSessionUser || applyingRemote) return;
-    if(JSON.stringify(collectState())!==lastSyncedState){
-      syncDirty=true; setSyncStatus("À synchroniser","pending");
-    }
+    // Ne PAS sérialiser l'état complet ici (fonction appelée à chaque clic/frappe) : on marque
+    // simplement « à synchroniser » et on planifie. C'est syncNow(), débouncé, qui sérialise une
+    // seule fois et détermine s'il y a réellement quelque chose à envoyer.
+    if(!syncDirty){ syncDirty=true; setSyncStatus("À synchroniser","pending"); }
     clearTimeout(syncTimer);
     syncTimer=setTimeout(syncNow,delay);
   }
@@ -2670,15 +2726,20 @@
       if(currentUser) renderAll();
       clearTimeout(syncRetryTimer);
     }catch(ex){
-      if(ex.status===409 && ex.data && ex.data.state){
+      if(ex.status===401){
+        handleSessionExpired();
+      }else if(ex.status===409 && ex.data && ex.data.state){
         syncRevision=ex.data.revision;
         applyRemoteState(ex.data.state,false);
         if(currentUser) renderAll();
         setSyncStatus("Conflit rechargé","error");
-        toast("Une donnée a aussi été modifiée ailleurs. La version serveur a été rechargée ; recommencez cette modification.");
+        const quoi = (ex.data.conflicts && ex.data.conflicts.length)
+          ? ` (élément${ex.data.conflicts.length>1?"s":""} concerné${ex.data.conflicts.length>1?"s":""} : ${ex.data.conflicts.join(", ")})`
+          : "";
+        showSyncBanner(`Une donnée a aussi été modifiée ailleurs${quoi}. La version du serveur a été rechargée — vérifiez, puis ressaisissez votre modification si nécessaire.`, "warn");
       }else if(ex.status===403){
         setSyncStatus("Modification refusée","error");
-        toast(ex.message||"Modification non autorisée");
+        showSyncBanner(ex.message||"Modification non autorisée. La version du serveur a été rechargée — votre changement n'a pas été enregistré.", "error");
         try{ const latest=await api("/api/state"); syncRevision=latest.revision; applyRemoteState(latest.state,true); }catch(_e){}
       }else{
         syncDirty=true; setSyncStatus("Non synchronisé","error");
@@ -2692,7 +2753,7 @@
     try{
       const data=await api(`/api/state?if_revision=${syncRevision}`);
       if(data.changed){ syncRevision=data.revision; applyRemoteState(data.state,true); }
-    }catch(ex){ if(ex.status===401) location.reload(); }
+    }catch(ex){ if(ex.status===401) handleSessionExpired(); }
   }
 
   function startSyncEngine(){
@@ -2826,7 +2887,7 @@
       { key:"rafEur", label:"RAF €", numeric:true, get:a=>a._rafEur },
     ];
     const rowHTML = a => `<tr class="row-clickable" data-id="${a.id}" style="cursor:pointer;">
-        <td class="affaire-name">${a.nom}<span class="sub">${orgName(a.organisationId)}</span>${joursBarHTML(a._consommeJ, a.jours, {mini:true})}</td>
+        <td class="affaire-name">${esc(a.nom)}<span class="sub">${esc(orgName(a.organisationId))}</span>${joursBarHTML(a._consommeJ, a.jours, {mini:true})}</td>
         <td>${statutPill(a.statut)}</td>
         <td class="num">${jr(a.jours)}</td>
         <td class="num">${euro(a.budget)}</td>
@@ -2889,7 +2950,7 @@
       const rafJ = Math.max(0, m.enveloppe - consommeJ);
       const rafEur = rafJ * m.taux;
       return { ...m, _affaire:affaire, _consommeJ:consommeJ, _rafJ:rafJ, _rafEur:rafEur };
-    });
+    }).filter(m=>m._affaire); // écarte une mission dont l'affaire n'est pas (ou plus) dans le périmètre visible
     const columns = [
       { key:"nom", label:"Mission", width:"22%", get:m=>m.nom },
       { key:"pilote", label:"Pilote", filterable:true, get:m=>consultantName(m._affaire.pilote) },
@@ -2900,8 +2961,8 @@
       { key:"rafEur", label:"RAF €", numeric:true, get:m=>m._rafEur },
     ];
     const rowHTML = m => `<tr>
-        <td class="affaire-name row-clickable" data-mission="${m.id}" style="cursor:pointer;" title="Voir les temps affectés à cette mission"><span class="eyebrow">${orgName(m._affaire.organisationId)}</span>${m._affaire.nom}<span class="sub">${m.nom}</span>${joursBarHTML(m._consommeJ, m.enveloppe, {mini:true})}</td>
-        <td>${consultantName(m._affaire.pilote)}</td>
+        <td class="affaire-name row-clickable" data-mission="${esc(m.id)}" style="cursor:pointer;" title="Voir les temps affectés à cette mission"><span class="eyebrow">${esc(orgName(m._affaire.organisationId))}</span>${esc(m._affaire.nom)}<span class="sub">${esc(m.nom)}</span>${joursBarHTML(m._consommeJ, m.enveloppe, {mini:true})}</td>
+        <td>${esc(consultantName(m._affaire.pilote))}</td>
         <td>${statutPill(m.statut)} ${missionStatusBadge(m)}</td>
         <td class="num">${jr(m.enveloppe)}</td>
         <td class="num">${euro(m.enveloppe*m.taux)}</td>
@@ -3104,7 +3165,10 @@
   /* ================= Modal saisie ================= */
   function openSaisie(){
     document.getElementById("f-date").value = today.toISOString().slice(0,10);
-    document.getElementById("f-type").value = "mission";
+    // Présélection « temps interne » si le consultant n'a aucune mission en cours (nouvel arrivant,
+    // stagiaire) : le sélecteur de mission serait vide et « Enregistrer » resterait sans effet.
+    const aUneMission = missions.some(m=>m.consultantId===currentUser && m.statut==="en cours");
+    document.getElementById("f-type").value = aUneMission ? "mission" : "interne";
     document.getElementById("f-duree").value = 7;
     document.getElementById("f-pct").value = 100;
     document.getElementById("f-comment").value = "";
@@ -3118,7 +3182,7 @@
   function populateMissionSelect(){
     const sel = document.getElementById("f-mission");
     const mine = missions.filter(m=>m.consultantId===currentUser && m.statut==="en cours");
-    sel.innerHTML = mine.map(m=>`<option value="${m.id}">${m.nom} (${affaires.find(a=>a.id===m.affaireId).nom})</option>`).join("");
+    sel.innerHTML = mine.map(m=>`<option value="${esc(m.id)}">${esc(m.nom)} (${esc(affaires.find(a=>a.id===m.affaireId)?.nom ?? "—")})</option>`).join("");
   }
   function populateCategorieSelect(){
     const sel = document.getElementById("f-categorie");
@@ -3147,6 +3211,10 @@
     if(type==="mission"){
       missionId = document.getElementById("f-mission").value;
       const mission = missions.find(m=>m.id===missionId);
+      if(!mission){
+        toast("Aucune mission ne vous est affectée — choisissez « temps interne » ou « absence », ou contactez le pilote de l'affaire.");
+        return;
+      }
       const dejaFact = joursFactConsommes(missionId);
       const restant = mission.enveloppe - dejaFact;
       const jFactDemandes = +(dureeJ*(pctFact/100)).toFixed(2);
@@ -3179,19 +3247,17 @@
   }
 
   /* ================= Export CSV ================= */
+  // Neutralise l'injection de formules (CSV injection) : une cellule commençant par = + - @ (ou une
+  // tabulation / retour chariot) serait interprétée comme une formule à l'ouverture dans Excel /
+  // LibreOffice. On la préfixe d'une apostrophe pour la forcer en texte, puis on double les guillemets.
+  function csvCell(v){
+    let s = String(v ?? "");
+    if(/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return `"${s.replace(/"/g,'""')}"`;
+  }
   async function exportCSV(rows, filename){
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(";")).join("\n");
+    const csv = rows.map(r => r.map(csvCell).join(";")).join("\n");
     const data = "﻿" + csv;
-    try{
-      if(window.claude && typeof window.claude.use === "function"){
-        const downloads = await window.claude.use("downloads");
-        if(downloads){
-          const res = await downloads.save({ filename, data });
-          if(!res || res.accepted !== false) toast("Export prêt : " + filename);
-          return;
-        }
-      }
-    }catch(e){ /* environnement sans capacité de téléchargement : repli ci-dessous */ }
     const blob = new Blob([data], {type:"text/csv;charset=utf-8;"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -3685,7 +3751,7 @@
         const cat = cats[ci];
         const fill = cat.kind==="hatch" ? `url(#${patternId})` : cat.color;
         const tip = `${cat.label} : ${jr(Math.round(d[cat.key]*10)/10)}`;
-        segs += `<path d="${roundedTopBarPath(x, y, barW, hAdj, isTop?4:0)}" fill="${fill}" data-tip="${tip.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x, y, barW, hAdj, isTop?4:0)}" fill="${fill}" data-tip="${esc(tip)}"/>`;
         cursorY = y;
       });
 
@@ -3791,7 +3857,7 @@
         const end = angle + sweep - gapDeg/2;
         if(end>start){
           const tip = `${d.label} : ${jr(Math.round(d.value*10)/10)}`;
-          slices += `<path d="${donutSlicePath(cx,cy,rOuter,rInner,start,end)}" fill="${d.color}" data-tip="${tip.replace(/"/g,"&quot;")}"></path>`;
+          slices += `<path d="${donutSlicePath(cx,cy,rOuter,rInner,start,end)}" fill="${d.color}" data-tip="${esc(tip)}"></path>`;
         }
         angle += sweep;
       });
@@ -3840,7 +3906,7 @@
         const end = angle + sweep - gapDeg/2;
         if(end>start){
           const tip = `${d.label} : ${euroCents(d.value)}`;
-          slices += `<path d="${donutSlicePath(cx,cy,rOuter,rInner,start,end)}" fill="${d.color}" data-tip="${tip.replace(/"/g,"&quot;")}"></path>`;
+          slices += `<path d="${donutSlicePath(cx,cy,rOuter,rInner,start,end)}" fill="${d.color}" data-tip="${esc(tip)}"></path>`;
         }
         angle += sweep;
       });
@@ -3848,7 +3914,7 @@
 
     const centerLabel = total>0
       ? `<text x="${cx}" y="${cy-4}" text-anchor="middle" class="chart-donut-total">${euroCompact(total)}</text>
-         <text x="${cx}" y="${cy+16}" text-anchor="middle" class="chart-donut-caption">${(opts.caption||"").replace(/"/g,"&quot;")}</text>`
+         <text x="${cx}" y="${cy+16}" text-anchor="middle" class="chart-donut-caption">${esc(opts.caption||"")}</text>`
       : `<text x="${cx}" y="${cy}" text-anchor="middle" class="chart-donut-caption">Aucun frais non refacturable</text>`;
 
     const legend = data.map(d=>{
@@ -3858,7 +3924,7 @@
 
     host.innerHTML = `
       <div class="chart-donut-wrap">
-        <svg viewBox="0 0 ${W} ${H}" class="chart-svg chart-donut-svg" role="img" aria-label="${(opts.ariaLabel||"Répartition des frais non refacturables").replace(/"/g,"&quot;")}">
+        <svg viewBox="0 0 ${W} ${H}" class="chart-svg chart-donut-svg" role="img" aria-label="${esc(opts.ariaLabel||"Répartition des frais non refacturables")}">
           ${slices}
           ${centerLabel}
         </svg>
@@ -3980,16 +4046,16 @@
       if(realH>0.3){
         const rTop = (prevH>0.3 || pipeH>0.3) ? 0 : 4;
         const tipReal = `Réalisé : ${jr(Math.round(d.realJ*10)/10)} · ${euro(Math.round(d.realE))}`;
-        segs += `<path d="${roundedTopBarPath(x, realY, barW, realH, rTop)}" fill="var(--brand-green)" data-tip="${tipReal.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x, realY, barW, realH, rTop)}" fill="var(--brand-green)" data-tip="${esc(tipReal)}"/>`;
       }
       if(prevH>0.3){
         const rTop = pipeH>0.3 ? 0 : 4;
         const tipPrev = `Prévisionnel : ${jr(Math.round(d.prevJ*10)/10)} · ${euro(Math.round(d.prevE))}`;
-        segs += `<path d="${roundedTopBarPath(x, prevY, barW, prevH, rTop)}" fill="url(#${patternId})" data-tip="${tipPrev.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x, prevY, barW, prevH, rTop)}" fill="url(#${patternId})" data-tip="${esc(tipPrev)}"/>`;
       }
       if(pipeH>0.3){
         const tipPipe = `Pipeline pondéré : ${jr(Math.round(d.pipeJ*10)/10)} · ${euro(Math.round(d.pipeE))}`;
-        segs += `<path d="${roundedTopBarPath(x, pipeY, barW, pipeH, 4)}" fill="url(#${pipelinePatternId})" data-tip="${tipPipe.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x, pipeY, barW, pipeH, 4)}" fill="url(#${pipelinePatternId})" data-tip="${esc(tipPipe)}"/>`;
       }
       bars += `
         <g>
@@ -4146,7 +4212,7 @@
       { key:"production", label:`Production ${year}`, numeric:true, get:c=>c._stats.production },
     ];
     const consRowHTML = c => `<tr>
-        <td class="affaire-name">${c.nom}${c.admin?`<span class="sub">Administrateur</span>`:""}</td>
+        <td class="affaire-name">${esc(c.nom)}${c.admin?`<span class="sub">Administrateur</span>`:""}</td>
         <td>${consultantStatutPill(c.statut)}</td>
         <td class="num">${etpFmt(c._etp)}</td>
         <td class="num">${euro(c.tjmBase)}</td>
@@ -4197,10 +4263,10 @@
       { key:"pct", label:"% réalisé", numeric:true, get:a=>a._pct },
     ];
     const affRowHTML = a => `<tr class="row-clickable" data-id="${a.id}" style="cursor:pointer;">
-        <td class="affaire-name">${a.nom}</td>
-        <td>${orgName(a.organisationId)}</td>
+        <td class="affaire-name">${esc(a.nom)}</td>
+        <td>${esc(orgName(a.organisationId))}</td>
         <td>${statutPill(a.statut)}</td>
-        <td>${consultantName(a.pilote)}</td>
+        <td>${esc(consultantName(a.pilote))}</td>
         <td class="num">${euro(a.budget)}</td>
         <td class="num">${euro(a._ca)}</td>
         <td class="num">${a._pct}%</td>
@@ -4327,11 +4393,11 @@
       if(refH>0.3){
         const rTop = nonRefH>0.3 ? 0 : 4;
         const tip = `Refacturable : ${euroCents(d.refTTC)}`;
-        segs += `<path d="${roundedTopBarPath(x, refY, barW, refH, rTop)}" fill="var(--brand-green)" data-tip="${tip.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x, refY, barW, refH, rTop)}" fill="var(--brand-green)" data-tip="${esc(tip)}"/>`;
       }
       if(nonRefH>0.3){
         const tip = `Non refacturable : ${euroCents(d.nonRefTTC)}`;
-        segs += `<path d="${roundedTopBarPath(x, nonRefY, barW, nonRefH, 4)}" fill="var(--chart-grey)" data-tip="${tip.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x, nonRefY, barW, nonRefH, 4)}" fill="var(--chart-grey)" data-tip="${esc(tip)}"/>`;
       }
       bars += `
         <g>
@@ -4445,9 +4511,9 @@
       const cat = categorieFraisById(r.categorieFraisId);
       return `<tr>
         <td>${dateFR(r.date)}</td>
-        <td>${consultantName(r.consultantId)}</td>
+        <td>${esc(consultantName(r.consultantId))}</td>
         <td>${fraisCibleLabel(r)}</td>
-        <td class="affaire-name">${cat ? cat.label : "—"}${cat ? `<span class="sub">${cat.categorie}</span>` : ""}</td>
+        <td class="affaire-name">${cat ? esc(cat.label) : "—"}${cat ? `<span class="sub">${esc(cat.categorie)}</span>` : ""}</td>
         <td>${r.affaireId ? (r.refacturable ? "Oui" : "Non") : "—"}</td>
         <td class="num">${euroCents(r.montantHT)}</td>
         <td class="num">${fraisLigneTauxCell(r,0)}</td>
@@ -4459,8 +4525,8 @@
         <td class="num">${fraisLigneTauxCell(r,3)}</td>
         <td class="num">${fraisLigneMontantTVACell(r,3)}</td>
         <td class="num">${euroCents(r.montantTTC)}</td>
-        <td>${fraisStatutPill(fraisStatut(r))}<span style="display:block;font-size:.72rem;color:var(--text-muted);font-family:var(--font-mono);margin-top:3px;">${r.numeroBordereau}</span></td>
-        <td style="color:var(--text-muted);">${r.commentaire ? r.commentaire : "—"}</td>
+        <td>${fraisStatutPill(fraisStatut(r))}<span style="display:block;font-size:.72rem;color:var(--text-muted);font-family:var(--font-mono);margin-top:3px;">${esc(r.numeroBordereau)}</span></td>
+        <td style="color:var(--text-muted);">${r.commentaire ? esc(r.commentaire) : "—"}</td>
       </tr>`;
     };
     renderSortFilterTable("table-frais-societe", rows, columns, rowHTML, {
@@ -4591,10 +4657,10 @@
     ];
     const rowHTML = r => `<tr>
         <td>${dateFR(r.date)}</td>
-        ${isAll ? `<td>${consultantName(r.consultantId)}</td>` : ""}
-        <td class="affaire-name">${saisieTypeLabel(r)}${r.type==="mission" ? `<span class="sub">${saisieMissionName(r)}</span>` : ""}</td>
+        ${isAll ? `<td>${esc(consultantName(r.consultantId))}</td>` : ""}
+        <td class="affaire-name">${esc(saisieTypeLabel(r))}${r.type==="mission" ? `<span class="sub">${esc(saisieMissionName(r))}</span>` : ""}</td>
         <td class="num">${jr(r.dureeJ)}</td>
-        <td style="color:var(--text-muted);">${r.commentaire ? r.commentaire : "—"}</td>
+        <td style="color:var(--text-muted);">${r.commentaire ? esc(r.commentaire) : "—"}</td>
         <td class="num">${r.jFact ? jr(r.jFact) : "–"}</td>
         <td class="num">${r.jNonFact ? jr(r.jNonFact) : "–"}</td>
       </tr>`;
@@ -4613,6 +4679,7 @@
 
   function renderDetailTempsAffaire(){
     const a = affaires.find(x=>x.id===detailTempsAffaireId);
+    if(!a) return;
     document.getElementById("detail-temps-titre").textContent = `Détail des temps — ${a.nom}`;
     document.getElementById("detail-temps-sub").textContent = "Toutes les saisies de l'affaire, toutes années confondues.";
 
@@ -4631,10 +4698,10 @@
     ];
     const rowHTML = r => `<tr>
         <td>${dateFR(r.date)}</td>
-        <td>${consultantName(r.consultantId)}</td>
-        <td class="affaire-name">${saisieMissionName(r)}</td>
+        <td>${esc(consultantName(r.consultantId))}</td>
+        <td class="affaire-name">${esc(saisieMissionName(r))}</td>
         <td class="num">${jr(r.dureeJ)}</td>
-        <td style="color:var(--text-muted);">${r.commentaire ? r.commentaire : "—"}</td>
+        <td style="color:var(--text-muted);">${r.commentaire ? esc(r.commentaire) : "—"}</td>
         <td class="num">${r.jFact ? jr(r.jFact) : "–"}</td>
         <td class="num">${r.jNonFact ? jr(r.jNonFact) : "–"}</td>
       </tr>`;
@@ -4671,9 +4738,9 @@
     ];
     const rowHTML = r => `<tr>
         <td>${dateFR(r.date)}</td>
-        <td>${consultantName(r.consultantId)}</td>
+        <td>${esc(consultantName(r.consultantId))}</td>
         <td class="num">${jr(r.dureeJ)}</td>
-        <td style="color:var(--text-muted);">${r.commentaire ? r.commentaire : "—"}</td>
+        <td style="color:var(--text-muted);">${r.commentaire ? esc(r.commentaire) : "—"}</td>
         <td class="num">${r.jFact ? jr(r.jFact) : "–"}</td>
         <td class="num">${r.jNonFact ? jr(r.jNonFact) : "–"}</td>
       </tr>`;
@@ -4742,9 +4809,9 @@
     ];
     const rowHTML = r => `<tr>
         <td>${dateFR(r.date)}</td>
-        <td class="affaire-name">${saisieTypeLabel(r)}${r.type==="mission" ? `<span class="sub">${saisieMissionName(r)}</span>` : ""}</td>
+        <td class="affaire-name">${esc(saisieTypeLabel(r))}${r.type==="mission" ? `<span class="sub">${esc(saisieMissionName(r))}</span>` : ""}</td>
         <td class="num">${jr(r.dureeJ)}</td>
-        <td style="color:var(--text-muted);">${r.commentaire ? r.commentaire : "—"}</td>
+        <td style="color:var(--text-muted);">${r.commentaire ? esc(r.commentaire) : "—"}</td>
         <td class="num">${r.jFact ? jr(r.jFact) : "–"}</td>
         <td class="num">${r.jNonFact ? jr(r.jNonFact) : "–"}</td>
       </tr>`;
@@ -4789,10 +4856,10 @@
       const frais = notesFrais.filter(n=>n.numeroBordereau===b.numero);
       const ttc = frais.reduce((s,n)=>s+n.montantTTC,0);
       const action = b.statut==="en saisie"
-        ? `<button type="button" class="btn-voir" data-demander="${b.numero}" ${frais.length?"":"disabled"}>Demander le paiement</button>`
+        ? `<button type="button" class="btn-voir" data-demander="${esc(b.numero)}" ${frais.length?"":"disabled"}>Demander le paiement</button>`
         : "—";
       return `<tr>
-        <td style="font-family:var(--font-mono);">${b.numero}</td>
+        <td style="font-family:var(--font-mono);">${esc(b.numero)}</td>
         <td>${b.annee}</td>
         <td class="num">${frais.length}</td>
         <td class="num">${euroCents(ttc)}</td>
@@ -4873,13 +4940,13 @@
       return `<tr>
         <td>${dateFR(r.date)}</td>
         <td>${fraisCibleLabel(r)}</td>
-        <td class="affaire-name">${cat ? cat.label : "—"}${cat ? `<span class="sub">${cat.categorie}</span>` : ""}</td>
+        <td class="affaire-name">${cat ? esc(cat.label) : "—"}${cat ? `<span class="sub">${esc(cat.categorie)}</span>` : ""}</td>
         <td>${r.affaireId ? (r.refacturable ? "Oui" : "Non") : "—"}</td>
         <td class="num">${euroCents(r.montantHT)}</td>
         <td class="num">${tvaTauxListLabel(r.lignesTVA)}</td>
         <td class="num">${euroCents(r.montantTTC)}</td>
-        <td>${fraisStatutPill(fraisStatut(r))}<span style="display:block;font-size:.72rem;color:var(--text-muted);font-family:var(--font-mono);margin-top:3px;">${r.numeroBordereau}</span></td>
-        <td style="color:var(--text-muted);">${r.commentaire ? r.commentaire : "—"}</td>
+        <td>${fraisStatutPill(fraisStatut(r))}<span style="display:block;font-size:.72rem;color:var(--text-muted);font-family:var(--font-mono);margin-top:3px;">${esc(r.numeroBordereau)}</span></td>
+        <td style="color:var(--text-muted);">${r.commentaire ? esc(r.commentaire) : "—"}</td>
       </tr>`;
     };
     renderSortFilterTable("table-mesfrais", rows, columns, rowHTML, {
@@ -4909,7 +4976,7 @@
     const sel = document.getElementById("fr-affaire");
     const mine = affaires.filter(a=>a.statut==="en production" &&
       (a.pilote===currentUser || missions.some(m=>m.affaireId===a.id && m.consultantId===currentUser)));
-    sel.innerHTML = mine.map(a=>`<option value="${a.id}">${a.nom}</option>`).join("");
+    sel.innerHTML = mine.map(a=>`<option value="${esc(a.id)}">${esc(a.nom)}</option>`).join("");
   }
   // Temps interne concerné par le frais — tout tempsInternes est proposé, jamais une absence
   // (tempsAbsences) : on ne peut pas rattacher un frais à un congé ou un arrêt maladie.
@@ -4934,7 +5001,7 @@
       g.items.push(c);
     });
     sel.innerHTML = groups.map(g=>
-      `<optgroup label="${g.categorie}">${g.items.map(c=>`<option value="${c.id}">${c.label}</option>`).join("")}</optgroup>`
+      `<optgroup label="${esc(g.categorie)}">${g.items.map(c=>`<option value="${esc(c.id)}">${esc(c.label)}</option>`).join("")}</optgroup>`
     ).join("");
   }
   // Lignes HT/TVA du frais en cours de saisie — une note peut en cumuler plusieurs (ex. un
@@ -5086,7 +5153,7 @@
       { key:"affPartenaire", label:"Affaires partenaire", numeric:true, get:o=>o._affPartenaire.length },
     ];
     const rowHTML = o => `<tr class="row-clickable" data-id="${o.id}" style="cursor:pointer;">
-        <td class="affaire-name">${o.nom}<span class="sub">${o.adresse||""}</span></td>
+        <td class="affaire-name">${esc(o.nom)}<span class="sub">${esc(o.adresse||"")}</span></td>
         <td>${o.type}</td>
         <td>${orgStatutPills({client:o._affClient.length, prospect:o._affProspect.length, partenaire:o._affPartenaire.length})}</td>
         <td class="num"><div class="num-voir">${o._affClient.length}${voirBtn(o,"client",o._affClient.length)}</div></td>
@@ -5176,14 +5243,14 @@
         const cat = categorieFraisById(r.categorieFraisId);
         return `<tr>
           <td>${dateFR(r.date)}</td>
-          <td>${consultantName(r.consultantId)}</td>
-          <td class="affaire-name">${cat ? cat.label : "—"}${cat ? `<span class="sub">${cat.categorie}</span>` : ""}</td>
+          <td>${esc(consultantName(r.consultantId))}</td>
+          <td class="affaire-name">${cat ? esc(cat.label) : "—"}${cat ? `<span class="sub">${esc(cat.categorie)}</span>` : ""}</td>
           <td>${r.refacturable ? "Oui" : "Non"}</td>
           <td class="num">${euroCents(r.montantHT)}</td>
           <td class="num">${tvaTauxListLabel(r.lignesTVA)}</td>
           <td class="num">${euroCents(r.montantTTC)}</td>
-          <td>${fraisStatutPill(fraisStatut(r))}<span style="display:block;font-size:.72rem;color:var(--text-muted);font-family:var(--font-mono);margin-top:3px;">${r.numeroBordereau}</span></td>
-          <td style="color:var(--text-muted);">${r.commentaire ? r.commentaire : "—"}</td>
+          <td>${fraisStatutPill(fraisStatut(r))}<span style="display:block;font-size:.72rem;color:var(--text-muted);font-family:var(--font-mono);margin-top:3px;">${esc(r.numeroBordereau)}</span></td>
+          <td style="color:var(--text-muted);">${r.commentaire ? esc(r.commentaire) : "—"}</td>
         </tr>`;
       };
       renderSortFilterTable("table-affaire-frais", rows, columns, rowHTML, {
@@ -5218,7 +5285,7 @@
       const rows = notesFrais.filter(n=>n.numeroBordereau===numero).slice().sort((x,y)=>y.date.localeCompare(x.date));
       const ttc = rows.reduce((s,n)=>s+n.montantTTC,0);
       document.getElementById("bordereau-sub").innerHTML =
-        `${consultantName(b.consultantId)} — ${bordereauStatutPill(b.statut)} — ${rows.length} frais, ${euroCents(ttc)} TTC${b.datePaiement ? ` — payée le ${dateFR(b.datePaiement)}` : ""}`;
+        `${esc(consultantName(b.consultantId))} — ${bordereauStatutPill(b.statut)} — ${rows.length} frais, ${euroCents(ttc)} TTC${b.datePaiement ? ` — payée le ${dateFR(b.datePaiement)}` : ""}`;
 
       const columns = [
         { key:"date", label:"Date", get:r=>r.date },
@@ -5235,12 +5302,12 @@
         return `<tr>
           <td>${dateFR(r.date)}</td>
           <td>${fraisCibleLabel(r)}</td>
-          <td class="affaire-name">${cat ? cat.label : "—"}${cat ? `<span class="sub">${cat.categorie}</span>` : ""}</td>
+          <td class="affaire-name">${cat ? esc(cat.label) : "—"}${cat ? `<span class="sub">${esc(cat.categorie)}</span>` : ""}</td>
           <td>${r.affaireId ? (r.refacturable ? "Oui" : "Non") : "—"}</td>
           <td class="num">${euroCents(r.montantHT)}</td>
           <td class="num">${tvaTauxListLabel(r.lignesTVA)}</td>
           <td class="num">${euroCents(r.montantTTC)}</td>
-          <td style="color:var(--text-muted);">${r.commentaire ? r.commentaire : "—"}</td>
+          <td style="color:var(--text-muted);">${r.commentaire ? esc(r.commentaire) : "—"}</td>
         </tr>`;
       };
       renderSortFilterTable("table-bordereau-frais", rows, columns, rowHTML, {
@@ -5294,7 +5361,7 @@
       filtered = getItems().filter(x=>getLabel(x).toLowerCase().includes(q));
       activeIdx = filtered.findIndex(x=>getId(x)===hidden.value);
       list.innerHTML = filtered.length
-        ? filtered.map((x,i)=>`<div class="combobox-item${i===activeIdx?" active":""}" data-idx="${i}">${getLabel(x)}</div>`).join("")
+        ? filtered.map((x,i)=>`<div class="combobox-item${i===activeIdx?" active":""}" data-idx="${i}">${esc(getLabel(x))}</div>`).join("")
         : `<div class="combobox-empty">Aucun résultat</div>`;
       list.hidden = false;
     }
@@ -5342,8 +5409,8 @@
     }
   }
   function populateConsultantSelects(){
-    const optsPilotes = consultants.filter(c=>c.statut==="en poste").map(c=>`<option value="${c.id}">${c.nom}</option>`).join("");
-    const optsExecutants = consultants.filter(c=>c.statut!=="parti").map(c=>`<option value="${c.id}">${c.nom}${c.statut==="stagiaire"?" (stagiaire)":""}</option>`).join("");
+    const optsPilotes = consultants.filter(c=>c.statut==="en poste").map(c=>`<option value="${esc(c.id)}">${esc(c.nom)}</option>`).join("");
+    const optsExecutants = consultants.filter(c=>c.statut!=="parti").map(c=>`<option value="${esc(c.id)}">${esc(c.nom)}${c.statut==="stagiaire"?" (stagiaire)":""}</option>`).join("");
     document.getElementById("a-pilote-comm").innerHTML = optsPilotes;
     document.getElementById("a-pilote").innerHTML = optsPilotes;
     document.getElementById("m-consultant").innerHTML = optsExecutants;
@@ -5536,7 +5603,9 @@
     }
     closeModal("modal-consultant");
     renderConsultants();
-    renderIdentify();
+    // Note : ne PAS appeler renderIdentify() ici — il réaffiche l'écran de connexion et masque
+    // toute l'application alors que la session reste valide (reliquat du prototype, où cette fonction
+    // reconstruisait la liste de sélection d'utilisateur). La liste des consultants suffit.
     populateConsultantSelects();
     if(currentView==="societe") renderSociete();
   }
@@ -5555,7 +5624,7 @@
       { key:"etp", label:`ETP ${year}`, numeric:true, get:c=>c._etp },
     ];
     const rowHTML = c => `<tr class="row-clickable" data-id="${c.id}" style="cursor:pointer;">
-        <td class="affaire-name">${c.nom}${c.admin?`<span class="sub">Administrateur</span>`:""}</td>
+        <td class="affaire-name">${esc(c.nom)}${c.admin?`<span class="sub">Administrateur</span>`:""}</td>
         <td style="font-family:var(--font-mono);">${c.trigramme||"—"}</td>
         <td>${consultantStatutPill(c.statut)}</td>
         <td>${dateFR(c.dateEmbauche)}</td>
@@ -5605,11 +5674,11 @@
       const frais = notesFrais.filter(n=>n.numeroBordereau===b.numero);
       const ttc = frais.reduce((s,n)=>s+n.montantTTC,0);
       const action = b.statut==="note à payer"
-        ? `<button type="button" class="btn-voir" data-payer="${b.numero}">Marquer comme payée</button>`
+        ? `<button type="button" class="btn-voir" data-payer="${esc(b.numero)}">Marquer comme payée</button>`
         : "—";
-      return `<tr class="row-clickable" data-id="${b.numero}" style="cursor:pointer;">
-        <td style="font-family:var(--font-mono);">${b.numero}</td>
-        <td>${consultantName(b.consultantId)}</td>
+      return `<tr class="row-clickable" data-id="${esc(b.numero)}" style="cursor:pointer;">
+        <td style="font-family:var(--font-mono);">${esc(b.numero)}</td>
+        <td>${esc(consultantName(b.consultantId))}</td>
         <td>${b.annee}</td>
         <td class="num">${frais.length}</td>
         <td class="num">${euroCents(ttc)}</td>
@@ -5942,7 +6011,7 @@
         const end = angle + sweep - gapDeg/2;
         if(end>start){
           const tip = `${d.label} : ${fmt(d.value)}${metric==="nb" ? " offre"+(d.value>1?"s":"") : ""}`;
-          slices += `<path d="${donutSlicePath(cx,cy,rOuter,rInner,start,end)}" fill="${d.color}" data-tip="${tip.replace(/"/g,"&quot;")}"></path>`;
+          slices += `<path d="${donutSlicePath(cx,cy,rOuter,rInner,start,end)}" fill="${d.color}" data-tip="${esc(tip)}"></path>`;
         }
         angle += sweep;
       });
@@ -6042,7 +6111,7 @@
         const y = cursorY - gapAbove - hAdj;
         const cat = COMMERCIAL_EVOL_CATS[ci];
         const tip = `${d.label} — ${cat.label} : ${euro(d[cat.key])}`;
-        segs += `<path d="${roundedTopBarPath(x,y,barW,hAdj,isTop?4:0)}" fill="${cat.color}" data-tip="${tip.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x,y,barW,hAdj,isTop?4:0)}" fill="${cat.color}" data-tip="${esc(tip)}"/>`;
         cursorY = y;
       });
       bars += `<g>${segs}<text x="${(x+barW/2).toFixed(1)}" y="${H-mB+18}" class="chart-axis-label" text-anchor="middle">${d.label}</text></g>`;
@@ -6089,9 +6158,9 @@
       const y = mT+plotH-h;
       const tip = d.tip || `${d.label} : ${formatAxis(d.value)}`;
       bars += `<g>
-        <path d="${roundedTopBarPath(x,y,barW,h,4)}" fill="${color}" data-tip="${tip.replace(/"/g,"&quot;")}"/>
-        ${d.sub!=null ? `<text x="${(x+barW/2).toFixed(1)}" y="${(y-6).toFixed(1)}" class="chart-axis-label" text-anchor="middle">${d.sub}</text>` : ""}
-        <text x="${(x+barW/2).toFixed(1)}" y="${H-mB+18}" class="chart-axis-label" text-anchor="middle">${d.label}</text>
+        <path d="${roundedTopBarPath(x,y,barW,h,4)}" fill="${color}" data-tip="${esc(tip)}"/>
+        ${d.sub!=null ? `<text x="${(x+barW/2).toFixed(1)}" y="${(y-6).toFixed(1)}" class="chart-axis-label" text-anchor="middle">${esc(d.sub)}</text>` : ""}
+        <text x="${(x+barW/2).toFixed(1)}" y="${H-mB+18}" class="chart-axis-label" text-anchor="middle">${esc(d.label)}</text>
       </g>`;
     });
     host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="${ariaLabel}">${gridLines}${bars}</svg>`;
@@ -6173,7 +6242,7 @@
         const h = b.hasDecision ? Math.max(3,(b.value/max)*plotH) : 0;
         const y = mT+plotH-h;
         const color = TAUX_ANNEE_COLORS[bi] || TAUX_ANNEE_COLORS[TAUX_ANNEE_COLORS.length-1];
-        bars += `<path d="${roundedTopBarPath(x,y,barW,h,3)}" fill="${color}" data-tip="${b.tip.replace(/"/g,"&quot;")}"/>`;
+        bars += `<path d="${roundedTopBarPath(x,y,barW,h,3)}" fill="${color}" data-tip="${esc(b.tip)}"/>`;
       });
       bars += `<text x="${(gx+groupW/2).toFixed(1)}" y="${H-mB+18}" class="chart-axis-label" text-anchor="middle">${g.label}</text>`;
     });
@@ -6288,15 +6357,15 @@
       { key:"pilotecomm", label:"Pilote commercial", filterable:true, get:r=>consultantName(r.piloteCommercial) },
     ];
     const rowHTML = r => `<tr class="row-clickable" data-id="${r.id}" style="cursor:pointer;">
-        <td>${orgName(r.organisationId)}</td>
-        <td class="affaire-name">${r.nom}</td>
+        <td>${esc(orgName(r.organisationId))}</td>
+        <td class="affaire-name">${esc(r.nom)}</td>
         <td>${dateFR(r.dateDepot)}</td>
         <td class="num">${euro(r.budget)}</td>
         <td class="num">${jr(r.jours)}</td>
         <td class="num">${r.pctReussite}%</td>
         <td>${statutPill(r.statut)}</td>
-        <td>${r.typeVente}</td>
-        <td>${consultantName(r.piloteCommercial)}</td>
+        <td>${esc(r.typeVente)}</td>
+        <td>${esc(consultantName(r.piloteCommercial))}</td>
       </tr>`;
     renderSortFilterTable("table-commercial-societe", rows, columns, rowHTML, {
       rerender: renderCommercialSociete,
@@ -6411,8 +6480,8 @@
       const part = creditConsultantSurAffaire(r, currentUser);
       const role = roleConsultantSurAffaire(r, currentUser);
       return `<tr class="row-clickable" data-id="${r.id}" style="cursor:pointer;">
-        <td>${orgName(r.organisationId)}</td>
-        <td class="affaire-name">${r.nom}</td>
+        <td>${esc(orgName(r.organisationId))}</td>
+        <td class="affaire-name">${esc(r.nom)}</td>
         <td>${dateFR(r.dateDepot)}</td>
         <td>${statutPill(r.statut)}</td>
         <td><span class="pill ${role==="pilote"?"good":"neutral"}">${role==="pilote"?"Pilote":"Contributeur"}</span></td>
@@ -6448,7 +6517,7 @@
   function renderRefList(hostId, list, onChange){
     const host = document.getElementById(hostId);
     host.innerHTML = list.length
-      ? list.map(item=>`<span class="chip reflist-chip">${item.label}<button type="button" class="reflist-remove" data-id="${item.id}" title="Supprimer">✕</button></span>`).join("")
+      ? list.map(item=>`<span class="chip reflist-chip">${esc(item.label)}<button type="button" class="reflist-remove" data-id="${esc(item.id)}" title="Supprimer">✕</button></span>`).join("")
       : `<span style="font-size:.82rem;color:var(--text-muted);">Aucun élément pour l'instant.</span>`;
     host.querySelectorAll(".reflist-remove").forEach(btn=>{
       btn.addEventListener("click", ()=>{
@@ -6503,9 +6572,9 @@
     host.innerHTML = groups.length
       ? groups.map(g=>`
           <div class="catfrais-group">
-            <div class="catfrais-group-label">${g.categorie}</div>
+            <div class="catfrais-group-label">${esc(g.categorie)}</div>
             <div class="chip-filter">
-              ${g.items.map(c=>`<span class="chip reflist-chip">${c.label}<button type="button" class="reflist-remove" data-id="${c.id}" title="Supprimer">✕</button></span>`).join("")}
+              ${g.items.map(c=>`<span class="chip reflist-chip">${esc(c.label)}<button type="button" class="reflist-remove" data-id="${esc(c.id)}" title="Supprimer">✕</button></span>`).join("")}
             </div>
           </div>`).join("")
       : `<span style="font-size:.82rem;color:var(--text-muted);">Aucune sous-catégorie pour l'instant.</span>`;
@@ -6523,7 +6592,7 @@
     const dl = document.getElementById("datalist-categories-frais");
     if(!dl) return;
     const cats = Array.from(new Set(categoriesFrais.map(c=>c.categorie)));
-    dl.innerHTML = cats.map(c=>`<option value="${c}">`).join("");
+    dl.innerHTML = cats.map(c=>`<option value="${esc(c)}">`).join("");
   }
   function wireCategoriesFraisAdd(){
     const btn = document.getElementById("btn-ajouter-souscategorie-frais");
@@ -6551,7 +6620,7 @@
   function renderAffaireCaracPicker(hostId, list, selectedSet){
     const host = document.getElementById(hostId);
     host.innerHTML = list.length
-      ? list.map(item=>`<button type="button" class="chip${selectedSet.has(item.id)?" on":""}" data-id="${item.id}">${item.label}</button>`).join("")
+      ? list.map(item=>`<button type="button" class="chip${selectedSet.has(item.id)?" on":""}" data-id="${esc(item.id)}">${esc(item.label)}</button>`).join("")
       : `<span style="font-size:.82rem;color:var(--text-muted);">Aucun élément défini — à ajouter dans Tables &amp; réglages.</span>`;
     host.querySelectorAll(".chip").forEach(chip=>{
       chip.addEventListener("click", ()=>{
@@ -6594,9 +6663,9 @@
   }
   function affaireRowHTML(a){
     return `<tr class="row-clickable" data-id="${a.id}" style="cursor:pointer;">
-        <td class="affaire-name">${a.nom}<span class="sub">${orgName(a.organisationId)}${a.motsCles?" · "+a.motsCles:""}</span>${joursBarHTML(a._consommeJ, a.jours, {mini:true})}</td>
+        <td class="affaire-name">${esc(a.nom)}<span class="sub">${esc(orgName(a.organisationId))}${a.motsCles?" · "+esc(a.motsCles):""}</span>${joursBarHTML(a._consommeJ, a.jours, {mini:true})}</td>
         <td>${statutPill(a.statut)}</td>
-        <td>${consultantName(a.pilote)}</td>
+        <td>${esc(consultantName(a.pilote))}</td>
         <td>${dateFR(a.dateDebut)} → ${dateFR(a.dateFin)}</td>
         <td class="num">${euro(a.budget)}</td>
         <td class="num">${jr(a.jours)}</td>
@@ -6747,7 +6816,7 @@
       : `<div style="font-size:.82rem;color:var(--text-muted);">Aucune répartition saisie — le pilote commercial est crédité de la totalité.</div>`;
     editingRepartition.forEach((r,i)=>{
       const sel = wrap.querySelector(`.rc-consultant[data-idx="${i}"]`);
-      sel.innerHTML = consultants.filter(c=>c.statut==="en poste").map(c=>`<option value="${c.id}">${c.nom}</option>`).join("");
+      sel.innerHTML = consultants.filter(c=>c.statut==="en poste").map(c=>`<option value="${esc(c.id)}">${esc(c.nom)}</option>`).join("");
       sel.value = r.consultantId || "";
     });
     wrap.querySelectorAll(".rc-consultant, .rc-pct").forEach(el=>{
@@ -7025,7 +7094,7 @@
                 <button type="button" class="btn-voir" id="btn-voir-frais-affaire" ${fraisAffaireCount ? "" : "disabled"}>Voir les frais${fraisAffaireCount ? ` (${fraisAffaireCount})` : ""}</button>
               </div>
             </div>
-            <div class="bc-frais-gauge" title="${fraisNonRefGaugeTitle.replace(/"/g,"&quot;")}">
+            <div class="bc-frais-gauge" title="${esc(fraisNonRefGaugeTitle)}">
               <div class="bc-frais-gauge-title">% frais non refacturables / montant des missions</div>
               <div class="bc-frais-gauge-body">
                 <div class="bc-frais-gauge-scale"><span>10 %+</span><span>0 %</span></div>
@@ -7049,7 +7118,7 @@
     if(btnVoirFrais) btnVoirFrais.addEventListener("click", ()=>openAffaireFraisList(a.id));
 
     const caracChips = labels => labels.length
-      ? labels.map(l=>`<span class="chip" style="cursor:default;">${l}</span>`).join("")
+      ? labels.map(l=>`<span class="chip" style="cursor:default;">${esc(l)}</span>`).join("")
       : `<span style="font-size:.82rem;color:var(--text-muted);">—</span>`;
     document.getElementById("detail-caracteristiques").innerHTML = `
       <div class="carac-group"><div class="kpi-label">Méthodes</div><div class="chip-filter">${caracChips(caracLabels(a.methodes, methodes))}</div></div>
@@ -7063,8 +7132,8 @@
       const roleLabel = r => r.charAt(0).toUpperCase()+r.slice(1);
       const rows = partenairesList.map(p=>`
         <tr>
-          <td>${orgName(p.organisationId)}</td>
-          <td><span class="pill ${p.role==="sous-traitant indirect" ? "warn" : "neutral"}">${roleLabel(p.role)}</span></td>
+          <td>${esc(orgName(p.organisationId))}</td>
+          <td><span class="pill ${p.role==="sous-traitant indirect" ? "warn" : "neutral"}">${esc(roleLabel(p.role))}</span></td>
           <td class="num">${p.role==="sous-traitant indirect" ? euro(p.montant||0) : "—"}</td>
         </tr>`).join("");
       document.getElementById("detail-partenaires").innerHTML = `
@@ -7090,7 +7159,7 @@
       { key:"raf", label:"RAF", numeric:true, sep:true, get:m=>m._raf },
     ];
     const missionRowHTML = m => `<tr class="row-clickable" data-id="${m.id}" style="cursor:pointer;">
-        <td class="affaire-name">${m.nom}<span class="sub">${consultantName(m.consultantId)} · ${dateFR(m.dateDebut)} → ${dateFR(m.dateFin)}</span>${joursBarHTML(m._cons, m.enveloppe, {mini:true})}</td>
+        <td class="affaire-name">${esc(m.nom)}<span class="sub">${esc(consultantName(m.consultantId))} · ${dateFR(m.dateDebut)} → ${dateFR(m.dateFin)}</span>${joursBarHTML(m._cons, m.enveloppe, {mini:true})}</td>
         <td>${statutPill(m.statut)} ${missionStatusBadge(m)}</td>
         <td class="num">${jr(m.enveloppe)}</td>
         <td class="num">${euro(m.enveloppe*m.taux)}</td>
@@ -7191,7 +7260,7 @@
       else if(f.statut==="facturée") cellulePaiement = `non réglée${retardPaiement!==null ? ` <span class="badge-overrun">⚠ J+${retardPaiement}</span>` : ""}`;
       else cellulePaiement = "—";
       return `<tr class="row-clickable" data-id="${f.id}" style="cursor:pointer;">
-        <td class="affaire-name">${f.numero||"—"}${f.formation ? `<span class="sub">Formation — sans TVA</span>` : ""}</td>
+        <td class="affaire-name">${esc(f.numero)||"—"}${f.formation ? `<span class="sub">Formation — sans TVA</span>` : ""}</td>
         <td>${factureStatutPill(f.statut)}</td>
         <td>${dateFR(f.echeancePrev)}${retardDepot!==null ? ` <span class="badge-overrun">⚠ J+${retardDepot}</span>` : ""}</td>
         <td>${celluleDepot}</td>
@@ -7617,16 +7686,16 @@
       if(missionH>0.3){
         const rTop = (fraisH>0.3 || sousTH>0.3) ? 0 : 4;
         const tip = `Missions (HT) : ${euroCents(d.missionHT)}`;
-        segs += `<path d="${roundedTopBarPath(x, missionY, barW, missionH, rTop)}" fill="var(--brand-green)" data-tip="${tip.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x, missionY, barW, missionH, rTop)}" fill="var(--brand-green)" data-tip="${esc(tip)}"/>`;
       }
       if(fraisH>0.3){
         const rTop = sousTH>0.3 ? 0 : 4;
         const tip = `Frais refacturables (TTC) : ${euroCents(d.fraisTTC)}`;
-        segs += `<path d="${roundedTopBarPath(x, fraisY, barW, fraisH, rTop)}" fill="var(--chart-beige)" data-tip="${tip.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x, fraisY, barW, fraisH, rTop)}" fill="var(--chart-beige)" data-tip="${esc(tip)}"/>`;
       }
       if(sousTH>0.3){
         const tip = `Sous-traitance à régler (HT) : ${euroCents(d.sousTraitanceHT)}`;
-        segs += `<path d="${roundedTopBarPath(x, sousTY, barW, sousTH, 4)}" fill="url(#hatch-soustraitance-facturation)" data-tip="${tip.replace(/"/g,"&quot;")}"/>`;
+        segs += `<path d="${roundedTopBarPath(x, sousTY, barW, sousTH, 4)}" fill="url(#hatch-soustraitance-facturation)" data-tip="${esc(tip)}"/>`;
       }
       bars += `
         <g>
@@ -7687,8 +7756,8 @@
       // Affaire sans aucune facture (alerte "Affaires non échéancées") : même gabarit de ligne,
       // colonnes propres à la facture vides, pour rester cliquable vers la fiche affaire.
       return `<tr>
-        <td class="affaire-name row-clickable" data-affaire="${f.affaireId}" style="cursor:pointer;">${a ? a.nom : "—"}<span class="sub">${a ? orgName(a.organisationId) : "—"}</span></td>
-        <td>${a ? consultantName(a.pilote) : "—"}</td>
+        <td class="affaire-name row-clickable" data-affaire="${esc(f.affaireId)}" style="cursor:pointer;">${a ? esc(a.nom) : "—"}<span class="sub">${a ? esc(orgName(a.organisationId)) : "—"}</span></td>
+        <td>${a ? esc(consultantName(a.pilote)) : "—"}</td>
         <td>—</td>
         <td><span class="pill neutral">aucune facture</span></td>
         <td>—</td>
@@ -7706,9 +7775,9 @@
     else if(f.statut==="facturée") cellulePaiement = `non réglée${retardPaiement!==null ? ` <span class="badge-overrun">⚠ J+${retardPaiement}</span>` : ""}`;
     else cellulePaiement = "—";
     return `<tr>
-      <td class="affaire-name row-clickable" data-affaire="${f.affaireId}" style="cursor:pointer;">${a ? a.nom : "—"}<span class="sub">${a ? orgName(a.organisationId) : "—"}</span></td>
-      <td>${a ? consultantName(a.pilote) : "—"}</td>
-      <td>${f.numero||"—"}</td>
+      <td class="affaire-name row-clickable" data-affaire="${esc(f.affaireId)}" style="cursor:pointer;">${a ? esc(a.nom) : "—"}<span class="sub">${a ? esc(orgName(a.organisationId)) : "—"}</span></td>
+      <td>${a ? esc(consultantName(a.pilote)) : "—"}</td>
+      <td>${esc(f.numero)||"—"}</td>
       <td>${factureStatutPill(f.statut)}</td>
       <td>${dateFR(f.echeancePrev)}${retardDepot!==null ? ` <span class="badge-overrun">⚠ J+${retardDepot}</span>` : ""}</td>
       <td>${celluleDepot}</td>
@@ -7950,8 +8019,8 @@
     listWrap.innerHTML = concernees.map(al=>{
       const a = affaires.find(x=>x.id===al.affaireId);
       const m = al.missionId ? missions.find(x=>x.id===al.missionId) : null;
-      const titre = m ? m.nom : (a ? a.nom : "—");
-      const sousTitre = m ? `${a ? a.nom : "—"} — ${a ? orgName(a.organisationId) : "—"}` : (a ? orgName(a.organisationId) : "—");
+      const titre = esc(m ? m.nom : (a ? a.nom : "—"));
+      const sousTitre = esc(m ? `${a ? a.nom : "—"} — ${a ? orgName(a.organisationId) : "—"}` : (a ? orgName(a.organisationId) : "—"));
       return `<div class="pilotage-alerte-item">
         <div class="pai-main">
           <div class="pai-title">${titre}</div>
