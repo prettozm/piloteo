@@ -1,0 +1,6 @@
+FROM python:3.13-slim
+WORKDIR /app
+COPY server.py index.html support.html seed.json ./
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PILOTEO_DATA_DIR=/data PILOTEO_BACKUP_DIR=/backups PILOTEO_HOST=0.0.0.0 PILOTEO_PORT=8080
+EXPOSE 8080
+CMD ["python", "server.py"]

@@ -1,0 +1,6 @@
+# Exemple uniquement si aucun reverse proxy HTTPS n'existe déjà.
+# Remplacer piloteo.example.fr par le nom DNS interne/public réellement utilisé.
+piloteo.example.fr {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8080
+}
