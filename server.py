@@ -10,11 +10,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import mimetypes
 import os
 import secrets
 import shutil
+import signal
 import sqlite3
 import threading
 import time
@@ -38,6 +40,18 @@ PBKDF2_ITERATIONS = int(os.environ.get("PILOTEO_PBKDF2_ITERATIONS", "600000"))
 HISTORY_LIMIT = int(os.environ.get("PILOTEO_HISTORY_LIMIT", "100"))
 BACKUP_RETENTION = int(os.environ.get("PILOTEO_BACKUP_RETENTION", "30"))
 SESSION_COOKIE = "piloteo_session"
+SCHEMA_VERSION = 1
+
+# X-Forwarded-For n'est cru que si le pair TCP direct est un proxy de confiance.
+# Par défaut : boucle locale et plages privées, car le contrat de déploiement est
+# « port 8080 jamais publié ailleurs que sur 127.0.0.1, derrière le proxy HTTPS ».
+# Si Pilotéo devait être exposé directement, mettre PILOTEO_TRUSTED_PROXIES à vide.
+_DEFAULT_TRUSTED_PROXIES = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+TRUSTED_PROXIES = [
+    ipaddress.ip_network(part.strip())
+    for part in os.environ.get("PILOTEO_TRUSTED_PROXIES", _DEFAULT_TRUSTED_PROXIES).split(",")
+    if part.strip()
+]
 
 COLLECTION_KEYS = {
     "consultants": "id",
@@ -63,6 +77,19 @@ _LOGIN_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
 _LOGIN_LOCK = threading.Lock()
 _LAST_BACKUP_DAY = None
 _BACKUP_LOCK = threading.Lock()
+_BACKUP_DAY_LOCK = threading.Lock()
+
+
+def log(message: str) -> None:
+    print(f"{iso_now()} {message}", flush=True)
+
+
+def is_trusted_proxy(peer_ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(peer_ip)
+    except ValueError:
+        return False
+    return any(addr in net for net in TRUSTED_PROXIES)
 
 
 def utcnow() -> datetime:
@@ -97,6 +124,11 @@ def verify_password(password: str, salt_b64: str, hash_b64: str, iterations: int
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+# Empreinte factice vérifiée quand l'identifiant n'existe pas, pour que la durée
+# de la réponse ne révèle pas si un compte existe (énumération par mesure de temps).
+_DUMMY_SALT, _DUMMY_HASH, _DUMMY_ITERATIONS = hash_password(secrets.token_urlsafe(24))
 
 
 def load_seed() -> dict:
@@ -165,6 +197,16 @@ def init_db() -> None:
                 );
                 """
             )
+            db_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if db_version > SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"La base ({db_version}) est plus récente que ce serveur ({SCHEMA_VERSION}). "
+                    "Mettre à jour le code avant de démarrer."
+                )
+            # Emplacement des futures migrations : appliquer ici chaque palier
+            # db_version -> db_version+1 avant de tamponner la version courante.
+            if db_version < SCHEMA_VERSION:
+                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             row = conn.execute("SELECT revision FROM app_state WHERE singleton=1").fetchone()
             if not row:
                 seed = load_seed()
@@ -468,18 +510,44 @@ def backup_database(reason: str = "auto") -> Path:
 def maybe_daily_backup() -> None:
     global _LAST_BACKUP_DAY
     day = utcnow().date().isoformat()
-    if _LAST_BACKUP_DAY == day:
-        return
-    _LAST_BACKUP_DAY = day
+    with _BACKUP_DAY_LOCK:
+        if _LAST_BACKUP_DAY == day:
+            return
     try:
-        backup_database("daily")
-    except Exception:
-        pass
+        target = backup_database("daily")
+    except Exception as e:
+        # Ne pas marquer le jour comme fait : la prochaine occasion retentera.
+        log(f"ALERTE sauvegarde quotidienne échouée: {e!r}")
+        return
+    with _BACKUP_DAY_LOCK:
+        _LAST_BACKUP_DAY = day
+    log(f"sauvegarde quotidienne écrite: {target.name}")
+
+
+def purge_expired_sessions() -> None:
+    conn = db_connect()
+    try:
+        conn.execute("DELETE FROM sessions WHERE expires_at < ?", (iso_now(),))
+    finally:
+        conn.close()
+
+
+def housekeeping_loop(stop_event: threading.Event) -> None:
+    """Sauvegarde quotidienne et purge des sessions, même sans aucune écriture métier."""
+    while not stop_event.wait(timeout=3600):
+        try:
+            maybe_daily_backup()
+            purge_expired_sessions()
+        except Exception as e:
+            log(f"housekeeping en échec: {e!r}")
 
 
 def login_rate_limited(ip: str) -> bool:
     now = time.time()
     with _LOGIN_LOCK:
+        # Purge des IP sans échec récent pour que la table ne grossisse pas indéfiniment.
+        for stale in [k for k, q in _LOGIN_ATTEMPTS.items() if not q or now - q[-1] > 900]:
+            _LOGIN_ATTEMPTS.pop(stale, None)
         q = _LOGIN_ATTEMPTS[ip]
         while q and now - q[0] > 900:
             q.popleft()
@@ -488,6 +556,8 @@ def login_rate_limited(ip: str) -> bool:
 
 def record_login_failure(ip: str) -> None:
     with _LOGIN_LOCK:
+        if len(_LOGIN_ATTEMPTS) >= 10_000 and ip not in _LOGIN_ATTEMPTS:
+            return  # borne dure : ne jamais laisser un scan distribué épuiser la mémoire
         _LOGIN_ATTEMPTS[ip].append(time.time())
 
 
@@ -525,15 +595,22 @@ def load_session(conn: sqlite3.Connection, token: str | None):
 
 class PilotHandler(BaseHTTPRequestHandler):
     server_version = "Piloteo/1.0"
+    # Coupe les connexions qui n'envoient rien (slowloris) au lieu de bloquer un thread.
+    timeout = 60
 
     def log_message(self, fmt, *args):
         # Keep standard access log but never bodies/passwords.
-        print(f"{self.address_string()} - {fmt % args}")
+        log(f"{self.address_string()} - {fmt % args}")
 
     @property
     def client_ip(self) -> str:
-        forwarded = self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        return forwarded or self.client_address[0]
+        peer = self.client_address[0]
+        if not is_trusted_proxy(peer):
+            return peer
+        # Dernier élément : celui ajouté par le proxy de confiance le plus proche.
+        # Le premier élément est contrôlable par le client et ne doit jamais être cru.
+        forwarded = self.headers.get("X-Forwarded-For", "").split(",")[-1].strip()
+        return forwarded or peer
 
     def security_headers(self, cache: bool = False):
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -560,6 +637,12 @@ class PilotHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or "0")
         if length > 5_000_000:
             raise ValueError("Requête trop volumineuse")
+        if length:
+            # Un formulaire HTML cross-site ne peut pas envoyer application/json :
+            # l'exiger ferme la voie « login CSRF » via enctype=text/plain.
+            ctype = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            if ctype != "application/json":
+                raise ValueError("Content-Type application/json requis")
         raw = self.rfile.read(length) if length else b"{}"
         return json.loads(raw.decode("utf-8"))
 
@@ -585,7 +668,32 @@ class PilotHandler(BaseHTTPRequestHandler):
             return None
         return conn, user, csrf
 
+    def _guarded(self, handler) -> None:
+        # Un handler qui lève ne doit ni tuer la connexion sans réponse ni fuiter une trace.
+        try:
+            handler()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            log(f"erreur non gérée {self.command} {self.path}: {e!r}")
+            try:
+                self.send_json(500, {"error": "Erreur serveur"})
+            except Exception:
+                pass
+
     def do_GET(self):
+        self._guarded(self._handle_get)
+
+    def do_POST(self):
+        self._guarded(self._handle_post)
+
+    def do_PUT(self):
+        self._guarded(self._handle_put)
+
+    def do_PATCH(self):
+        self._guarded(self._handle_patch)
+
+    def _handle_get(self):
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/health":
@@ -610,7 +718,10 @@ class PilotHandler(BaseHTTPRequestHandler):
             try:
                 row = conn.execute("SELECT revision,state_json,updated_at FROM app_state WHERE singleton=1").fetchone()
                 rev = int(row["revision"])
-                if_rev = int(parse_qs(parsed.query).get("if_revision", ["-1"])[0])
+                try:
+                    if_rev = int(parse_qs(parsed.query).get("if_revision", ["-1"])[0])
+                except ValueError:
+                    if_rev = -1
                 if if_rev == rev:
                     self.send_json(200, {"revision": rev, "changed": False, "updated_at": row["updated_at"]})
                 else:
@@ -659,7 +770,7 @@ class PilotHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def do_POST(self):
+    def _handle_post(self):
         path = urlparse(self.path).path
         if path == "/api/login":
             if login_rate_limited(self.client_ip):
@@ -673,7 +784,11 @@ class PilotHandler(BaseHTTPRequestHandler):
             conn = db_connect()
             try:
                 user = conn.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
-                ok = bool(user and user["active"] and verify_password(password, user["password_salt"], user["password_hash"], int(user["password_iterations"])))
+                if user:
+                    ok = bool(user["active"] and verify_password(password, user["password_salt"], user["password_hash"], int(user["password_iterations"])))
+                else:
+                    verify_password(password, _DUMMY_SALT, _DUMMY_HASH, _DUMMY_ITERATIONS)
+                    ok = False
                 if not ok:
                     record_login_failure(self.client_ip)
                     audit(conn, user["id"] if user else None, username, "login_failed", None, None, self.client_ip)
@@ -738,7 +853,7 @@ class PilotHandler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
-    def do_PUT(self):
+    def _handle_put(self):
         path = urlparse(self.path).path
         if path == "/api/state":
             auth = self.auth(require_csrf=True)
@@ -774,12 +889,12 @@ class PilotHandler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(e)})
             except Exception as e:
                 self.send_json(500, {"error": "Erreur serveur lors de la synchronisation"})
-                print("sync error:", repr(e))
+                log(f"sync error: {e!r}")
             finally: conn.close()
             return
         self.send_error(404)
 
-    def do_PATCH(self):
+    def _handle_patch(self):
         parsed = urlparse(self.path)
         parts = parsed.path.strip("/").split("/")
         if len(parts) == 4 and parts[:3] == ["api", "admin", "users"]:
@@ -830,13 +945,24 @@ def main() -> None:
     init_db()
     maybe_daily_backup()
     httpd = ThreadingHTTPServer((HOST, PORT), PilotHandler)
-    print(f"Pilotéo V1 listening on http://{HOST}:{PORT} — database {DB_PATH}")
+    stop_event = threading.Event()
+    housekeeping = threading.Thread(target=housekeeping_loop, args=(stop_event,), daemon=True, name="housekeeping")
+    housekeeping.start()
+
+    def request_shutdown(signum, frame):
+        log(f"signal {signal.Signals(signum).name} reçu, arrêt en cours")
+        # shutdown() bloque jusqu'à la sortie de serve_forever : à lancer hors du handler.
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
+    log(f"Pilotéo V1 listening on http://{HOST}:{PORT} — database {DB_PATH}")
     try:
         httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
     finally:
+        stop_event.set()
         httpd.server_close()
+        log("arrêt terminé")
 
 
 if __name__ == "__main__":
