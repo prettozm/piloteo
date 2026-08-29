@@ -757,6 +757,13 @@ class PilotHandler(BaseHTTPRequestHandler):
         if path in {"/", "/index.html"}:
             self.serve_file(ROOT / "index.html")
             return
+        if path == "/favicon.ico":
+            # Pas d'icône dédiée : répondre 204 plutôt que 404 (évite du bruit
+            # dans les logs, le navigateur la demande automatiquement).
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.security_headers(cache=True)
+            self.end_headers()
+            return
         self.send_error(404)
 
     def serve_file(self, path: Path):

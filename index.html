@@ -3046,14 +3046,14 @@
     function rowHTML(label, arr, cls){
       const total = arr.reduce((a,b)=>a+b,0);
       return `<tr class="${cls==='total'?'row-affaire-total':''}">
-        <td style="${cls==='sub'?'padding-left:24px;color:var(--text-muted);':cls==='total'?'font-weight:600;':''}">${label}</td>
+        <td style="${cls==='sub'?'padding-left:24px;color:var(--text-muted);':cls==='total'?'font-weight:600;':''}">${esc(label)}</td>
         ${arr.map(v=>`<td class="num">${v? jr(v).replace(' j','') : "–"}</td>`).join("")}
         <td class="num" style="font-weight:600;">${jr(total)}</td>
       </tr>`;
     }
     function subtotRow(label, arr){
       const total = arr.reduce((a,b)=>a+b,0);
-      return `<tr><td>${label}</td>${arr.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(total)}</td></tr>`;
+      return `<tr><td>${esc(label)}</td>${arr.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(total)}</td></tr>`;
     }
 
     const colTotals = new Array(12).fill(0);
@@ -4512,7 +4512,7 @@
       return `<tr>
         <td>${dateFR(r.date)}</td>
         <td>${esc(consultantName(r.consultantId))}</td>
-        <td>${fraisCibleLabel(r)}</td>
+        <td>${esc(fraisCibleLabel(r))}</td>
         <td class="affaire-name">${cat ? esc(cat.label) : "—"}${cat ? `<span class="sub">${esc(cat.categorie)}</span>` : ""}</td>
         <td>${r.affaireId ? (r.refacturable ? "Oui" : "Non") : "—"}</td>
         <td class="num">${euroCents(r.montantHT)}</td>
@@ -4555,14 +4555,14 @@
     function rowHTML(label, arr, cls){
       const total = arr.reduce((a,b)=>a+b,0);
       return `<tr class="${cls==='total'?'row-affaire-total':''}">
-        <td style="${cls==='sub'?'padding-left:24px;color:var(--text-muted);':cls==='total'?'font-weight:600;':''}">${label}</td>
+        <td style="${cls==='sub'?'padding-left:24px;color:var(--text-muted);':cls==='total'?'font-weight:600;':''}">${esc(label)}</td>
         ${arr.map(v=>`<td class="num">${v? jr(v).replace(' j','') : "–"}</td>`).join("")}
         <td class="num" style="font-weight:600;">${jr(total)}</td>
       </tr>`;
     }
     function subtotRow(label, arr){
       const total = arr.reduce((a,b)=>a+b,0);
-      return `<tr><td>${label}</td>${arr.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(total)}</td></tr>`;
+      return `<tr><td>${esc(label)}</td>${arr.map(v=>`<td class="num">${v?jr(v).replace(' j',''):"–"}</td>`).join("")}<td class="num">${jr(total)}</td></tr>`;
     }
 
     rows.push(rowHTML("Missions", fact.map((v,i)=>v+nonFact[i]), "total"));
@@ -4939,7 +4939,7 @@
       const cat = categorieFraisById(r.categorieFraisId);
       return `<tr>
         <td>${dateFR(r.date)}</td>
-        <td>${fraisCibleLabel(r)}</td>
+        <td>${esc(fraisCibleLabel(r))}</td>
         <td class="affaire-name">${cat ? esc(cat.label) : "—"}${cat ? `<span class="sub">${esc(cat.categorie)}</span>` : ""}</td>
         <td>${r.affaireId ? (r.refacturable ? "Oui" : "Non") : "—"}</td>
         <td class="num">${euroCents(r.montantHT)}</td>
@@ -5301,7 +5301,7 @@
         const cat = categorieFraisById(r.categorieFraisId);
         return `<tr>
           <td>${dateFR(r.date)}</td>
-          <td>${fraisCibleLabel(r)}</td>
+          <td>${esc(fraisCibleLabel(r))}</td>
           <td class="affaire-name">${cat ? esc(cat.label) : "—"}${cat ? `<span class="sub">${esc(cat.categorie)}</span>` : ""}</td>
           <td>${r.affaireId ? (r.refacturable ? "Oui" : "Non") : "—"}</td>
           <td class="num">${euroCents(r.montantHT)}</td>
@@ -5625,7 +5625,7 @@
     ];
     const rowHTML = c => `<tr class="row-clickable" data-id="${c.id}" style="cursor:pointer;">
         <td class="affaire-name">${esc(c.nom)}${c.admin?`<span class="sub">Administrateur</span>`:""}</td>
-        <td style="font-family:var(--font-mono);">${c.trigramme||"—"}</td>
+        <td style="font-family:var(--font-mono);">${c.trigramme?esc(c.trigramme):"—"}</td>
         <td>${consultantStatutPill(c.statut)}</td>
         <td>${dateFR(c.dateEmbauche)}</td>
         <td>${c.dateDepart ? dateFR(c.dateDepart) : "—"}</td>
