@@ -35,10 +35,18 @@
     try { return new URLSearchParams(location.search).get("solo"); } catch (e) { return null; }
   }
   function isSolo() {
+    // Forçage au build (déploiement statique dédié) : window.PILOTEO_FORCE_SOLO.
+    if (window.PILOTEO_FORCE_SOLO === true) return true;
     var p = readParam();
     if (p === "1" || p === "true") { try { localStorage.setItem(MODE_KEY, "solo"); } catch (e) {} return true; }
     if (p === "0" || p === "false") { try { localStorage.removeItem(MODE_KEY); } catch (e) {} return false; }
     try { return localStorage.getItem(MODE_KEY) === "solo"; } catch (e) { return false; }
+  }
+
+  // Base de déploiement (« / » à la racine, « /piloteo/ » en sous-dossier type
+  // GitHub Pages). Dérivée du chemin courant pour rester agnostique à l'URL.
+  function basePath() {
+    try { return location.pathname.replace(/[^/]*$/, ""); } catch (e) { return "/"; }
   }
 
   // --- IndexedDB minimal (promisifié), une base propre au solo -------------
@@ -92,7 +100,7 @@
 
   function loadSeed() {
     if (!_origFetch) return Promise.resolve(emptyState());
-    return _origFetch("/seed.json", { credentials: "same-origin" })
+    return _origFetch(basePath() + "seed.json", { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : emptyState(); })
       .then(function (seed) {
         var s = emptyState();
@@ -188,12 +196,45 @@
     };
     window.PiloteoLocal._installed = true;
     console.info("[Pilotéo] mode solo actif — données locales à cet appareil, aucun serveur.");
+    setupBrandingWhenReady();
     setupToolbarWhenReady();
     // Hors ligne après premier chargement (Phase 2B). Nécessite un contexte
-    // sécurisé (https ou localhost) ; échec silencieux sinon.
+    // sécurisé (https ou localhost) ; échec silencieux sinon. Chemins dérivés de
+    // la base de déploiement (racine ou sous-dossier).
     if ("serviceWorker" in navigator && location.protocol !== "file:") {
-      try { navigator.serviceWorker.register("/sw-solo.js").catch(function () {}); } catch (e) {}
+      try { navigator.serviceWorker.register(basePath() + "sw-solo.js", { scope: basePath() }).catch(function () {}); } catch (e) {}
     }
+  }
+
+  // --- Habillage statique (solo) : remplace le gabarit serveur non substitué --
+  // En mode serveur, server.py remplace {{PILOTEO_ORG_NAME}} et sert /brand-logo.
+  // En statique (solo), on fait ce remplacement côté client pour un rendu propre,
+  // sans toucher index.html (réversible, n'affecte jamais le mode serveur).
+  function setupBrandingWhenReady() {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", applyBranding, { once: true });
+    } else { applyBranding(); }
+  }
+  function applyBranding() {
+    var ORG = "Pilotéo";
+    try {
+      // Lien manifeste (installation « ajouter à l'écran d'accueil »).
+      if (!document.querySelector('link[rel="manifest"]')) {
+        var l = document.createElement("link");
+        l.rel = "manifest"; l.href = basePath() + "manifest.webmanifest";
+        document.head.appendChild(l);
+      }
+      // Remplacer le gabarit {{PILOTEO_ORG_NAME}} dans les nœuds texte.
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var nodes = [], n;
+      while ((n = walker.nextNode())) { if (n.nodeValue && n.nodeValue.indexOf("{{PILOTEO_ORG_NAME}}") !== -1) nodes.push(n); }
+      nodes.forEach(function (node) { node.nodeValue = node.nodeValue.split("{{PILOTEO_ORG_NAME}}").join(ORG); });
+      if (document.title.indexOf("{{PILOTEO_ORG_NAME}}") !== -1) document.title = document.title.split("{{PILOTEO_ORG_NAME}}").join(ORG);
+      // Logo : /brand-logo est servi par server.py ; en statique on retombe sur
+      // le logo neutre embarqué.
+      var img = document.querySelector("img.sidebar-logo");
+      if (img) { img.src = basePath() + "assets/logo-default.svg"; img.onerror = function () { img.style.display = "none"; }; }
+    } catch (e) { /* habillage best-effort, jamais bloquant */ }
   }
 
   // --- Barre solo : export / import d'une sauvegarde (.piloteobackup) -------

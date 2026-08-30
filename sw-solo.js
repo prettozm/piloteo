@@ -10,13 +10,16 @@
  * contrôlée : pas de skipWaiting automatique ; un nouveau SW attend.
  */
 var CACHE_VERSION = "piloteo-solo-v1";
+// Chemins RELATIFS à l'emplacement du service worker (résolus contre son scope) :
+// fonctionne à la racine d'un domaine comme dans un sous-dossier (GitHub Pages).
 var PRECACHE = [
-  "/",
-  "/index.html",
-  "/app.js",
-  "/local-backend.js",
-  "/seed.json",
-  "/manifest.webmanifest"
+  "./",
+  "index.html",
+  "app.js",
+  "local-backend.js",
+  "seed.json",
+  "manifest.webmanifest",
+  "assets/logo-default.svg"
 ];
 
 self.addEventListener("install", function (event) {
@@ -51,7 +54,7 @@ self.addEventListener("fetch", function (event) {
     // Navigation : réseau d'abord, repli sur la coquille cachée si hors ligne.
     event.respondWith(
       fetch(req).catch(function () {
-        return caches.match("/index.html").then(function (r) { return r || caches.match("/"); });
+        return caches.match("index.html").then(function (r) { return r || caches.match("./"); });
       })
     );
     return;

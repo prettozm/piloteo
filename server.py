@@ -781,6 +781,11 @@ class PilotHandler(BaseHTTPRequestHandler):
             # Service worker du mode solo (offline). Non enregistré hors solo.
             self.serve_file(ROOT / "sw-solo.js", cache=True)
             return
+        if path == "/manifest.webmanifest":
+            # Manifeste PWA (mode solo). Servi aussi ici pour une instance
+            # serveur ouverte en solo ; inoffensif pour le mode serveur classique.
+            self.serve_file(ROOT / "manifest.webmanifest", cache=True)
+            return
         if path == "/brand-logo":
             # Logo du client s'il a été déposé sur le volume, sinon logo neutre.
             for candidate in (DATA_DIR / "branding" / "logo.svg",

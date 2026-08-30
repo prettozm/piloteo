@@ -1,0 +1,71 @@
+name: Déployer Pilotéo (mode solo) sur GitHub Pages
+
+# Construit une coquille statique du mode SOLO (aucun serveur, données locales
+# au navigateur) et la publie sur GitHub Pages. Le serveur V1 n'est pas concerné.
+#
+# Activation (une seule fois) : dépôt → Settings → Pages → « Build and deployment »
+# → Source : « GitHub Actions ». Puis lancer ce workflow (onglet Actions →
+# « Run workflow ») ou pousser sur une branche déclencheuse.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - main
+      - claude/piloteo-archive-local-first-ozmi9k
+    paths:
+      - "index.html"
+      - "app.js"
+      - "local-backend.js"
+      - "sw-solo.js"
+      - "seed.json"
+      - "manifest.webmanifest"
+      - "assets/**"
+      - ".github/workflows/pages.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assembler la coquille solo
+        run: |
+          set -eu
+          mkdir -p _site/assets
+          cp index.html app.js local-backend.js sw-solo.js seed.json manifest.webmanifest _site/
+          cp assets/logo-default.svg _site/assets/ 2>/dev/null || true
+          # Forcer le mode solo par défaut (pas besoin de ?solo=1 sur le site déployé).
+          # On insère le drapeau juste avant le chargement de local-backend.js.
+          python3 - <<'PY'
+          import io, pathlib
+          p = pathlib.Path("_site/index.html")
+          html = p.read_text(encoding="utf-8")
+          needle = '<script src="local-backend.js"></script>'
+          inject = '<script>window.PILOTEO_FORCE_SOLO=true;</script>\n' + needle
+          if needle in html and 'PILOTEO_FORCE_SOLO' not in html:
+              html = html.replace(needle, inject, 1)
+          p.write_text(html, encoding="utf-8")
+          print("force-solo injecté")
+          PY
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

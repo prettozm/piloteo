@@ -1,0 +1,14 @@
+{
+  "name": "Pilotéo",
+  "short_name": "Pilotéo",
+  "description": "Suivi des affaires, du commercial, des temps et des frais — mode local (vos données restent sur cet appareil).",
+  "start_url": "./?solo=1",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d1417",
+  "theme_color": "#0e7c86",
+  "icons": [
+    { "src": "assets/logo-default.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
