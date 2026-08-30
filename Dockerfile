@@ -3,7 +3,7 @@
 # épinglée, pas de téléchargement à vérifier.
 FROM litestream/litestream:0.3.13 AS litestream
 
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # setpriv (util-linux) : abandon des privilèges en préservant la transmission
 # des signaux (arrêt propre SIGTERM). ca-certificates : TLS pour Litestream → S3.
