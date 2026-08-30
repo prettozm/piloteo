@@ -772,6 +772,11 @@ class PilotHandler(BaseHTTPRequestHandler):
         if path == "/app.js":
             self.serve_file(ROOT / "app.js", cache=True)
             return
+        if path == "/local-backend.js":
+            # Script du mode solo (Phase 2). Inerte tant que le mode solo n'est
+            # pas activé côté client ; ne change pas le comportement serveur V1.
+            self.serve_file(ROOT / "local-backend.js", cache=True)
+            return
         if path == "/brand-logo":
             # Logo du client s'il a été déposé sur le volume, sinon logo neutre.
             for candidate in (DATA_DIR / "branding" / "logo.svg",
