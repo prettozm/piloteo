@@ -16,7 +16,7 @@ os.environ["PILOTEO_DATA_DIR"] = _TMP
 os.environ["PILOTEO_BACKUP_DIR"] = _TMP + "/backups"
 os.environ["PILOTEO_ADMIN_USERNAME"] = "admin"
 os.environ["PILOTEO_ADMIN_PASSWORD"] = "mot-de-passe-de-test-long"
-os.environ["PILOTEO_ADMIN_CONSULTANT_ID"] = "SMR"
+os.environ["PILOTEO_ADMIN_CONSULTANT_ID"] = "CDM"
 os.environ["PILOTEO_ADMIN_NAME"] = "Admin Test"
 
 import server  # noqa: E402

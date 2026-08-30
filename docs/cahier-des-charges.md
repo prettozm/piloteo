@@ -2,7 +2,7 @@
 
 *V4 / V1 exploitable — 29 août 2026 : conserve le périmètre fonctionnel V3 et ajoute le socle multi-utilisateur professionnel minimal (authentification, permissions serveur, persistance partagée, synchronisation, sauvegardes, audit et support administrateur).*
 
-*Outil de suivi des affaires, du commercial, des temps et de la facturation — Novalia Censis*
+*Outil de suivi des affaires, du commercial, des temps et de la facturation — Cabinet Démo*
 
 Ce document décrit Pilotéo tel qu'il existe aujourd'hui. Il ne fait pas référence à l'historique des demandes qui a mené jusqu'ici : il constitue une référence autonome, à mettre à jour à mesure que l'outil évolue. Le détail technique des données (tables, champs, relations) fait l'objet d'un document séparé, [« Pilotéo — Modèle de données »](modele-de-donnees.md), pensé aussi comme une sauvegarde de la structure de l'outil, indépendante de la page web elle-même.
 
@@ -74,7 +74,7 @@ Tableau de bord personnel du consultant connecté : affaires et missions en cour
 Tableau de bord des affaires pilotées par le consultant connecté :
 
 - Mes affaires — même tableau que sur Vue rapide (mêmes colonnes, même bandeau RAF jours/€, même clic vers la fiche affaire).
-- Mes alertes de facturation — même système à 4 boutons que Novalia Censis > Facturation (affaires non échéancées / affaires partiellement échéancées / factures non déposées / factures en souffrance, sélection unique), réduit aux seules affaires dont le consultant connecté est pilote.
+- Mes alertes de facturation — même système à 4 boutons que Cabinet Démo > Facturation (affaires non échéancées / affaires partiellement échéancées / factures non déposées / factures en souffrance, sélection unique), réduit aux seules affaires dont le consultant connecté est pilote.
 - Alertes sur mon pilotage d'affaire — 5 catégories à sélection unique (incohérences budgétaires, absence de caractéristiques, missions non créées, missions à rééchéancer, affaire à rééchéancer — détail en section 6), réduites au même périmètre, avec un détail simplifié en liste (nom de l'affaire ou de la mission, client) et un bouton « Compléter/corriger » vers la fiche affaire concernée.
 
 #### Mon commercial
@@ -96,7 +96,7 @@ Saisie et suivi des frais professionnels du consultant connecté :
 - Les frais saisis se regroupent automatiquement sur une note de frais numérotée `FRAIS_<trigramme>_<année>_<n° séquentiel>`, incrémentée par consultant et par année.
 - Cycle de vie de la note : « en saisie » (le consultant peut encore y ajouter des frais) → « note à payer » (dès qu'il clique sur « Demander le paiement ») → « payée » (action du cabinet, avec date de paiement). Le statut affiché de chaque frais (saisi / à payer / remboursé) en découle automatiquement.
 
-### 5.2 Rubrique « Novalia Censis »
+### 5.2 Rubrique « Cabinet Démo »
 
 #### Vue rapide
 
@@ -169,7 +169,7 @@ Calculées sur les affaires au statut « en production » ou « terminée » uni
 
 #### Les 5 alertes de pilotage d'affaire
 
-Calculées sur les affaires (et missions) dont le consultant est pilote, remontées sur Mon Pilotage (réduites au consultant connecté) et sur Portefeuille (Novalia Censis > Affaires, toutes affaires du cabinet en commercialisation ou en production, ni terminées ni perdues) :
+Calculées sur les affaires (et missions) dont le consultant est pilote, remontées sur Mon Pilotage (réduites au consultant connecté) et sur Portefeuille (Cabinet Démo > Affaires, toutes affaires du cabinet en commercialisation ou en production, ni terminées ni perdues) :
 
 - **Incohérences budgétaires —** missions + frais + sous-traitance ≠ budget vendu (même calcul que le panneau « Cohérence budgétaire » de la fiche affaire), hors affaires perdues.
 - **Absence de caractéristiques —** méthode, type de territoire ou domaine d'intervention non renseigné.
@@ -180,18 +180,18 @@ Calculées sur les affaires (et missions) dont le consultant est pilote, remont�
 ## 7. Visualisations
 
 - **Ma production de missions (Vue rapide, Moi) —** histogramme empilé mensuel en jours, missions non facturable / facturable saisi / facturable projeté (hachuré) ; toujours en jours, pas de bascule €.
-- **Production facturable (Vue rapide, Novalia Censis) —** histogramme empilé mensuel, réalisé + prévisionnel, bascule jours/€ ; une couche optionnelle « Potentiel commercial » (pipeline pondéré) peut se superposer.
-- **Répartition complète des temps (Mes temps et Vue rapide Novalia Censis) —** histogramme empilé mensuel en jours (missions facturable/non facturable, temps internes, absences).
-- **Répartition des temps — vue annuelle (Mes temps et Vue rapide Novalia Censis) —** camembert à 8 catégories (production facturable/non facturable, 5 regroupements de temps internes, autres).
-- **Frais non refacturables (Mes frais et Novalia Censis > Frais) —** deux donuts à l'année : répartition par grande catégorie, et par affaire (regroupée en une seule part) / grand groupe de temps interne.
-- **Taux de charge (Vue rapide Moi et Novalia Censis) —** jauge circulaire, verte jusqu'à 100 %, orange jusqu'à 120 %, rouge au-delà.
+- **Production facturable (Vue rapide, Cabinet Démo) —** histogramme empilé mensuel, réalisé + prévisionnel, bascule jours/€ ; une couche optionnelle « Potentiel commercial » (pipeline pondéré) peut se superposer.
+- **Répartition complète des temps (Mes temps et Vue rapide Cabinet Démo) —** histogramme empilé mensuel en jours (missions facturable/non facturable, temps internes, absences).
+- **Répartition des temps — vue annuelle (Mes temps et Vue rapide Cabinet Démo) —** camembert à 8 catégories (production facturable/non facturable, 5 regroupements de temps internes, autres).
+- **Frais non refacturables (Mes frais et Cabinet Démo > Frais) —** deux donuts à l'année : répartition par grande catégorie, et par affaire (regroupée en une seule part) / grand groupe de temps interne.
+- **Taux de charge (Vue rapide Moi et Cabinet Démo) —** jauge circulaire, verte jusqu'à 100 %, orange jusqu'à 120 %, rouge au-delà.
 - **TJM (Vue rapide, Moi) —** barre positionnant le TJM vendu et le TJM réel de part et d'autre du TJM objectif, colorée selon l'écart.
 - **Répartition gagné / perdu / en décision (Suivi commercial et Mon commercial) —** camembert togglable nombre/montant.
 - **Évolution par année de dépôt (Suivi commercial et Mon commercial) —** histogramme empilé, une barre par année.
 - **Taux de transformation par type de vente —** barres groupées sur les 3 dernières années (Suivi commercial) ; une seule barre par type sur l'année sélectionnée (Mon commercial).
 - **Répartition et performance par pilote commercial (Suivi commercial) —** barres classées par montant déposé, taux de réussite affiché en regard.
-- **Facturation (Novalia Censis > Facturation) —** histogramme empilé par mois : missions, frais refacturables, et une 3ᵉ couche optionnelle sous-traitance à régler.
-- **Frais par mois (Novalia Censis > Frais) —** histogramme empilé refacturable / non refacturable, en TTC.
+- **Facturation (Cabinet Démo > Facturation) —** histogramme empilé par mois : missions, frais refacturables, et une 3ᵉ couche optionnelle sous-traitance à régler.
+- **Frais par mois (Cabinet Démo > Frais) —** histogramme empilé refacturable / non refacturable, en TTC.
 - **Jauges de cohérence budgétaire (fiche affaire) —** missions / frais / sous-traitance vs budget vendu, complétées par une jauge dédiée au pourcentage de frais non refacturables rapporté au montant des missions (dégradé jaune → rouge foncé, curseur positionné au pourcentage exact).
 
 ## 8. Fonctionnalités transversales
@@ -201,7 +201,7 @@ Calculées sur les affaires (et missions) dont le consultant est pilote, remont�
 - Pagination générique : tout tableau de plus de 10 lignes propose un choix d'affichage (10 / 25 / 50 lignes ou Tout) avec navigation page à page ; le pied de tableau continue de totaliser l'ensemble des lignes filtrées, pas seulement la page affichée.
 - Recherche par mots-clés sur le portefeuille d'affaires.
 - Export CSV disponible sur la quasi-totalité des tableaux (ouverture native dans Excel).
-- Identité visuelle du cabinet : palette de couleurs Novalia Censis (vert, ocre, jaune, plus une échelle de couleurs dédiée aux graphiques), logo affiché dans la barre latérale, aucune adaptation au thème sombre du navigateur (choix assumé, fond toujours clair).
+- Identité visuelle du cabinet : palette de couleurs du cabinet (vert, ocre, jaune, plus une échelle de couleurs dédiée aux graphiques), logo affiché dans la barre latérale, aucune adaptation au thème sombre du navigateur (choix assumé, fond toujours clair).
 
 ## 9. Développements identifiés mais non commencés
 

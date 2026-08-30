@@ -16,7 +16,7 @@ os.environ["PILOTEO_DATA_DIR"] = _TMP
 os.environ["PILOTEO_BACKUP_DIR"] = _TMP + "/backups"
 os.environ.setdefault("PILOTEO_ADMIN_USERNAME", "admin")
 os.environ.setdefault("PILOTEO_ADMIN_PASSWORD", "mot-de-passe-de-test-long")
-os.environ.setdefault("PILOTEO_ADMIN_CONSULTANT_ID", "SMR")
+os.environ.setdefault("PILOTEO_ADMIN_CONSULTANT_ID", "CDM")
 
 import server  # noqa: E402
 
@@ -60,7 +60,7 @@ def base_state():
 
 USER1 = {"id": 1, "role": "user", "consultant_id": "U1", "username": "u1"}
 USER2 = {"id": 2, "role": "user", "consultant_id": "U2", "username": "u2"}
-ADMIN = {"id": 9, "role": "admin", "consultant_id": "SMR", "username": "admin"}
+ADMIN = {"id": 9, "role": "admin", "consultant_id": "CDM", "username": "admin"}
 
 
 class FilterStateBranches(unittest.TestCase):

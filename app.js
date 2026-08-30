@@ -18,12 +18,12 @@
   const today = new Date();
   const CURRENT_YEAR = today.getFullYear();
 
-  // NB : Thomas Petit passe à 80% à partir du 1er avril (exemple de temps partiel par période) ;
-  // Léa Fontaine arrive le 12 juin de l'année en cours (exemple de prorata d'ETP à l'arrivée) ;
-  // Nathan Perrot est stagiaire (statut à part, compté forfaitairement à 25% de présence) ;
-  // Marc Delisle est parti — embauché puis reparti sur l'année précédente (exemple de présence
+  // NB : Antoine Verger passe à 80% à partir du 1er avril (exemple de temps partiel par période) ;
+  // Élise Salmon arrive le 12 juin de l'année en cours (exemple de prorata d'ETP à l'arrivée) ;
+  // Noah Granger est stagiaire (statut à part, compté forfaitairement à 25% de présence) ;
+  // Martin Roux est parti — embauché puis reparti sur l'année précédente (exemple de présence
   // entièrement contenue dans une année passée, et de panorama Société différent d'une année à l'autre).
-  // trigramme : 2 premières lettres du prénom + 1ʳᵉ lettre du nom (ex. Xavier Dubreuil → XAD),
+  // trigramme : 2 premières lettres du prénom + 1ʳᵉ lettre du nom (ex. Robin Blanchet → RBL),
   // calculé une fois à la création du consultant puis figé (comme id) — sert de base aux numéros
   // de notes de frais (voir bordereauxFrais plus bas).
   let consultants = [];
@@ -63,7 +63,7 @@
   ];
 
   // NB : l'exemple de dépassement d'enveloppe (bascule auto en non facturable) est porté par
-  // M8 (Enquête usagers, ADEME) — voir les saisies plus bas.
+  // M8 (Enquête usagers, ATD) — voir les saisies plus bas.
   let missions = [];
   let nextMissionId = 12;
 
@@ -3492,7 +3492,7 @@
   }
 
   // Trigramme réglementaire : 2 premières lettres du prénom + 1ʳᵉ lettre du nom (accents retirés),
-  // rendu unique en cas d'homonymie (2ᵉ Xavier Dubreuil → XAD2, etc.) — utilisé dans les numéros de
+  // rendu unique en cas d'homonymie (2ᵉ Robin Blanchet → RBL2, etc.) — utilisé dans les numéros de
   // notes de frais (FRAIS_<trigramme>_<année>_<n°>).
   function computeTrigramme(nom){
     const strip = s => (s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[^A-Z]/g,"");

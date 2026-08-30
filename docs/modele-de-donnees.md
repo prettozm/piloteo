@@ -32,7 +32,7 @@ Quatorze entités portent l'ensemble des données de Pilotéo. Les identifiants 
 | Champ | Type | Signification |
 |---|---|---|
 | `id` | texte | Identifiant unique du consultant. Attribué à la création (voir trigramme ci-dessous). |
-| `nom` | texte | Nom complet affiché (ex. « Xavier Dubreuil »). |
+| `nom` | texte | Nom complet affiché (ex. « Robin Blanchet »). |
 | `trigramme` | texte | 3 lettres : les 2 premières du prénom + la 1re du nom, en majuscules, calculé automatiquement à la création (fonction `computeTrigramme`). En cas de doublon, une variante est générée. Lecture seule ensuite — utilisé dans la numérotation des notes de frais. |
 | `statut` | texte | « en poste », « stagiaire » ou « parti ». |
 | `dateEmbauche` | date (AAAA-MM-JJ) | Date d'arrivée au cabinet. |
@@ -159,14 +159,14 @@ Exemple réel du jeu de données : un repas au restaurant peut porter une ligne 
 
 | Champ | Type | Signification |
 |---|---|---|
-| `numero` | texte | Format `FRAIS_<trigramme>_<année>_<n° séquentiel sur 3 chiffres>`, ex. « FRAIS_XAD_2026_002 ». Incrémenté par consultant et par année (champ seq). |
+| `numero` | texte | Format `FRAIS_<trigramme>_<année>_<n° séquentiel sur 3 chiffres>`, ex. « FRAIS_RBL_2026_002 ». Incrémenté par consultant et par année (champ seq). |
 | `consultantId` | référence → Consultant | Titulaire de la note. |
 | `annee` | nombre | Année de la note. |
 | `seq` | nombre | Rang de la note pour ce consultant sur cette année (sert à composer numero). |
 | `statut` | texte (3 valeurs) | « en saisie » → « note à payer » → « payée ». |
 | `datePaiement` | date ou null | Renseignée uniquement au passage à « payée » (action du cabinet). |
 
-Cycle de vie : un seul bordereau « en saisie » à la fois par consultant et par année — tout nouveau frais rejoint ce bordereau ouvert. Le consultant le fait passer à « note à payer » depuis « Mes frais » ; un administrateur le fait passer à « payée » avec la date du jour depuis Novalia Censis > Frais (directement depuis le tableau « Notes de frais », ou depuis le détail d'une note), ce qui fait passer automatiquement tous ses frais en statut affiché « remboursé ». Un nouveau frais saisi après clôture ouvre le bordereau suivant.
+Cycle de vie : un seul bordereau « en saisie » à la fois par consultant et par année — tout nouveau frais rejoint ce bordereau ouvert. Le consultant le fait passer à « note à payer » depuis « Mes frais » ; un administrateur le fait passer à « payée » avec la date du jour depuis Cabinet Démo > Frais (directement depuis le tableau « Notes de frais », ou depuis le détail d'une note), ce qui fait passer automatiquement tous ses frais en statut affiché « remboursé ». Un nouveau frais saisi après clôture ouvre le bordereau suivant.
 
 ## 12. Facture
 
