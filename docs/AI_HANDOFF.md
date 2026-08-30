@@ -42,6 +42,17 @@ Pilotéo était un Artifact Claude constitué d'un unique `index.html`. La V1 ne
 8. Une action support faite en « Voir sa page » reste auditée sous le compte administrateur réel.
 9. Ne pas normaliser toute la base ou changer de framework sans besoin concret démontré.
 10. Garder `cahier-des-charges.md` et `modele-de-donnees.md` cohérents avec les évolutions métier.
+11. **`seed.json` ne contient que des données fictives** (produit white-label). Regénérer via `scripts/make_demo_seed.py` ; jamais de données client réelles dans le dépôt.
+12. **Tout le JS reste servi depuis des fichiers** (`app.js`, `support.js`) — aucun script ni gestionnaire d'événement en ligne, pour conserver la CSP `script-src 'self'`.
+13. **Toute donnée affichée est échappée** (`esc()`), y compris via un helper/variable — vérifié par `tests/e2e/smoke.mjs`.
+
+## Nature du produit : white-label, multi-clients
+
+Pilotéo se déploie en **une instance isolée par client** (Fly.io : app, volume,
+secrets et URL distincts — `scripts/fly-new-client.sh`). La marque est
+paramétrable : `PILOTEO_ORG_NAME` (injecté côté serveur) et un logo déposé sur le
+volume (`/data/branding`, route `/brand-logo`). Contrainte : **une seule machine
+par client** (SQLite mono-instance). Voir `docs/DEPLOIEMENT.md`.
 
 ## Modèle de droits actuel
 
