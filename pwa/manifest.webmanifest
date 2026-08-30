@@ -1,0 +1,36 @@
+{
+  "$comment": "Manifeste PWA Pilotéo Next — docs/next/01_CDC_LOCAL_FIRST.md §18, docs/next/02_ARCHITECTURE_CIBLE.md §14. Toutes les valeurs de marque ci-dessous (name, short_name, couleurs, icônes) sont des PLACEHOLDERS white-label à remplacer lors de l'habillage final ; aucune n'engage un rendu final. Les icônes référencées (./icons/icon-192.png, ./icons/icon-512.png, ./icons/icon-maskable-512.png) NE SONT PAS créées par ce lot — seule leur déclaration l'est. Avant mise en production : fournir ces 3 PNG (192x192, 512x512, 512x512 avec zone de sécurité maskable ~ safe-zone 80%), sinon l'installation PWA affichera une icône par défaut du navigateur mais restera fonctionnelle.",
+  "id": "/",
+  "name": "Pilotéo",
+  "short_name": "Pilotéo",
+  "description": "Suivi d'activité et de facturation — mode local-first.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "fr",
+  "dir": "ltr",
+  "theme_color": "#0f172a",
+  "background_color": "#ffffff",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
