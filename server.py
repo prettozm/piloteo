@@ -772,6 +772,10 @@ class PilotHandler(BaseHTTPRequestHandler):
         if path == "/app.js":
             self.serve_file(ROOT / "app.js", cache=True)
             return
+        if path == "/piloteo-events.js":
+            # Journal d'événements du mode solo (Phase 3). Inerte hors solo.
+            self.serve_file(ROOT / "piloteo-events.js", cache=True)
+            return
         if path == "/local-backend.js":
             # Script du mode solo (Phase 2). Inerte tant que le mode solo n'est
             # pas activé côté client ; ne change pas le comportement serveur V1.

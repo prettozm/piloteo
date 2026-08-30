@@ -53,7 +53,8 @@
   var DB_NAME = "piloteo-solo";
   var DB_VERSION = 1;
   var STORE = "kv";               // { key, value }
-  var STATE_KEY = "app_state";    // { revision, state }
+  var STATE_KEY = "app_state";    // { revision, state }  (snapshot rendu à l'app)
+  var JOURNAL_KEY = "event_log";  // [event, ...]  (journal Phase 3, rejouable)
 
   function openDb() {
     return new Promise(function (resolve, reject) {
@@ -115,9 +116,33 @@
       if (rec && rec.state) return rec;
       return loadSeed().then(function (state) {
         var fresh = { revision: 1, state: state };
-        return idbPut(STATE_KEY, fresh).then(function () { return fresh; });
+        return idbPut(STATE_KEY, fresh).then(function () {
+          // Phase 3 : journal genesis (un événement create par entité du seed).
+          var PE = window.PiloteoEvents;
+          if (PE) {
+            try { return idbPut(JOURNAL_KEY, PE.diffToEvents({}, state, { actorId: "solo" })).then(function () { return fresh; }); }
+            catch (e) { return fresh; }
+          }
+          return fresh;
+        });
       });
     });
+  }
+
+  // Phase 3 : à chaque écriture, transformer la différence snapshot->nouvel état
+  // en événements et les ajouter au journal (à côté du snapshot). Best-effort :
+  // n'altère jamais la réponse rendue à l'application.
+  function appendJournal(prevState, nextState) {
+    var PE = window.PiloteoEvents;
+    if (!PE) return Promise.resolve();
+    return idbGet(JOURNAL_KEY).then(function (journal) {
+      journal = Array.isArray(journal) ? journal : [];
+      var proj = PE.replay(journal);
+      var events = PE.diffToEvents(prevState || {}, nextState || {}, { actorId: "solo", versions: proj.__versions });
+      var valid = events.filter(function (e) { return PE.validate(e.entityType, e.operation, e.payload).ok; });
+      if (!valid.length) return;
+      return idbPut(JOURNAL_KEY, journal.concat(valid));
+    }).catch(function () { /* journal best-effort */ });
   }
 
   function soloUser(state) {
@@ -162,10 +187,14 @@
       if (!state || typeof state !== "object") return Promise.resolve(json(400, { error: "état manquant" }));
       return getRecord().then(function (rec) {
         var nextRevision = (rec.revision || 0) + 1;
-        var saved = { revision: nextRevision, state: state };
-        return idbPut(STATE_KEY, saved).then(function () {
-          // Un seul client en solo : jamais de conflit, jamais de filtrage.
-          return json(200, { ok: true, revision: nextRevision, state: state, changes: {} });
+        var prevState = rec.state;
+        // Journal Phase 3 (additif) puis snapshot (source rendue à l'app : ordre
+        // intact, aucun réordonnancement côté UI).
+        return appendJournal(prevState, state).then(function () {
+          return idbPut(STATE_KEY, { revision: nextRevision, state: state }).then(function () {
+            // Un seul client en solo : jamais de conflit, jamais de filtrage.
+            return json(200, { ok: true, revision: nextRevision, state: state, changes: {} });
+          });
         });
       });
     }
@@ -344,7 +373,26 @@
       return idbPut(STATE_KEY, next).then(function () { return next; });
     }); },
     _stateKey: STATE_KEY,
-    _collections: COLLECTIONS
+    _collections: COLLECTIONS,
+    _getJournal: function () { return idbGet(JOURNAL_KEY).then(function (j) { return Array.isArray(j) ? j : []; }); },
+    // Invariant Phase 3 : l'état reconstruit en rejouant le journal doit être
+    // identique (ensembliste) au snapshot courant.
+    _verifyReplay: function () {
+      var PE = window.PiloteoEvents;
+      return Promise.all([idbGet(STATE_KEY), idbGet(JOURNAL_KEY)]).then(function (r) {
+        var snap = r[0] && r[0].state; var journal = Array.isArray(r[1]) ? r[1] : [];
+        if (!PE || !snap) return { ok: false, reason: "PiloteoEvents ou snapshot indisponible" };
+        var rebuilt = PE.rebuildState(journal);
+        var ok = COLLECTIONS.every(function (c) {
+          var key = PE.ENTITY_KEYS[c], a = {}, b = {};
+          (snap[c] || []).forEach(function (x) { a[String(x[key])] = JSON.stringify(x); });
+          (rebuilt[c] || []).forEach(function (x) { b[String(x[key])] = JSON.stringify(x); });
+          var ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+          return JSON.stringify(ka) === JSON.stringify(kb) && ka.every(function (id) { return a[id] === b[id]; });
+        });
+        return { ok: ok, journalLength: journal.length };
+      });
+    }
   };
 
   // Auto-installation synchrone AVANT app.js si le mode solo est actif.

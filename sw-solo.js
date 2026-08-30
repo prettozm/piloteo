@@ -16,6 +16,7 @@ var PRECACHE = [
   "./",
   "index.html",
   "app.js",
+  "piloteo-events.js",
   "local-backend.js",
   "seed.json",
   "manifest.webmanifest",
