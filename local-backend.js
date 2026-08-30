@@ -188,6 +188,108 @@
     };
     window.PiloteoLocal._installed = true;
     console.info("[Pilotéo] mode solo actif — données locales à cet appareil, aucun serveur.");
+    setupToolbarWhenReady();
+    // Hors ligne après premier chargement (Phase 2B). Nécessite un contexte
+    // sécurisé (https ou localhost) ; échec silencieux sinon.
+    if ("serviceWorker" in navigator && location.protocol !== "file:") {
+      try { navigator.serviceWorker.register("/sw-solo.js").catch(function () {}); } catch (e) {}
+    }
+  }
+
+  // --- Barre solo : export / import d'une sauvegarde (.piloteobackup) -------
+  var BACKUP_FORMAT = "piloteo-backup-v1";
+
+  function download(filename, text) {
+    var blob = new Blob([text], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+  }
+
+  function exportBackup() {
+    return getRecord().then(function (rec) {
+      var backup = {
+        format: BACKUP_FORMAT,
+        exportedAt: new Date().toISOString(),
+        revision: rec.revision,
+        manifest: { collections: COLLECTIONS.reduce(function (m, k) { m[k] = (rec.state[k] || []).length; return m; }, {}) },
+        state: rec.state
+      };
+      var stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      download("piloteo-solo-" + stamp + ".piloteobackup", JSON.stringify(backup, null, 2));
+      return backup;
+    });
+  }
+
+  function importBackupText(text) {
+    var data;
+    try { data = JSON.parse(text); } catch (e) { throw new Error("Fichier illisible (JSON invalide)."); }
+    if (!data || data.format !== BACKUP_FORMAT || !data.state || typeof data.state !== "object") {
+      throw new Error("Ce fichier n'est pas une sauvegarde Pilotéo valide.");
+    }
+    var state = {};
+    COLLECTIONS.forEach(function (k) { state[k] = Array.isArray(data.state[k]) ? data.state[k] : []; });
+    return window.PiloteoLocal._putState(state);
+  }
+
+  function setupToolbarWhenReady() {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", buildToolbar, { once: true });
+    } else {
+      buildToolbar();
+    }
+  }
+
+  function buildToolbar() {
+    if (document.getElementById("piloteo-solo-bar")) return;
+    var bar = document.createElement("div");
+    bar.id = "piloteo-solo-bar";
+    bar.setAttribute("style",
+      "position:fixed;right:14px;bottom:14px;z-index:2147483000;display:flex;gap:8px;align-items:center;" +
+      "background:rgba(20,32,40,.92);color:#eaf1f4;border:1px solid rgba(255,255,255,.14);" +
+      "border-radius:999px;padding:7px 10px 7px 14px;font:500 13px/1 system-ui,-apple-system,sans-serif;" +
+      "box-shadow:0 6px 22px rgba(0,0,0,.28);backdrop-filter:blur(6px);");
+    var label = document.createElement("span");
+    label.textContent = "Solo";
+    label.setAttribute("style", "opacity:.75;letter-spacing:.02em;");
+    var btnExport = mkBtn("Exporter", exportBtn);
+    var btnImport = mkBtn("Importer", importBtn);
+    var file = document.createElement("input");
+    file.type = "file"; file.accept = ".piloteobackup,.json,application/json";
+    file.setAttribute("style", "display:none;");
+    file.addEventListener("change", function () {
+      var f = file.files && file.files[0]; if (!f) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          Promise.resolve(importBackupText(String(reader.result))).then(function () {
+            alert("Sauvegarde importée. L'application va se recharger.");
+            location.reload();
+          }).catch(function (e) { alert("Import impossible : " + e.message); });
+        } catch (e) { alert("Import impossible : " + e.message); }
+      };
+      reader.readAsText(f);
+      file.value = "";
+    });
+    bar.appendChild(label); bar.appendChild(btnExport); bar.appendChild(btnImport); bar.appendChild(file);
+    document.body.appendChild(bar);
+
+    function exportBtn() { exportBackup().catch(function (e) { alert("Export impossible : " + e.message); }); }
+    function importBtn() { file.click(); }
+  }
+
+  function mkBtn(text, onClick) {
+    var b = document.createElement("button");
+    b.type = "button"; b.textContent = text;
+    b.setAttribute("style",
+      "font:600 13px/1 system-ui,sans-serif;color:#eaf1f4;background:rgba(255,255,255,.10);" +
+      "border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:7px 12px;cursor:pointer;");
+    b.addEventListener("click", onClick);
+    b.addEventListener("mouseenter", function () { b.style.background = "rgba(255,255,255,.20)"; });
+    b.addEventListener("mouseleave", function () { b.style.background = "rgba(255,255,255,.10)"; });
+    return b;
   }
 
   window.PiloteoLocal = {

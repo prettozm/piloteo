@@ -777,6 +777,10 @@ class PilotHandler(BaseHTTPRequestHandler):
             # pas activé côté client ; ne change pas le comportement serveur V1.
             self.serve_file(ROOT / "local-backend.js", cache=True)
             return
+        if path == "/sw-solo.js":
+            # Service worker du mode solo (offline). Non enregistré hors solo.
+            self.serve_file(ROOT / "sw-solo.js", cache=True)
+            return
         if path == "/brand-logo":
             # Logo du client s'il a été déposé sur le volume, sinon logo neutre.
             for candidate in (DATA_DIR / "branding" / "logo.svg",
