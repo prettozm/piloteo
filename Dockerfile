@@ -1,7 +1,7 @@
 # Binaire Litestream (réplication SQLite hors-site, activée seulement si
 # LITESTREAM_REPLICA_URL est défini au run) — copié depuis l'image officielle
 # épinglée, pas de téléchargement à vérifier.
-FROM litestream/litestream:0.3.13 AS litestream
+FROM litestream/litestream:0.5.16 AS litestream
 
 FROM python:3.13-slim
 
