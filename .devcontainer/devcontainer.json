@@ -1,0 +1,19 @@
+{
+  "name": "Piloteo",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": { "label": "Piloteo", "onAutoForward": "notify" }
+  },
+  "containerEnv": {
+    "PILOTEO_DATA_DIR": "/tmp/piloteo-data",
+    "PILOTEO_BACKUP_DIR": "/tmp/piloteo-data/backups",
+    "PILOTEO_ADMIN_USERNAME": "admin",
+    "PILOTEO_ADMIN_PASSWORD": "mot-de-passe-de-dev-uniquement",
+    "PILOTEO_ADMIN_CONSULTANT_ID": "CDM",
+    "PILOTEO_ADMIN_NAME": "Admin Dev",
+    "PILOTEO_ORG_NAME": "Pilotéo (recette)"
+  },
+  "postCreateCommand": "python -m unittest discover -s tests",
+  "postAttachCommand": "echo 'Lancer: python server.py — puis ouvrir le port 8080 (rendre Public pour une recette partagée; données de démo uniquement).'"
+}

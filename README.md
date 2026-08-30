@@ -1,6 +1,6 @@
 # Pilotéo V1
 
-Pilotéo est l'outil de suivi des affaires, du commercial, des temps, des frais et de la facturation de Novalia Censis.
+Pilotéo est un outil de suivi des affaires, du commercial, des temps, des frais et de la facturation pour cabinet de conseil. Il est **white-label** : chaque client le déploie avec son propre nom (`PILOTEO_ORG_NAME`) et son logo, sur une instance isolée.
 
 Cette V1 transforme le prototype HTML autonome en **petite application professionnelle multi-utilisateur** sans réécrire son métier : l'interface et les règles fonctionnelles restent dans `index.html`, tandis que `server.py` apporte l'authentification, les droits côté serveur, la persistance SQLite, la synchronisation, l'audit et les sauvegardes.
 

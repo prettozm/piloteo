@@ -1,2506 +1,2506 @@
 {
-  "consultants": [
+ "consultants": [
+  {
+   "id": "RBL",
+   "nom": "Robin Blanchet",
+   "trigramme": "RBL",
+   "dateEmbauche": "2019-03-01",
+   "dateDepart": null,
+   "tjmBase": 620,
+   "admin": false,
+   "statut": "en poste",
+   "tempsPartiel": []
+  },
+  {
+   "id": "MLN",
+   "nom": "Morgane Lenoir",
+   "trigramme": "MLN",
+   "dateEmbauche": "2020-09-15",
+   "dateDepart": null,
+   "tjmBase": 580,
+   "admin": false,
+   "statut": "en poste",
+   "tempsPartiel": []
+  },
+  {
+   "id": "AVR",
+   "nom": "Antoine Verger",
+   "trigramme": "AVR",
+   "dateEmbauche": "2017-01-10",
+   "dateDepart": null,
+   "tjmBase": 700,
+   "admin": false,
+   "statut": "en poste",
+   "tempsPartiel": [
     {
-      "id": "XDB",
-      "nom": "Xavier Dubreuil",
-      "trigramme": "XAD",
-      "dateEmbauche": "2019-03-01",
-      "dateDepart": null,
-      "tjmBase": 620,
-      "admin": false,
-      "statut": "en poste",
-      "tempsPartiel": []
-    },
-    {
-      "id": "CLR",
-      "nom": "Camille Leroy",
-      "trigramme": "CAL",
-      "dateEmbauche": "2020-09-15",
-      "dateDepart": null,
-      "tjmBase": 580,
-      "admin": false,
-      "statut": "en poste",
-      "tempsPartiel": []
-    },
-    {
-      "id": "TPT",
-      "nom": "Thomas Petit",
-      "trigramme": "THP",
-      "dateEmbauche": "2017-01-10",
-      "dateDepart": null,
-      "tjmBase": 700,
-      "admin": false,
-      "statut": "en poste",
-      "tempsPartiel": [
-        {
-          "debut": "2026-04-01",
-          "fin": null,
-          "pct": 80
-        }
-      ]
-    },
-    {
-      "id": "SMR",
-      "nom": "Sophie Moreau",
-      "trigramme": "SOM",
-      "dateEmbauche": "2015-06-01",
-      "dateDepart": null,
-      "tjmBase": 750,
-      "admin": true,
-      "statut": "en poste",
-      "tempsPartiel": []
-    },
-    {
-      "id": "LFT",
-      "nom": "Léa Fontaine",
-      "trigramme": "LEF",
-      "dateEmbauche": "2026-06-12",
-      "dateDepart": null,
-      "tjmBase": 560,
-      "admin": false,
-      "statut": "en poste",
-      "tempsPartiel": []
-    },
-    {
-      "id": "NPR",
-      "nom": "Nathan Perrot",
-      "trigramme": "NAP",
-      "dateEmbauche": "2026-02-02",
-      "dateDepart": "2026-07-31",
-      "tjmBase": 350,
-      "admin": false,
-      "statut": "stagiaire",
-      "tempsPartiel": []
-    },
-    {
-      "id": "MDL",
-      "nom": "Marc Delisle",
-      "trigramme": "MAD",
-      "dateEmbauche": "2025-06-02",
-      "dateDepart": "2025-10-31",
-      "tjmBase": 650,
-      "admin": false,
-      "statut": "parti",
-      "tempsPartiel": []
+     "debut": "2026-04-01",
+     "fin": null,
+     "pct": 80
     }
-  ],
-  "organisations": [
+   ]
+  },
+  {
+   "id": "CDM",
+   "nom": "Claire Dumont",
+   "trigramme": "CDM",
+   "dateEmbauche": "2015-06-01",
+   "dateDepart": null,
+   "tjmBase": 750,
+   "admin": true,
+   "statut": "en poste",
+   "tempsPartiel": []
+  },
+  {
+   "id": "ELS",
+   "nom": "Élise Salmon",
+   "trigramme": "ELS",
+   "dateEmbauche": "2026-06-12",
+   "dateDepart": null,
+   "tjmBase": 560,
+   "admin": false,
+   "statut": "en poste",
+   "tempsPartiel": []
+  },
+  {
+   "id": "NGR",
+   "nom": "Noah Granger",
+   "trigramme": "NGR",
+   "dateEmbauche": "2026-02-02",
+   "dateDepart": "2026-07-31",
+   "tjmBase": 350,
+   "admin": false,
+   "statut": "stagiaire",
+   "tempsPartiel": []
+  },
+  {
+   "id": "MRX",
+   "nom": "Martin Roux",
+   "trigramme": "MRX",
+   "dateEmbauche": "2025-06-02",
+   "dateDepart": "2025-10-31",
+   "tjmBase": 650,
+   "admin": false,
+   "statut": "parti",
+   "tempsPartiel": []
+  }
+ ],
+ "organisations": [
+  {
+   "id": "O1",
+   "nom": "Agglomération de Valberny",
+   "type": "Collectivité",
+   "adresse": ""
+  },
+  {
+   "id": "O2",
+   "nom": "Agence Territoires Durables",
+   "type": "Services de l'État",
+   "adresse": ""
+  },
+  {
+   "id": "O3",
+   "nom": "Fondation Horizon Solidaire",
+   "type": "ESS",
+   "adresse": ""
+  },
+  {
+   "id": "O4",
+   "nom": "BâtiVert SAS",
+   "type": "Entreprises",
+   "adresse": ""
+  },
+  {
+   "id": "O5",
+   "nom": "Meridio Ingénierie",
+   "type": "Entreprises",
+   "adresse": ""
+  },
+  {
+   "id": "O6",
+   "nom": "Ondine Études",
+   "type": "Entreprises",
+   "adresse": ""
+  },
+  {
+   "id": "O7",
+   "nom": "Département du Valmont",
+   "type": "Collectivité",
+   "adresse": ""
+  },
+  {
+   "id": "O8",
+   "nom": "Solerra Habitat",
+   "type": "Entreprises",
+   "adresse": ""
+  }
+ ],
+ "affaires": [
+  {
+   "id": "A1",
+   "nom": "Accompagnement SDAASP",
+   "organisationId": "O1",
+   "nomAbrege": "SDAASP Valberny",
+   "motsCles": "#collectivité #accessibilité",
+   "pilote": "RBL",
+   "piloteCommercial": "RBL",
+   "typeVente": "Appel d'offres",
+   "pctReussite": 80,
+   "dateDepot": "2025-10-04",
+   "statut": "en production",
+   "budget": 42000,
+   "jours": 60,
+   "frais": 1200,
+   "dateDebut": "2026-01-06",
+   "dateFin": "2027-02-28",
+   "methodes": [
+    "ME2",
+    "ME11"
+   ],
+   "territoires": [
+    "TE6"
+   ],
+   "domaines": [
+    "DO2"
+   ],
+   "partenaires": [
     {
-      "id": "O1",
-      "nom": "Métropole de Rennes",
-      "type": "Collectivité",
-      "adresse": ""
-    },
-    {
-      "id": "O2",
-      "nom": "ADEME",
-      "type": "Services de l'État",
-      "adresse": ""
-    },
-    {
-      "id": "O3",
-      "nom": "Fondation Abbé Pierre",
-      "type": "ESS",
-      "adresse": ""
-    },
-    {
-      "id": "O4",
-      "nom": "GreenBuild SAS",
-      "type": "Entreprises",
-      "adresse": ""
-    },
-    {
-      "id": "O5",
-      "nom": "Solstice Ingénierie",
-      "type": "Entreprises",
-      "adresse": ""
-    },
-    {
-      "id": "O6",
-      "nom": "Vallon Études",
-      "type": "Entreprises",
-      "adresse": ""
-    },
-    {
-      "id": "O7",
-      "nom": "Département de l'Isère",
-      "type": "Collectivité",
-      "adresse": ""
-    },
-    {
-      "id": "O8",
-      "nom": "Ecobati Habitat",
-      "type": "Entreprises",
-      "adresse": ""
+     "organisationId": "O5",
+     "role": "co-traitant",
+     "montant": 0
     }
-  ],
-  "affaires": [
+   ],
+   "repartitionCommerciale": [
     {
-      "id": "A1",
-      "nom": "Accompagnement SDAASP",
-      "organisationId": "O1",
-      "nomAbrege": "SDAASP Rennes",
-      "motsCles": "#collectivité #accessibilité",
-      "pilote": "XDB",
-      "piloteCommercial": "XDB",
-      "typeVente": "Appel d'offres",
-      "pctReussite": 80,
-      "dateDepot": "2025-10-04",
-      "statut": "en production",
-      "budget": 42000,
-      "jours": 60,
-      "frais": 1200,
-      "dateDebut": "2026-01-06",
-      "dateFin": "2027-02-28",
-      "methodes": [
-        "ME2",
-        "ME11"
-      ],
-      "territoires": [
-        "TE6"
-      ],
-      "domaines": [
-        "DO2"
-      ],
-      "partenaires": [
-        {
-          "organisationId": "O5",
-          "role": "co-traitant",
-          "montant": 0
-        }
-      ],
-      "repartitionCommerciale": [
-        {
-          "consultantId": "XDB",
-          "pct": 70
-        },
-        {
-          "consultantId": "SMR",
-          "pct": 30
-        }
-      ]
+     "consultantId": "RBL",
+     "pct": 70
     },
     {
-      "id": "A2",
-      "nom": "Étude mobilité douce",
-      "organisationId": "O2",
-      "nomAbrege": "Mobilité ADEME",
-      "motsCles": "#mobilité #environnement",
-      "pilote": "CLR",
-      "piloteCommercial": "CLR",
-      "typeVente": "Appel à projet",
-      "pctReussite": 60,
-      "dateDepot": "2026-01-15",
-      "statut": "en production",
-      "budget": 24000,
-      "jours": 32,
-      "frais": 0,
-      "dateDebut": "2026-02-01",
-      "dateFin": "2026-09-30",
-      "methodes": [
-        "ME5"
-      ],
-      "territoires": [
-        "TE4"
-      ],
-      "domaines": [
-        "DO3"
-      ],
-      "partenaires": [
-        {
-          "organisationId": "O6",
-          "role": "sous-traitant indirect",
-          "montant": 3500
-        }
-      ],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A3",
-      "nom": "Plan stratégique 2027",
-      "organisationId": "O3",
-      "nomAbrege": "Stratégie FAP",
-      "motsCles": "#ess #stratégie",
-      "pilote": "TPT",
-      "piloteCommercial": "TPT",
-      "typeVente": "Gré à gré",
-      "pctReussite": 40,
-      "dateDepot": "2026-08-20",
-      "statut": "en commercialisation",
-      "budget": 30000,
-      "jours": 38,
-      "frais": 0,
-      "dateDebut": "2026-09-01",
-      "dateFin": "2027-03-31",
-      "methodes": [
-        "ME1",
-        "ME2"
-      ],
-      "territoires": [
-        "TE4"
-      ],
-      "domaines": [
-        "DO2"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A4",
-      "nom": "Audit RH",
-      "organisationId": "O4",
-      "nomAbrege": "Audit RH GreenBuild",
-      "motsCles": "#rh",
-      "pilote": "TPT",
-      "piloteCommercial": "TPT",
-      "typeVente": "Bon de commande",
-      "pctReussite": 80,
-      "dateDepot": "2025-02-01",
-      "statut": "terminée",
-      "budget": 12000,
-      "jours": 16,
-      "frais": 0,
-      "dateDebut": "2025-03-01",
-      "dateFin": "2025-06-30",
-      "methodes": [
-        "ME8"
-      ],
-      "territoires": [
-        "TE4"
-      ],
-      "domaines": [
-        "DO1"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A5",
-      "nom": "Audit organisationnel",
-      "organisationId": "O3",
-      "nomAbrege": "Audit FAP 2025",
-      "motsCles": "#ess #organisation",
-      "pilote": "TPT",
-      "piloteCommercial": "TPT",
-      "typeVente": "Gré à gré",
-      "pctReussite": 80,
-      "dateDepot": "2025-04-01",
-      "statut": "terminée",
-      "budget": 18000,
-      "jours": 20,
-      "frais": 0,
-      "dateDebut": "2025-06-01",
-      "dateFin": "2025-10-31",
-      "methodes": [
-        "ME8",
-        "ME4"
-      ],
-      "territoires": [
-        "TE4"
-      ],
-      "domaines": [
-        "DO1"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A6",
-      "nom": "Diagnostic mobilité rurale",
-      "organisationId": "O6",
-      "nomAbrege": "Mobilité Vallon",
-      "motsCles": "#mobilité #rural",
-      "pilote": "CLR",
-      "piloteCommercial": "CLR",
-      "typeVente": "Appel à projet",
-      "pctReussite": 40,
-      "dateDepot": "2025-05-12",
-      "statut": "perdue",
-      "budget": 15000,
-      "jours": 18,
-      "frais": 0,
-      "dateDebut": "2025-07-01",
-      "dateFin": "2025-12-31",
-      "methodes": [
-        "ME5"
-      ],
-      "territoires": [
-        "TE1"
-      ],
-      "domaines": [
-        "DO3"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A7",
-      "nom": "Schéma directeur accessibilité",
-      "organisationId": "O7",
-      "nomAbrege": "Accessibilité Isère",
-      "motsCles": "#collectivité #accessibilité",
-      "pilote": "LFT",
-      "piloteCommercial": "LFT",
-      "typeVente": "Appel d'offres",
-      "pctReussite": 55,
-      "dateDepot": "2026-06-02",
-      "statut": "en commercialisation",
-      "budget": 28000,
-      "jours": 34,
-      "frais": 0,
-      "dateDebut": "2026-10-01",
-      "dateFin": "2027-04-30",
-      "methodes": [
-        "ME2"
-      ],
-      "territoires": [
-        "TE1"
-      ],
-      "domaines": [
-        "DO4"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A8",
-      "nom": "Étude de faisabilité rénovation énergétique",
-      "organisationId": "O8",
-      "nomAbrege": "Rénov Ecobati",
-      "motsCles": "#transition #énergie",
-      "pilote": "CLR",
-      "piloteCommercial": "CLR",
-      "typeVente": "Gré à gré",
-      "pctReussite": 35,
-      "dateDepot": "2026-03-10",
-      "statut": "perdue",
-      "budget": 16000,
-      "jours": 20,
-      "frais": 0,
-      "dateDebut": "2026-05-01",
-      "dateFin": "2026-09-30",
-      "methodes": [
-        "ME5"
-      ],
-      "territoires": [
-        "TE3"
-      ],
-      "domaines": [
-        "DO3"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": [
-        {
-          "consultantId": "CLR",
-          "pct": 75
-        },
-        {
-          "consultantId": "SMR",
-          "pct": 25
-        }
-      ]
-    },
-    {
-      "id": "A9",
-      "nom": "Diagnostic partenarial logement",
-      "organisationId": "O3",
-      "nomAbrege": "Logement FAP",
-      "motsCles": "#ess #logement",
-      "pilote": "TPT",
-      "piloteCommercial": "TPT",
-      "typeVente": "Bon de commande",
-      "pctReussite": 70,
-      "dateDepot": "2025-01-20",
-      "statut": "terminée",
-      "budget": 22000,
-      "jours": 26,
-      "frais": 0,
-      "dateDebut": "2025-03-01",
-      "dateFin": "2025-08-31",
-      "methodes": [
-        "ME8"
-      ],
-      "territoires": [
-        "TE4"
-      ],
-      "domaines": [
-        "DO1"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": [
-        {
-          "consultantId": "TPT",
-          "pct": 65
-        },
-        {
-          "consultantId": "XDB",
-          "pct": 35
-        }
-      ]
-    },
-    {
-      "id": "A10",
-      "nom": "Plan climat air énergie territorial",
-      "organisationId": "O2",
-      "nomAbrege": "PCAET ADEME",
-      "motsCles": "#mobilité #environnement",
-      "pilote": "SMR",
-      "piloteCommercial": "SMR",
-      "typeVente": "Appel d'offres",
-      "pctReussite": 75,
-      "dateDepot": "2026-02-05",
-      "statut": "en production",
-      "budget": 35000,
-      "jours": 42,
-      "frais": 800,
-      "dateDebut": "2026-04-01",
-      "dateFin": "2027-01-31",
-      "methodes": [
-        "ME2",
-        "ME11"
-      ],
-      "territoires": [
-        "TE6"
-      ],
-      "domaines": [
-        "DO2"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": [
-        {
-          "consultantId": "SMR",
-          "pct": 55
-        },
-        {
-          "consultantId": "CLR",
-          "pct": 45
-        }
-      ]
-    },
-    {
-      "id": "A11",
-      "nom": "Étude d'impact biodiversité",
-      "organisationId": "O6",
-      "nomAbrege": "Biodiversité Vallon",
-      "motsCles": "#mobilité #rural",
-      "pilote": "XDB",
-      "piloteCommercial": "XDB",
-      "typeVente": "Appel à projet",
-      "pctReussite": 25,
-      "dateDepot": "2025-09-15",
-      "statut": "en commercialisation",
-      "budget": 13500,
-      "jours": 16,
-      "frais": 0,
-      "dateDebut": "2026-01-01",
-      "dateFin": "2026-06-30",
-      "methodes": [
-        "ME5"
-      ],
-      "territoires": [
-        "TE1"
-      ],
-      "domaines": [
-        "DO3"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A12",
-      "nom": "Refonte du schéma de mobilité",
-      "organisationId": "O1",
-      "nomAbrege": "Mobilité Rennes 2024",
-      "motsCles": "#collectivité #mobilité",
-      "pilote": "XDB",
-      "piloteCommercial": "XDB",
-      "typeVente": "Appel d'offres",
-      "pctReussite": 65,
-      "dateDepot": "2024-02-10",
-      "statut": "terminée",
-      "budget": 38000,
-      "jours": 46,
-      "frais": 0,
-      "dateDebut": "2024-04-01",
-      "dateFin": "2024-10-31",
-      "methodes": [
-        "ME2"
-      ],
-      "territoires": [
-        "TE6"
-      ],
-      "domaines": [
-        "DO2"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A13",
-      "nom": "Étude d'impact environnemental",
-      "organisationId": "O2",
-      "nomAbrege": "Impact ADEME 2024",
-      "motsCles": "#environnement",
-      "pilote": "SMR",
-      "piloteCommercial": "SMR",
-      "typeVente": "Appel d'offres",
-      "pctReussite": 45,
-      "dateDepot": "2024-03-05",
-      "statut": "perdue",
-      "budget": 26000,
-      "jours": 30,
-      "frais": 0,
-      "dateDebut": "2024-05-01",
-      "dateFin": "2024-09-30",
-      "methodes": [
-        "ME11"
-      ],
-      "territoires": [
-        "TE6"
-      ],
-      "domaines": [
-        "DO2"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A14",
-      "nom": "Diagnostic biodiversité littoral",
-      "organisationId": "O6",
-      "nomAbrege": "Biodiversité Vallon 2024",
-      "motsCles": "#environnement #rural",
-      "pilote": "CLR",
-      "piloteCommercial": "CLR",
-      "typeVente": "Appel à projet",
-      "pctReussite": 70,
-      "dateDepot": "2024-01-20",
-      "statut": "terminée",
-      "budget": 20000,
-      "jours": 24,
-      "frais": 0,
-      "dateDebut": "2024-03-01",
-      "dateFin": "2024-07-31",
-      "methodes": [
-        "ME5"
-      ],
-      "territoires": [
-        "TE1"
-      ],
-      "domaines": [
-        "DO3"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A15",
-      "nom": "Programme d'innovation RSE",
-      "organisationId": "O4",
-      "nomAbrege": "RSE GreenBuild 2024",
-      "motsCles": "#rse #innovation",
-      "pilote": "TPT",
-      "piloteCommercial": "TPT",
-      "typeVente": "Appel à projet",
-      "pctReussite": 60,
-      "dateDepot": "2024-05-14",
-      "statut": "terminée",
-      "budget": 15000,
-      "jours": 18,
-      "frais": 0,
-      "dateDebut": "2024-07-01",
-      "dateFin": "2024-11-30",
-      "methodes": [
-        "ME4"
-      ],
-      "territoires": [
-        "TE4"
-      ],
-      "domaines": [
-        "DO1"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A16",
-      "nom": "Refonte de la gouvernance associative",
-      "organisationId": "O3",
-      "nomAbrege": "Gouvernance FAP 2024",
-      "motsCles": "#ess #gouvernance",
-      "pilote": "TPT",
-      "piloteCommercial": "TPT",
-      "typeVente": "Gré à gré",
-      "pctReussite": 30,
-      "dateDepot": "2024-06-01",
-      "statut": "perdue",
-      "budget": 17000,
-      "jours": 20,
-      "frais": 0,
-      "dateDebut": "2024-08-01",
-      "dateFin": "2024-12-31",
-      "methodes": [
-        "ME8"
-      ],
-      "territoires": [
-        "TE4"
-      ],
-      "domaines": [
-        "DO1"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A17",
-      "nom": "Étude de marché ingénierie",
-      "organisationId": "O5",
-      "nomAbrege": "Marché Solstice 2024",
-      "motsCles": "#stratégie",
-      "pilote": "CLR",
-      "piloteCommercial": "CLR",
-      "typeVente": "Gré à gré",
-      "pctReussite": 75,
-      "dateDepot": "2024-09-10",
-      "statut": "terminée",
-      "budget": 21000,
-      "jours": 25,
-      "frais": 0,
-      "dateDebut": "2024-11-01",
-      "dateFin": "2025-03-31",
-      "methodes": [
-        "ME1"
-      ],
-      "territoires": [
-        "TE4"
-      ],
-      "domaines": [
-        "DO2"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
-    },
-    {
-      "id": "A18",
-      "nom": "Mission d'appui ponctuelle RH",
-      "organisationId": "O4",
-      "nomAbrege": "Appui RH GreenBuild 2024",
-      "motsCles": "#rh",
-      "pilote": "SMR",
-      "piloteCommercial": "SMR",
-      "typeVente": "Bon de commande",
-      "pctReussite": 50,
-      "dateDepot": "2024-04-18",
-      "statut": "perdue",
-      "budget": 9000,
-      "jours": 10,
-      "frais": 0,
-      "dateDebut": "2024-05-01",
-      "dateFin": "2024-06-30",
-      "methodes": [
-        "ME8"
-      ],
-      "territoires": [
-        "TE4"
-      ],
-      "domaines": [
-        "DO1"
-      ],
-      "partenaires": [],
-      "repartitionCommerciale": []
+     "consultantId": "CDM",
+     "pct": 30
     }
-  ],
-  "methodes": [
+   ]
+  },
+  {
+   "id": "A2",
+   "nom": "Étude mobilité douce",
+   "organisationId": "O2",
+   "nomAbrege": "Mobilité ATD",
+   "motsCles": "#mobilité #environnement",
+   "pilote": "MLN",
+   "piloteCommercial": "MLN",
+   "typeVente": "Appel à projet",
+   "pctReussite": 60,
+   "dateDepot": "2026-01-15",
+   "statut": "en production",
+   "budget": 24000,
+   "jours": 32,
+   "frais": 0,
+   "dateDebut": "2026-02-01",
+   "dateFin": "2026-09-30",
+   "methodes": [
+    "ME5"
+   ],
+   "territoires": [
+    "TE4"
+   ],
+   "domaines": [
+    "DO3"
+   ],
+   "partenaires": [
     {
-      "id": "ME1",
-      "label": "Data Utiles"
-    },
-    {
-      "id": "ME2",
-      "label": "AMO, Pilotage"
-    },
-    {
-      "id": "ME3",
-      "label": "Conseil Flash"
-    },
-    {
-      "id": "ME4",
-      "label": "Coaching"
-    },
-    {
-      "id": "ME5",
-      "label": "Études"
-    },
-    {
-      "id": "ME6",
-      "label": "Formation"
-    },
-    {
-      "id": "ME7",
-      "label": "Intervention & Conférences"
-    },
-    {
-      "id": "ME8",
-      "label": "Expertise"
-    },
-    {
-      "id": "ME9",
-      "label": "R&D"
-    },
-    {
-      "id": "ME10",
-      "label": "Animation"
-    },
-    {
-      "id": "ME11",
-      "label": "Concertation"
-    },
-    {
-      "id": "ME12",
-      "label": "Visites apprenantes"
+     "organisationId": "O6",
+     "role": "sous-traitant indirect",
+     "montant": 3500
     }
-  ],
-  "typesTerritoire": [
+   ],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A3",
+   "nom": "Plan stratégique 2027",
+   "organisationId": "O3",
+   "nomAbrege": "Stratégie FHS",
+   "motsCles": "#ess #stratégie",
+   "pilote": "AVR",
+   "piloteCommercial": "AVR",
+   "typeVente": "Gré à gré",
+   "pctReussite": 40,
+   "dateDepot": "2026-08-20",
+   "statut": "en commercialisation",
+   "budget": 30000,
+   "jours": 38,
+   "frais": 0,
+   "dateDebut": "2026-09-01",
+   "dateFin": "2027-03-31",
+   "methodes": [
+    "ME1",
+    "ME2"
+   ],
+   "territoires": [
+    "TE4"
+   ],
+   "domaines": [
+    "DO2"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A4",
+   "nom": "Audit RH",
+   "organisationId": "O4",
+   "nomAbrege": "Audit RH BâtiVert",
+   "motsCles": "#rh",
+   "pilote": "AVR",
+   "piloteCommercial": "AVR",
+   "typeVente": "Bon de commande",
+   "pctReussite": 80,
+   "dateDepot": "2025-02-01",
+   "statut": "terminée",
+   "budget": 12000,
+   "jours": 16,
+   "frais": 0,
+   "dateDebut": "2025-03-01",
+   "dateFin": "2025-06-30",
+   "methodes": [
+    "ME8"
+   ],
+   "territoires": [
+    "TE4"
+   ],
+   "domaines": [
+    "DO1"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A5",
+   "nom": "Audit organisationnel",
+   "organisationId": "O3",
+   "nomAbrege": "Audit FHS 2025",
+   "motsCles": "#ess #organisation",
+   "pilote": "AVR",
+   "piloteCommercial": "AVR",
+   "typeVente": "Gré à gré",
+   "pctReussite": 80,
+   "dateDepot": "2025-04-01",
+   "statut": "terminée",
+   "budget": 18000,
+   "jours": 20,
+   "frais": 0,
+   "dateDebut": "2025-06-01",
+   "dateFin": "2025-10-31",
+   "methodes": [
+    "ME8",
+    "ME4"
+   ],
+   "territoires": [
+    "TE4"
+   ],
+   "domaines": [
+    "DO1"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A6",
+   "nom": "Diagnostic mobilité rurale",
+   "organisationId": "O6",
+   "nomAbrege": "Mobilité Ondine",
+   "motsCles": "#mobilité #rural",
+   "pilote": "MLN",
+   "piloteCommercial": "MLN",
+   "typeVente": "Appel à projet",
+   "pctReussite": 40,
+   "dateDepot": "2025-05-12",
+   "statut": "perdue",
+   "budget": 15000,
+   "jours": 18,
+   "frais": 0,
+   "dateDebut": "2025-07-01",
+   "dateFin": "2025-12-31",
+   "methodes": [
+    "ME5"
+   ],
+   "territoires": [
+    "TE1"
+   ],
+   "domaines": [
+    "DO3"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A7",
+   "nom": "Schéma directeur accessibilité",
+   "organisationId": "O7",
+   "nomAbrege": "Accessibilité Valmont",
+   "motsCles": "#collectivité #accessibilité",
+   "pilote": "ELS",
+   "piloteCommercial": "ELS",
+   "typeVente": "Appel d'offres",
+   "pctReussite": 55,
+   "dateDepot": "2026-06-02",
+   "statut": "en commercialisation",
+   "budget": 28000,
+   "jours": 34,
+   "frais": 0,
+   "dateDebut": "2026-10-01",
+   "dateFin": "2027-04-30",
+   "methodes": [
+    "ME2"
+   ],
+   "territoires": [
+    "TE1"
+   ],
+   "domaines": [
+    "DO4"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A8",
+   "nom": "Étude de faisabilité rénovation énergétique",
+   "organisationId": "O8",
+   "nomAbrege": "Rénov Solerra",
+   "motsCles": "#transition #énergie",
+   "pilote": "MLN",
+   "piloteCommercial": "MLN",
+   "typeVente": "Gré à gré",
+   "pctReussite": 35,
+   "dateDepot": "2026-03-10",
+   "statut": "perdue",
+   "budget": 16000,
+   "jours": 20,
+   "frais": 0,
+   "dateDebut": "2026-05-01",
+   "dateFin": "2026-09-30",
+   "methodes": [
+    "ME5"
+   ],
+   "territoires": [
+    "TE3"
+   ],
+   "domaines": [
+    "DO3"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": [
     {
-      "id": "TE1",
-      "label": "rural"
+     "consultantId": "MLN",
+     "pct": 75
     },
     {
-      "id": "TE2",
-      "label": "littoral"
-    },
-    {
-      "id": "TE3",
-      "label": "périurbain"
-    },
-    {
-      "id": "TE4",
-      "label": "urbain"
-    },
-    {
-      "id": "TE5",
-      "label": "villes moyennes"
-    },
-    {
-      "id": "TE6",
-      "label": "métropoles"
+     "consultantId": "CDM",
+     "pct": 25
     }
-  ],
-  "domainesIntervention": [
+   ]
+  },
+  {
+   "id": "A9",
+   "nom": "Diagnostic partenarial logement",
+   "organisationId": "O3",
+   "nomAbrege": "Logement FHS",
+   "motsCles": "#ess #logement",
+   "pilote": "AVR",
+   "piloteCommercial": "AVR",
+   "typeVente": "Bon de commande",
+   "pctReussite": 70,
+   "dateDepot": "2025-01-20",
+   "statut": "terminée",
+   "budget": 22000,
+   "jours": 26,
+   "frais": 0,
+   "dateDebut": "2025-03-01",
+   "dateFin": "2025-08-31",
+   "methodes": [
+    "ME8"
+   ],
+   "territoires": [
+    "TE4"
+   ],
+   "domaines": [
+    "DO1"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": [
     {
-      "id": "DO1",
-      "label": "Accompagnement et accélération de projets"
+     "consultantId": "AVR",
+     "pct": 65
     },
     {
-      "id": "DO2",
-      "label": "Stratégie & développement local"
-    },
-    {
-      "id": "DO3",
-      "label": "Transitions, redirection écologique et adaptation au changement climatique"
-    },
-    {
-      "id": "DO4",
-      "label": "Innovation publique"
+     "consultantId": "RBL",
+     "pct": 35
     }
-  ],
-  "categoriesFrais": [
+   ]
+  },
+  {
+   "id": "A10",
+   "nom": "Plan climat air énergie territorial",
+   "organisationId": "O2",
+   "nomAbrege": "PCAET ATD",
+   "motsCles": "#mobilité #environnement",
+   "pilote": "CDM",
+   "piloteCommercial": "CDM",
+   "typeVente": "Appel d'offres",
+   "pctReussite": 75,
+   "dateDepot": "2026-02-05",
+   "statut": "en production",
+   "budget": 35000,
+   "jours": 42,
+   "frais": 800,
+   "dateDebut": "2026-04-01",
+   "dateFin": "2027-01-31",
+   "methodes": [
+    "ME2",
+    "ME11"
+   ],
+   "territoires": [
+    "TE6"
+   ],
+   "domaines": [
+    "DO2"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": [
     {
-      "id": "CF1",
-      "categorie": "Hébergement",
-      "label": "Hôtels / Hébergement"
+     "consultantId": "CDM",
+     "pct": 55
     },
     {
-      "id": "CF2",
-      "categorie": "Restauration",
-      "label": "Repas, Collation"
-    },
-    {
-      "id": "CF3",
-      "categorie": "Déplacement",
-      "label": "Voiture Location"
-    },
-    {
-      "id": "CF4",
-      "categorie": "Déplacement",
-      "label": "Voiture IKA"
-    },
-    {
-      "id": "CF5",
-      "categorie": "Déplacement",
-      "label": "Taxi / VTC"
-    },
-    {
-      "id": "CF6",
-      "categorie": "Déplacement",
-      "label": "Train TER"
-    },
-    {
-      "id": "CF7",
-      "categorie": "Déplacement",
-      "label": "Train Grandes Lignes"
-    },
-    {
-      "id": "CF8",
-      "categorie": "Déplacement",
-      "label": "Métro / Tramway / Bus"
-    },
-    {
-      "id": "CF9",
-      "categorie": "Déplacement",
-      "label": "Avion"
-    },
-    {
-      "id": "CF10",
-      "categorie": "Déplacement",
-      "label": "Parking"
-    },
-    {
-      "id": "CF11",
-      "categorie": "Déplacement",
-      "label": "Péage"
-    },
-    {
-      "id": "CF12",
-      "categorie": "Achats",
-      "label": "Bureautique / Papeterie"
-    },
-    {
-      "id": "CF13",
-      "categorie": "Achats",
-      "label": "Matériel informatique"
-    },
-    {
-      "id": "CF14",
-      "categorie": "Achats",
-      "label": "Services numériques (licences, hébergement…)"
-    },
-    {
-      "id": "CF15",
-      "categorie": "Achats",
-      "label": "Abonnement téléphonique"
-    },
-    {
-      "id": "CF16",
-      "categorie": "Communication et Marketing",
-      "label": "Salons et évènements payants"
-    },
-    {
-      "id": "CF17",
-      "categorie": "Communication et Marketing",
-      "label": "Communication"
-    },
-    {
-      "id": "CF18",
-      "categorie": "Communication et Marketing",
-      "label": "Formations"
-    },
-    {
-      "id": "CF19",
-      "categorie": "Communication et Marketing",
-      "label": "Cotisations, partenariats"
-    },
-    {
-      "id": "CF20",
-      "categorie": "Frais administratifs",
-      "label": "Formalités administratives"
-    },
-    {
-      "id": "CF21",
-      "categorie": "Frais administratifs",
-      "label": "Prestataires"
+     "consultantId": "MLN",
+     "pct": 45
     }
-  ],
-  "missions": [
+   ]
+  },
+  {
+   "id": "A11",
+   "nom": "Étude d'impact biodiversité",
+   "organisationId": "O6",
+   "nomAbrege": "Biodiversité Ondine",
+   "motsCles": "#mobilité #rural",
+   "pilote": "RBL",
+   "piloteCommercial": "RBL",
+   "typeVente": "Appel à projet",
+   "pctReussite": 25,
+   "dateDepot": "2025-09-15",
+   "statut": "en commercialisation",
+   "budget": 13500,
+   "jours": 16,
+   "frais": 0,
+   "dateDebut": "2026-01-01",
+   "dateFin": "2026-06-30",
+   "methodes": [
+    "ME5"
+   ],
+   "territoires": [
+    "TE1"
+   ],
+   "domaines": [
+    "DO3"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A12",
+   "nom": "Refonte du schéma de mobilité",
+   "organisationId": "O1",
+   "nomAbrege": "Mobilité Valberny 2024",
+   "motsCles": "#collectivité #mobilité",
+   "pilote": "RBL",
+   "piloteCommercial": "RBL",
+   "typeVente": "Appel d'offres",
+   "pctReussite": 65,
+   "dateDepot": "2024-02-10",
+   "statut": "terminée",
+   "budget": 38000,
+   "jours": 46,
+   "frais": 0,
+   "dateDebut": "2024-04-01",
+   "dateFin": "2024-10-31",
+   "methodes": [
+    "ME2"
+   ],
+   "territoires": [
+    "TE6"
+   ],
+   "domaines": [
+    "DO2"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A13",
+   "nom": "Étude d'impact environnemental",
+   "organisationId": "O2",
+   "nomAbrege": "Impact ATD 2024",
+   "motsCles": "#environnement",
+   "pilote": "CDM",
+   "piloteCommercial": "CDM",
+   "typeVente": "Appel d'offres",
+   "pctReussite": 45,
+   "dateDepot": "2024-03-05",
+   "statut": "perdue",
+   "budget": 26000,
+   "jours": 30,
+   "frais": 0,
+   "dateDebut": "2024-05-01",
+   "dateFin": "2024-09-30",
+   "methodes": [
+    "ME11"
+   ],
+   "territoires": [
+    "TE6"
+   ],
+   "domaines": [
+    "DO2"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A14",
+   "nom": "Diagnostic biodiversité littoral",
+   "organisationId": "O6",
+   "nomAbrege": "Biodiversité Ondine 2024",
+   "motsCles": "#environnement #rural",
+   "pilote": "MLN",
+   "piloteCommercial": "MLN",
+   "typeVente": "Appel à projet",
+   "pctReussite": 70,
+   "dateDepot": "2024-01-20",
+   "statut": "terminée",
+   "budget": 20000,
+   "jours": 24,
+   "frais": 0,
+   "dateDebut": "2024-03-01",
+   "dateFin": "2024-07-31",
+   "methodes": [
+    "ME5"
+   ],
+   "territoires": [
+    "TE1"
+   ],
+   "domaines": [
+    "DO3"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A15",
+   "nom": "Programme d'innovation RSE",
+   "organisationId": "O4",
+   "nomAbrege": "RSE BâtiVert 2024",
+   "motsCles": "#rse #innovation",
+   "pilote": "AVR",
+   "piloteCommercial": "AVR",
+   "typeVente": "Appel à projet",
+   "pctReussite": 60,
+   "dateDepot": "2024-05-14",
+   "statut": "terminée",
+   "budget": 15000,
+   "jours": 18,
+   "frais": 0,
+   "dateDebut": "2024-07-01",
+   "dateFin": "2024-11-30",
+   "methodes": [
+    "ME4"
+   ],
+   "territoires": [
+    "TE4"
+   ],
+   "domaines": [
+    "DO1"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A16",
+   "nom": "Refonte de la gouvernance associative",
+   "organisationId": "O3",
+   "nomAbrege": "Gouvernance FHS 2024",
+   "motsCles": "#ess #gouvernance",
+   "pilote": "AVR",
+   "piloteCommercial": "AVR",
+   "typeVente": "Gré à gré",
+   "pctReussite": 30,
+   "dateDepot": "2024-06-01",
+   "statut": "perdue",
+   "budget": 17000,
+   "jours": 20,
+   "frais": 0,
+   "dateDebut": "2024-08-01",
+   "dateFin": "2024-12-31",
+   "methodes": [
+    "ME8"
+   ],
+   "territoires": [
+    "TE4"
+   ],
+   "domaines": [
+    "DO1"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A17",
+   "nom": "Étude de marché ingénierie",
+   "organisationId": "O5",
+   "nomAbrege": "Marché Meridio 2024",
+   "motsCles": "#stratégie",
+   "pilote": "MLN",
+   "piloteCommercial": "MLN",
+   "typeVente": "Gré à gré",
+   "pctReussite": 75,
+   "dateDepot": "2024-09-10",
+   "statut": "terminée",
+   "budget": 21000,
+   "jours": 25,
+   "frais": 0,
+   "dateDebut": "2024-11-01",
+   "dateFin": "2025-03-31",
+   "methodes": [
+    "ME1"
+   ],
+   "territoires": [
+    "TE4"
+   ],
+   "domaines": [
+    "DO2"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  },
+  {
+   "id": "A18",
+   "nom": "Mission d'appui ponctuelle RH",
+   "organisationId": "O4",
+   "nomAbrege": "Appui RH BâtiVert 2024",
+   "motsCles": "#rh",
+   "pilote": "CDM",
+   "piloteCommercial": "CDM",
+   "typeVente": "Bon de commande",
+   "pctReussite": 50,
+   "dateDepot": "2024-04-18",
+   "statut": "perdue",
+   "budget": 9000,
+   "jours": 10,
+   "frais": 0,
+   "dateDebut": "2024-05-01",
+   "dateFin": "2024-06-30",
+   "methodes": [
+    "ME8"
+   ],
+   "territoires": [
+    "TE4"
+   ],
+   "domaines": [
+    "DO1"
+   ],
+   "partenaires": [],
+   "repartitionCommerciale": []
+  }
+ ],
+ "methodes": [
+  {
+   "id": "ME1",
+   "label": "Data Utiles"
+  },
+  {
+   "id": "ME2",
+   "label": "AMO, Pilotage"
+  },
+  {
+   "id": "ME3",
+   "label": "Conseil Flash"
+  },
+  {
+   "id": "ME4",
+   "label": "Coaching"
+  },
+  {
+   "id": "ME5",
+   "label": "Études"
+  },
+  {
+   "id": "ME6",
+   "label": "Formation"
+  },
+  {
+   "id": "ME7",
+   "label": "Intervention & Conférences"
+  },
+  {
+   "id": "ME8",
+   "label": "Expertise"
+  },
+  {
+   "id": "ME9",
+   "label": "R&D"
+  },
+  {
+   "id": "ME10",
+   "label": "Animation"
+  },
+  {
+   "id": "ME11",
+   "label": "Concertation"
+  },
+  {
+   "id": "ME12",
+   "label": "Visites apprenantes"
+  }
+ ],
+ "typesTerritoire": [
+  {
+   "id": "TE1",
+   "label": "rural"
+  },
+  {
+   "id": "TE2",
+   "label": "littoral"
+  },
+  {
+   "id": "TE3",
+   "label": "périurbain"
+  },
+  {
+   "id": "TE4",
+   "label": "urbain"
+  },
+  {
+   "id": "TE5",
+   "label": "villes moyennes"
+  },
+  {
+   "id": "TE6",
+   "label": "métropoles"
+  }
+ ],
+ "domainesIntervention": [
+  {
+   "id": "DO1",
+   "label": "Accompagnement et accélération de projets"
+  },
+  {
+   "id": "DO2",
+   "label": "Stratégie & développement local"
+  },
+  {
+   "id": "DO3",
+   "label": "Transitions, redirection écologique et adaptation au changement climatique"
+  },
+  {
+   "id": "DO4",
+   "label": "Innovation publique"
+  }
+ ],
+ "categoriesFrais": [
+  {
+   "id": "CF1",
+   "categorie": "Hébergement",
+   "label": "Hôtels / Hébergement"
+  },
+  {
+   "id": "CF2",
+   "categorie": "Restauration",
+   "label": "Repas, Collation"
+  },
+  {
+   "id": "CF3",
+   "categorie": "Déplacement",
+   "label": "Voiture Location"
+  },
+  {
+   "id": "CF4",
+   "categorie": "Déplacement",
+   "label": "Voiture IKA"
+  },
+  {
+   "id": "CF5",
+   "categorie": "Déplacement",
+   "label": "Taxi / VTC"
+  },
+  {
+   "id": "CF6",
+   "categorie": "Déplacement",
+   "label": "Train TER"
+  },
+  {
+   "id": "CF7",
+   "categorie": "Déplacement",
+   "label": "Train Grandes Lignes"
+  },
+  {
+   "id": "CF8",
+   "categorie": "Déplacement",
+   "label": "Métro / Tramway / Bus"
+  },
+  {
+   "id": "CF9",
+   "categorie": "Déplacement",
+   "label": "Avion"
+  },
+  {
+   "id": "CF10",
+   "categorie": "Déplacement",
+   "label": "Parking"
+  },
+  {
+   "id": "CF11",
+   "categorie": "Déplacement",
+   "label": "Péage"
+  },
+  {
+   "id": "CF12",
+   "categorie": "Achats",
+   "label": "Bureautique / Papeterie"
+  },
+  {
+   "id": "CF13",
+   "categorie": "Achats",
+   "label": "Matériel informatique"
+  },
+  {
+   "id": "CF14",
+   "categorie": "Achats",
+   "label": "Services numériques (licences, hébergement…)"
+  },
+  {
+   "id": "CF15",
+   "categorie": "Achats",
+   "label": "Abonnement téléphonique"
+  },
+  {
+   "id": "CF16",
+   "categorie": "Communication et Marketing",
+   "label": "Salons et évènements payants"
+  },
+  {
+   "id": "CF17",
+   "categorie": "Communication et Marketing",
+   "label": "Communication"
+  },
+  {
+   "id": "CF18",
+   "categorie": "Communication et Marketing",
+   "label": "Formations"
+  },
+  {
+   "id": "CF19",
+   "categorie": "Communication et Marketing",
+   "label": "Cotisations, partenariats"
+  },
+  {
+   "id": "CF20",
+   "categorie": "Frais administratifs",
+   "label": "Formalités administratives"
+  },
+  {
+   "id": "CF21",
+   "categorie": "Frais administratifs",
+   "label": "Prestataires"
+  }
+ ],
+ "missions": [
+  {
+   "id": "M1",
+   "affaireId": "A1",
+   "nom": "Diagnostic territorial",
+   "consultantId": "RBL",
+   "statut": "en cours",
+   "enveloppe": 6,
+   "taux": 620,
+   "dateDebut": "2026-01-06",
+   "dateFin": "2027-02-28",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M2",
+   "affaireId": "A1",
+   "nom": "Animation ateliers",
+   "consultantId": "MLN",
+   "statut": "en cours",
+   "enveloppe": 18,
+   "taux": 580,
+   "dateDebut": "2026-02-01",
+   "dateFin": "2026-12-19",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M3",
+   "affaireId": "A2",
+   "nom": "Étude technique",
+   "consultantId": "MLN",
+   "statut": "en cours",
+   "enveloppe": 14,
+   "taux": 580,
+   "dateDebut": "2026-02-01",
+   "dateFin": "2026-09-30",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M4",
+   "affaireId": "A4",
+   "nom": "Entretiens RH",
+   "consultantId": "AVR",
+   "statut": "terminée",
+   "enveloppe": 16,
+   "taux": 700,
+   "dateDebut": "2025-03-01",
+   "dateFin": "2025-06-30",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M5",
+   "affaireId": "A2",
+   "nom": "Analyse comparative",
+   "consultantId": "AVR",
+   "statut": "en cours",
+   "enveloppe": 9,
+   "taux": 700,
+   "dateDebut": "2026-03-01",
+   "dateFin": "2026-08-31",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M6",
+   "affaireId": "A2",
+   "nom": "Recueil terrain",
+   "consultantId": "RBL",
+   "statut": "terminée",
+   "enveloppe": 6,
+   "taux": 620,
+   "dateDebut": "2026-04-01",
+   "dateFin": "2026-07-31",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M7",
+   "affaireId": "A1",
+   "nom": "Cadrage qualité",
+   "consultantId": "CDM",
+   "statut": "terminée",
+   "enveloppe": 5,
+   "taux": 750,
+   "dateDebut": "2026-01-06",
+   "dateFin": "2026-03-31",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M8",
+   "affaireId": "A2",
+   "nom": "Enquête usagers",
+   "consultantId": "MLN",
+   "statut": "en cours",
+   "enveloppe": 3,
+   "taux": 580,
+   "dateDebut": "2026-05-01",
+   "dateFin": "2026-08-31",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M9",
+   "affaireId": "A5",
+   "nom": "Diagnostic organisationnel",
+   "consultantId": "MRX",
+   "statut": "terminée",
+   "enveloppe": 20,
+   "taux": 650,
+   "dateDebut": "2025-06-01",
+   "dateFin": "2025-10-31",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M10",
+   "affaireId": "A10",
+   "nom": "Diagnostic énergétique territorial",
+   "consultantId": "CDM",
+   "statut": "en cours",
+   "enveloppe": 24,
+   "taux": 750,
+   "dateDebut": "2026-04-01",
+   "dateFin": "2027-01-31",
+   "commentaires": "",
+   "projectionManuelle": {}
+  },
+  {
+   "id": "M11",
+   "affaireId": "A10",
+   "nom": "Concertation acteurs locaux",
+   "consultantId": "MLN",
+   "statut": "en cours",
+   "enveloppe": 14,
+   "taux": 580,
+   "dateDebut": "2026-05-01",
+   "dateFin": "2026-12-19",
+   "commentaires": "",
+   "projectionManuelle": {}
+  }
+ ],
+ "factures": [
+  {
+   "id": "F1",
+   "affaireId": "A1",
+   "numero": "2026-014",
+   "formation": false,
+   "montantMissionHT": 15000,
+   "montantFraisTTC": 500,
+   "montantSousTraitanceHT": 0,
+   "echeancePrev": "2026-07-01",
+   "dateDepot": null,
+   "echeancePaiementPrev": "2026-08-15",
+   "payee": false,
+   "datePaiement": null,
+   "statut": "prévisionnelle",
+   "commentaires": "Facture de solde, à déposer dès validation du dernier livrable."
+  },
+  {
+   "id": "F2",
+   "affaireId": "A1",
+   "numero": "2026-009",
+   "formation": false,
+   "montantMissionHT": 10000,
+   "montantFraisTTC": 300,
+   "montantSousTraitanceHT": 0,
+   "echeancePrev": "2026-05-15",
+   "dateDepot": "2026-06-01",
+   "echeancePaiementPrev": "2026-07-01",
+   "payee": false,
+   "datePaiement": null,
+   "statut": "facturée",
+   "commentaires": "Relance client envoyée le 15/08."
+  },
+  {
+   "id": "F3",
+   "affaireId": "A1",
+   "numero": "2026-004",
+   "formation": false,
+   "montantMissionHT": 8000,
+   "montantFraisTTC": 0,
+   "montantSousTraitanceHT": 0,
+   "echeancePrev": "2026-02-01",
+   "dateDepot": "2026-02-10",
+   "echeancePaiementPrev": "2026-03-10",
+   "payee": true,
+   "datePaiement": "2026-03-05",
+   "statut": "payée",
+   "commentaires": ""
+  },
+  {
+   "id": "F4",
+   "affaireId": "A1",
+   "numero": "2026-011",
+   "formation": true,
+   "montantMissionHT": 5000,
+   "montantFraisTTC": 0,
+   "montantSousTraitanceHT": 0,
+   "echeancePrev": "2026-05-01",
+   "dateDepot": null,
+   "echeancePaiementPrev": "2026-06-01",
+   "payee": false,
+   "datePaiement": null,
+   "statut": "annulée",
+   "commentaires": "Session de formation finalement annulée par le client."
+  },
+  {
+   "id": "F5",
+   "affaireId": "A2",
+   "numero": "2026-012",
+   "formation": false,
+   "montantMissionHT": 12000,
+   "montantFraisTTC": 0,
+   "montantSousTraitanceHT": 3500,
+   "echeancePrev": "2026-07-15",
+   "dateDepot": "2026-08-01",
+   "echeancePaiementPrev": "2026-09-15",
+   "payee": false,
+   "datePaiement": null,
+   "statut": "facturée",
+   "commentaires": "Inclut la refacturation du sous-traitant (partenaire O6)."
+  },
+  {
+   "id": "F6",
+   "affaireId": "A2",
+   "numero": "2026-013",
+   "formation": false,
+   "montantMissionHT": 8500,
+   "montantFraisTTC": 0,
+   "montantSousTraitanceHT": 0,
+   "echeancePrev": "2026-11-01",
+   "dateDepot": null,
+   "echeancePaiementPrev": "2026-12-01",
+   "payee": false,
+   "datePaiement": null,
+   "statut": "prévisionnelle",
+   "commentaires": ""
+  },
+  {
+   "id": "F7",
+   "affaireId": "A10",
+   "numero": "2026-006",
+   "formation": false,
+   "montantMissionHT": 20000,
+   "montantFraisTTC": 800,
+   "montantSousTraitanceHT": 0,
+   "echeancePrev": "2026-05-01",
+   "dateDepot": "2026-05-10",
+   "echeancePaiementPrev": "2026-06-10",
+   "payee": true,
+   "datePaiement": "2026-06-05",
+   "statut": "payée",
+   "commentaires": ""
+  },
+  {
+   "id": "F8",
+   "affaireId": "A10",
+   "numero": "",
+   "formation": false,
+   "montantMissionHT": 14200,
+   "montantFraisTTC": 0,
+   "montantSousTraitanceHT": 0,
+   "echeancePrev": "2026-12-01",
+   "dateDepot": null,
+   "echeancePaiementPrev": "2027-01-01",
+   "payee": false,
+   "datePaiement": null,
+   "statut": "prévisionnelle",
+   "commentaires": "Numéro pas encore attribué par le logiciel de facturation."
+  }
+ ],
+ "saisies": [
+  {
+   "id": 1,
+   "missionId": "M1",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-08-09",
+   "consultantId": "RBL",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 100,
+   "dureeJ": 1,
+   "jFact": 1,
+   "jNonFact": 0
+  },
+  {
+   "id": 2,
+   "missionId": "M1",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-08-14",
+   "consultantId": "RBL",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 100,
+   "dureeJ": 1,
+   "jFact": 1,
+   "jNonFact": 0
+  },
+  {
+   "id": 3,
+   "missionId": "M1",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-08-19",
+   "consultantId": "RBL",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 100,
+   "dureeJ": 1,
+   "jFact": 1,
+   "jNonFact": 0
+  },
+  {
+   "id": 4,
+   "missionId": "M1",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-08-20",
+   "consultantId": "RBL",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 100,
+   "dureeJ": 1,
+   "jFact": 1,
+   "jNonFact": 0
+  },
+  {
+   "id": 5,
+   "missionId": null,
+   "categorie": "ADM",
+   "commentaire": "Note de frais + CR mensuel",
+   "date": "2026-08-24",
+   "consultantId": "RBL",
+   "type": "interne",
+   "dureeH": 4,
+   "pctFact": 0,
+   "dureeJ": 0.5,
+   "jFact": 0,
+   "jNonFact": 0.5
+  },
+  {
+   "id": 6,
+   "missionId": "M2",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-08-26",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 100,
+   "dureeJ": 1,
+   "jFact": 1,
+   "jNonFact": 0
+  },
+  {
+   "id": 7,
+   "missionId": null,
+   "categorie": "CONG",
+   "commentaire": "",
+   "date": "2026-08-27",
+   "consultantId": "MLN",
+   "type": "absence",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 8,
+   "missionId": null,
+   "categorie": "VEI",
+   "commentaire": "",
+   "date": "2026-08-28",
+   "consultantId": "RBL",
+   "type": "interne",
+   "dureeH": 3,
+   "pctFact": 0,
+   "dureeJ": 0.38,
+   "jFact": 0,
+   "jNonFact": 0.38
+  },
+  {
+   "id": 9,
+   "missionId": "M2",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-02-10",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 10,
+   "missionId": "M2",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-03-10",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 11,
+   "missionId": "M2",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-04-10",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 12,
+   "missionId": "M2",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-05-10",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 13,
+   "missionId": "M2",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-06-10",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 14,
+   "missionId": "M2",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-07-10",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 15,
+   "missionId": "M3",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-02-20",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 16,
+   "missionId": "M3",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-03-20",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 17,
+   "missionId": "M3",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-04-20",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 18,
+   "missionId": "M3",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-05-20",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 19,
+   "missionId": "M3",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-06-20",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 20,
+   "missionId": "M3",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-07-20",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 21,
+   "missionId": "M3",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-08-20",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 22,
+   "missionId": "M5",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-03-12",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 23,
+   "missionId": "M5",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-04-12",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 24,
+   "missionId": "M5",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-05-12",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 25,
+   "missionId": "M5",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-06-12",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 26,
+   "missionId": "M5",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-07-12",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 27,
+   "missionId": "M5",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-08-12",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 28,
+   "missionId": "M6",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-04-15",
+   "consultantId": "RBL",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 29,
+   "missionId": "M6",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-05-15",
+   "consultantId": "RBL",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 30,
+   "missionId": "M6",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-06-15",
+   "consultantId": "RBL",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 31,
+   "missionId": "M6",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-07-15",
+   "consultantId": "RBL",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 32,
+   "missionId": "M7",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-01-20",
+   "consultantId": "CDM",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 33,
+   "missionId": "M7",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-02-20",
+   "consultantId": "CDM",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 34,
+   "missionId": "M7",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-03-20",
+   "consultantId": "CDM",
+   "type": "mission",
+   "dureeH": 12,
+   "pctFact": 100,
+   "dureeJ": 1.5,
+   "jFact": 1.5,
+   "jNonFact": 0
+  },
+  {
+   "id": 35,
+   "missionId": "M8",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-05-25",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 100,
+   "dureeJ": 1,
+   "jFact": 1,
+   "jNonFact": 0
+  },
+  {
+   "id": 36,
+   "missionId": "M8",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-06-25",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 100,
+   "dureeJ": 1,
+   "jFact": 1,
+   "jNonFact": 0
+  },
+  {
+   "id": 37,
+   "missionId": "M8",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-07-25",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 100,
+   "dureeJ": 1,
+   "jFact": 1,
+   "jNonFact": 0
+  },
+  {
+   "id": 38,
+   "missionId": "M8",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-08-25",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 39,
+   "missionId": null,
+   "categorie": "PRO",
+   "commentaire": "",
+   "date": "2026-01-05",
+   "consultantId": "AVR",
+   "type": "interne",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 40,
+   "missionId": null,
+   "categorie": "FORM",
+   "commentaire": "",
+   "date": "2026-02-05",
+   "consultantId": "RBL",
+   "type": "interne",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 41,
+   "missionId": null,
+   "categorie": "REU",
+   "commentaire": "",
+   "date": "2026-03-05",
+   "consultantId": "MLN",
+   "type": "interne",
+   "dureeH": 4,
+   "pctFact": 0,
+   "dureeJ": 0.5,
+   "jFact": 0,
+   "jNonFact": 0.5
+  },
+  {
+   "id": 42,
+   "missionId": null,
+   "categorie": "ADM",
+   "commentaire": "",
+   "date": "2026-03-18",
+   "consultantId": "CDM",
+   "type": "interne",
+   "dureeH": 4,
+   "pctFact": 0,
+   "dureeJ": 0.5,
+   "jFact": 0,
+   "jNonFact": 0.5
+  },
+  {
+   "id": 43,
+   "missionId": null,
+   "categorie": "AO",
+   "commentaire": "",
+   "date": "2026-04-05",
+   "consultantId": "AVR",
+   "type": "interne",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 44,
+   "missionId": null,
+   "categorie": "PART",
+   "commentaire": "",
+   "date": "2026-05-05",
+   "consultantId": "CDM",
+   "type": "interne",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 45,
+   "missionId": null,
+   "categorie": "OUT",
+   "commentaire": "",
+   "date": "2026-06-05",
+   "consultantId": "RBL",
+   "type": "interne",
+   "dureeH": 4,
+   "pctFact": 0,
+   "dureeJ": 0.5,
+   "jFact": 0,
+   "jNonFact": 0.5
+  },
+  {
+   "id": 46,
+   "missionId": null,
+   "categorie": "RD",
+   "commentaire": "",
+   "date": "2026-07-05",
+   "consultantId": "MLN",
+   "type": "interne",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 47,
+   "missionId": null,
+   "categorie": "MAL",
+   "commentaire": "",
+   "date": "2026-02-10",
+   "consultantId": "AVR",
+   "type": "absence",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 48,
+   "missionId": null,
+   "categorie": "CONG",
+   "commentaire": "",
+   "date": "2026-07-01",
+   "consultantId": "RBL",
+   "type": "absence",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 49,
+   "missionId": null,
+   "categorie": "CONG",
+   "commentaire": "",
+   "date": "2026-07-02",
+   "consultantId": "RBL",
+   "type": "absence",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 50,
+   "missionId": null,
+   "categorie": "CONG",
+   "commentaire": "",
+   "date": "2026-07-15",
+   "consultantId": "CDM",
+   "type": "absence",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 51,
+   "missionId": null,
+   "categorie": "CONG",
+   "commentaire": "",
+   "date": "2026-07-16",
+   "consultantId": "CDM",
+   "type": "absence",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 52,
+   "missionId": null,
+   "categorie": "CONG",
+   "commentaire": "",
+   "date": "2026-07-17",
+   "consultantId": "CDM",
+   "type": "absence",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 53,
+   "missionId": null,
+   "categorie": "CONG",
+   "commentaire": "Congés d'été",
+   "date": "2026-08-03",
+   "consultantId": "MLN",
+   "type": "absence",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 54,
+   "missionId": "M5",
+   "categorie": null,
+   "commentaire": "Matinée refacturée, après-midi cadrage interne non facturé",
+   "date": "2026-09-05",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 8,
+   "pctFact": 70,
+   "dureeJ": 1,
+   "jFact": 0.7,
+   "jNonFact": 0.3
+  },
+  {
+   "id": 55,
+   "missionId": "M4",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2025-03-10",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 32,
+   "pctFact": 100,
+   "dureeJ": 4,
+   "jFact": 4,
+   "jNonFact": 0
+  },
+  {
+   "id": 56,
+   "missionId": "M4",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2025-04-10",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 32,
+   "pctFact": 100,
+   "dureeJ": 4,
+   "jFact": 4,
+   "jNonFact": 0
+  },
+  {
+   "id": 57,
+   "missionId": "M4",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2025-05-10",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 32,
+   "pctFact": 100,
+   "dureeJ": 4,
+   "jFact": 4,
+   "jNonFact": 0
+  },
+  {
+   "id": 58,
+   "missionId": "M4",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2025-06-20",
+   "consultantId": "AVR",
+   "type": "mission",
+   "dureeH": 32,
+   "pctFact": 100,
+   "dureeJ": 4,
+   "jFact": 4,
+   "jNonFact": 0
+  },
+  {
+   "id": 59,
+   "missionId": "M9",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2025-06-15",
+   "consultantId": "MRX",
+   "type": "mission",
+   "dureeH": 32,
+   "pctFact": 100,
+   "dureeJ": 4,
+   "jFact": 4,
+   "jNonFact": 0
+  },
+  {
+   "id": 60,
+   "missionId": "M9",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2025-07-15",
+   "consultantId": "MRX",
+   "type": "mission",
+   "dureeH": 32,
+   "pctFact": 100,
+   "dureeJ": 4,
+   "jFact": 4,
+   "jNonFact": 0
+  },
+  {
+   "id": 61,
+   "missionId": "M9",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2025-08-15",
+   "consultantId": "MRX",
+   "type": "mission",
+   "dureeH": 32,
+   "pctFact": 100,
+   "dureeJ": 4,
+   "jFact": 4,
+   "jNonFact": 0
+  },
+  {
+   "id": 62,
+   "missionId": "M9",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2025-09-15",
+   "consultantId": "MRX",
+   "type": "mission",
+   "dureeH": 32,
+   "pctFact": 100,
+   "dureeJ": 4,
+   "jFact": 4,
+   "jNonFact": 0
+  },
+  {
+   "id": 63,
+   "missionId": null,
+   "categorie": "ADM",
+   "commentaire": "",
+   "date": "2025-07-03",
+   "consultantId": "MRX",
+   "type": "interne",
+   "dureeH": 4,
+   "pctFact": 0,
+   "dureeJ": 0.5,
+   "jFact": 0,
+   "jNonFact": 0.5
+  },
+  {
+   "id": 64,
+   "missionId": null,
+   "categorie": "CONG",
+   "commentaire": "",
+   "date": "2025-09-02",
+   "consultantId": "MRX",
+   "type": "absence",
+   "dureeH": 8,
+   "pctFact": 0,
+   "dureeJ": 1,
+   "jFact": 0,
+   "jNonFact": 1
+  },
+  {
+   "id": 65,
+   "missionId": "M10",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-04-20",
+   "consultantId": "CDM",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 66,
+   "missionId": "M10",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-05-20",
+   "consultantId": "CDM",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 67,
+   "missionId": "M10",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-06-20",
+   "consultantId": "CDM",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 68,
+   "missionId": "M10",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-07-20",
+   "consultantId": "CDM",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 69,
+   "missionId": "M11",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-05-15",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 70,
+   "missionId": "M11",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-06-15",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  },
+  {
+   "id": 71,
+   "missionId": "M11",
+   "categorie": null,
+   "commentaire": "",
+   "date": "2026-07-15",
+   "consultantId": "MLN",
+   "type": "mission",
+   "dureeH": 16,
+   "pctFact": 100,
+   "dureeJ": 2,
+   "jFact": 2,
+   "jNonFact": 0
+  }
+ ],
+ "bordereauxFrais": [
+  {
+   "numero": "FRAIS_XAD_2026_001",
+   "consultantId": "RBL",
+   "annee": 2026,
+   "seq": 1,
+   "statut": "payée",
+   "datePaiement": "2026-07-20"
+  },
+  {
+   "numero": "FRAIS_XAD_2026_002",
+   "consultantId": "RBL",
+   "annee": 2026,
+   "seq": 2,
+   "statut": "note à payer",
+   "datePaiement": null
+  },
+  {
+   "numero": "FRAIS_XAD_2026_003",
+   "consultantId": "RBL",
+   "annee": 2026,
+   "seq": 3,
+   "statut": "en saisie",
+   "datePaiement": null
+  },
+  {
+   "numero": "FRAIS_MLN_2026_001",
+   "consultantId": "MLN",
+   "annee": 2026,
+   "seq": 1,
+   "statut": "en saisie",
+   "datePaiement": null
+  }
+ ],
+ "notesFrais": [
+  {
+   "id": 1,
+   "date": "2026-08-11",
+   "consultantId": "RBL",
+   "affaireId": "A1",
+   "categorieFraisId": "CF1",
+   "refacturable": true,
+   "numeroBordereau": "FRAIS_XAD_2026_002",
+   "lignesTVA": [
     {
-      "id": "M1",
-      "affaireId": "A1",
-      "nom": "Diagnostic territorial",
-      "consultantId": "XDB",
-      "statut": "en cours",
-      "enveloppe": 6,
-      "taux": 620,
-      "dateDebut": "2026-01-06",
-      "dateFin": "2027-02-28",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M2",
-      "affaireId": "A1",
-      "nom": "Animation ateliers",
-      "consultantId": "CLR",
-      "statut": "en cours",
-      "enveloppe": 18,
-      "taux": 580,
-      "dateDebut": "2026-02-01",
-      "dateFin": "2026-12-19",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M3",
-      "affaireId": "A2",
-      "nom": "Étude technique",
-      "consultantId": "CLR",
-      "statut": "en cours",
-      "enveloppe": 14,
-      "taux": 580,
-      "dateDebut": "2026-02-01",
-      "dateFin": "2026-09-30",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M4",
-      "affaireId": "A4",
-      "nom": "Entretiens RH",
-      "consultantId": "TPT",
-      "statut": "terminée",
-      "enveloppe": 16,
-      "taux": 700,
-      "dateDebut": "2025-03-01",
-      "dateFin": "2025-06-30",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M5",
-      "affaireId": "A2",
-      "nom": "Analyse comparative",
-      "consultantId": "TPT",
-      "statut": "en cours",
-      "enveloppe": 9,
-      "taux": 700,
-      "dateDebut": "2026-03-01",
-      "dateFin": "2026-08-31",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M6",
-      "affaireId": "A2",
-      "nom": "Recueil terrain",
-      "consultantId": "XDB",
-      "statut": "terminée",
-      "enveloppe": 6,
-      "taux": 620,
-      "dateDebut": "2026-04-01",
-      "dateFin": "2026-07-31",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M7",
-      "affaireId": "A1",
-      "nom": "Cadrage qualité",
-      "consultantId": "SMR",
-      "statut": "terminée",
-      "enveloppe": 5,
-      "taux": 750,
-      "dateDebut": "2026-01-06",
-      "dateFin": "2026-03-31",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M8",
-      "affaireId": "A2",
-      "nom": "Enquête usagers",
-      "consultantId": "CLR",
-      "statut": "en cours",
-      "enveloppe": 3,
-      "taux": 580,
-      "dateDebut": "2026-05-01",
-      "dateFin": "2026-08-31",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M9",
-      "affaireId": "A5",
-      "nom": "Diagnostic organisationnel",
-      "consultantId": "MDL",
-      "statut": "terminée",
-      "enveloppe": 20,
-      "taux": 650,
-      "dateDebut": "2025-06-01",
-      "dateFin": "2025-10-31",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M10",
-      "affaireId": "A10",
-      "nom": "Diagnostic énergétique territorial",
-      "consultantId": "SMR",
-      "statut": "en cours",
-      "enveloppe": 24,
-      "taux": 750,
-      "dateDebut": "2026-04-01",
-      "dateFin": "2027-01-31",
-      "commentaires": "",
-      "projectionManuelle": {}
-    },
-    {
-      "id": "M11",
-      "affaireId": "A10",
-      "nom": "Concertation acteurs locaux",
-      "consultantId": "CLR",
-      "statut": "en cours",
-      "enveloppe": 14,
-      "taux": 580,
-      "dateDebut": "2026-05-01",
-      "dateFin": "2026-12-19",
-      "commentaires": "",
-      "projectionManuelle": {}
+     "tauxTVA": 10,
+     "montantHT": 142.5,
+     "montantTVA": 14.25
     }
-  ],
-  "factures": [
+   ],
+   "commentaire": "Hôtel 2 nuits — déplacement diagnostic territorial",
+   "montantHT": 142.5,
+   "montantTVA": 14.25,
+   "montantTTC": 156.75
+  },
+  {
+   "id": 2,
+   "date": "2026-08-15",
+   "consultantId": "RBL",
+   "affaireId": "A1",
+   "categorieFraisId": "CF7",
+   "refacturable": true,
+   "numeroBordereau": "FRAIS_XAD_2026_002",
+   "lignesTVA": [
     {
-      "id": "F1",
-      "affaireId": "A1",
-      "numero": "2026-014",
-      "formation": false,
-      "montantMissionHT": 15000,
-      "montantFraisTTC": 500,
-      "montantSousTraitanceHT": 0,
-      "echeancePrev": "2026-07-01",
-      "dateDepot": null,
-      "echeancePaiementPrev": "2026-08-15",
-      "payee": false,
-      "datePaiement": null,
-      "statut": "prévisionnelle",
-      "commentaires": "Facture de solde, à déposer dès validation du dernier livrable."
-    },
-    {
-      "id": "F2",
-      "affaireId": "A1",
-      "numero": "2026-009",
-      "formation": false,
-      "montantMissionHT": 10000,
-      "montantFraisTTC": 300,
-      "montantSousTraitanceHT": 0,
-      "echeancePrev": "2026-05-15",
-      "dateDepot": "2026-06-01",
-      "echeancePaiementPrev": "2026-07-01",
-      "payee": false,
-      "datePaiement": null,
-      "statut": "facturée",
-      "commentaires": "Relance client envoyée le 15/08."
-    },
-    {
-      "id": "F3",
-      "affaireId": "A1",
-      "numero": "2026-004",
-      "formation": false,
-      "montantMissionHT": 8000,
-      "montantFraisTTC": 0,
-      "montantSousTraitanceHT": 0,
-      "echeancePrev": "2026-02-01",
-      "dateDepot": "2026-02-10",
-      "echeancePaiementPrev": "2026-03-10",
-      "payee": true,
-      "datePaiement": "2026-03-05",
-      "statut": "payée",
-      "commentaires": ""
-    },
-    {
-      "id": "F4",
-      "affaireId": "A1",
-      "numero": "2026-011",
-      "formation": true,
-      "montantMissionHT": 5000,
-      "montantFraisTTC": 0,
-      "montantSousTraitanceHT": 0,
-      "echeancePrev": "2026-05-01",
-      "dateDepot": null,
-      "echeancePaiementPrev": "2026-06-01",
-      "payee": false,
-      "datePaiement": null,
-      "statut": "annulée",
-      "commentaires": "Session de formation finalement annulée par le client."
-    },
-    {
-      "id": "F5",
-      "affaireId": "A2",
-      "numero": "2026-012",
-      "formation": false,
-      "montantMissionHT": 12000,
-      "montantFraisTTC": 0,
-      "montantSousTraitanceHT": 3500,
-      "echeancePrev": "2026-07-15",
-      "dateDepot": "2026-08-01",
-      "echeancePaiementPrev": "2026-09-15",
-      "payee": false,
-      "datePaiement": null,
-      "statut": "facturée",
-      "commentaires": "Inclut la refacturation du sous-traitant (partenaire O6)."
-    },
-    {
-      "id": "F6",
-      "affaireId": "A2",
-      "numero": "2026-013",
-      "formation": false,
-      "montantMissionHT": 8500,
-      "montantFraisTTC": 0,
-      "montantSousTraitanceHT": 0,
-      "echeancePrev": "2026-11-01",
-      "dateDepot": null,
-      "echeancePaiementPrev": "2026-12-01",
-      "payee": false,
-      "datePaiement": null,
-      "statut": "prévisionnelle",
-      "commentaires": ""
-    },
-    {
-      "id": "F7",
-      "affaireId": "A10",
-      "numero": "2026-006",
-      "formation": false,
-      "montantMissionHT": 20000,
-      "montantFraisTTC": 800,
-      "montantSousTraitanceHT": 0,
-      "echeancePrev": "2026-05-01",
-      "dateDepot": "2026-05-10",
-      "echeancePaiementPrev": "2026-06-10",
-      "payee": true,
-      "datePaiement": "2026-06-05",
-      "statut": "payée",
-      "commentaires": ""
-    },
-    {
-      "id": "F8",
-      "affaireId": "A10",
-      "numero": "",
-      "formation": false,
-      "montantMissionHT": 14200,
-      "montantFraisTTC": 0,
-      "montantSousTraitanceHT": 0,
-      "echeancePrev": "2026-12-01",
-      "dateDepot": null,
-      "echeancePaiementPrev": "2027-01-01",
-      "payee": false,
-      "datePaiement": null,
-      "statut": "prévisionnelle",
-      "commentaires": "Numéro pas encore attribué par le logiciel de facturation."
+     "tauxTVA": 10,
+     "montantHT": 89,
+     "montantTVA": 8.9
     }
-  ],
-  "saisies": [
-    {
-      "id": 1,
-      "missionId": "M1",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-08-09",
-      "consultantId": "XDB",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 100,
-      "dureeJ": 1,
-      "jFact": 1,
-      "jNonFact": 0
-    },
-    {
-      "id": 2,
-      "missionId": "M1",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-08-14",
-      "consultantId": "XDB",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 100,
-      "dureeJ": 1,
-      "jFact": 1,
-      "jNonFact": 0
-    },
-    {
-      "id": 3,
-      "missionId": "M1",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-08-19",
-      "consultantId": "XDB",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 100,
-      "dureeJ": 1,
-      "jFact": 1,
-      "jNonFact": 0
-    },
-    {
-      "id": 4,
-      "missionId": "M1",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-08-20",
-      "consultantId": "XDB",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 100,
-      "dureeJ": 1,
-      "jFact": 1,
-      "jNonFact": 0
-    },
-    {
-      "id": 5,
-      "missionId": null,
-      "categorie": "ADM",
-      "commentaire": "Note de frais + CR mensuel",
-      "date": "2026-08-24",
-      "consultantId": "XDB",
-      "type": "interne",
-      "dureeH": 4,
-      "pctFact": 0,
-      "dureeJ": 0.5,
-      "jFact": 0,
-      "jNonFact": 0.5
-    },
-    {
-      "id": 6,
-      "missionId": "M2",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-08-26",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 100,
-      "dureeJ": 1,
-      "jFact": 1,
-      "jNonFact": 0
-    },
-    {
-      "id": 7,
-      "missionId": null,
-      "categorie": "CONG",
-      "commentaire": "",
-      "date": "2026-08-27",
-      "consultantId": "CLR",
-      "type": "absence",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 8,
-      "missionId": null,
-      "categorie": "VEI",
-      "commentaire": "",
-      "date": "2026-08-28",
-      "consultantId": "XDB",
-      "type": "interne",
-      "dureeH": 3,
-      "pctFact": 0,
-      "dureeJ": 0.38,
-      "jFact": 0,
-      "jNonFact": 0.38
-    },
-    {
-      "id": 9,
-      "missionId": "M2",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-02-10",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 10,
-      "missionId": "M2",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-03-10",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 11,
-      "missionId": "M2",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-04-10",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 12,
-      "missionId": "M2",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-05-10",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 13,
-      "missionId": "M2",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-06-10",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 14,
-      "missionId": "M2",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-07-10",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 15,
-      "missionId": "M3",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-02-20",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 16,
-      "missionId": "M3",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-03-20",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 17,
-      "missionId": "M3",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-04-20",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 18,
-      "missionId": "M3",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-05-20",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 19,
-      "missionId": "M3",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-06-20",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 20,
-      "missionId": "M3",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-07-20",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 21,
-      "missionId": "M3",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-08-20",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 22,
-      "missionId": "M5",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-03-12",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 23,
-      "missionId": "M5",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-04-12",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 24,
-      "missionId": "M5",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-05-12",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 25,
-      "missionId": "M5",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-06-12",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 26,
-      "missionId": "M5",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-07-12",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 27,
-      "missionId": "M5",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-08-12",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 28,
-      "missionId": "M6",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-04-15",
-      "consultantId": "XDB",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 29,
-      "missionId": "M6",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-05-15",
-      "consultantId": "XDB",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 30,
-      "missionId": "M6",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-06-15",
-      "consultantId": "XDB",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 31,
-      "missionId": "M6",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-07-15",
-      "consultantId": "XDB",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 32,
-      "missionId": "M7",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-01-20",
-      "consultantId": "SMR",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 33,
-      "missionId": "M7",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-02-20",
-      "consultantId": "SMR",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 34,
-      "missionId": "M7",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-03-20",
-      "consultantId": "SMR",
-      "type": "mission",
-      "dureeH": 12,
-      "pctFact": 100,
-      "dureeJ": 1.5,
-      "jFact": 1.5,
-      "jNonFact": 0
-    },
-    {
-      "id": 35,
-      "missionId": "M8",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-05-25",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 100,
-      "dureeJ": 1,
-      "jFact": 1,
-      "jNonFact": 0
-    },
-    {
-      "id": 36,
-      "missionId": "M8",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-06-25",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 100,
-      "dureeJ": 1,
-      "jFact": 1,
-      "jNonFact": 0
-    },
-    {
-      "id": 37,
-      "missionId": "M8",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-07-25",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 100,
-      "dureeJ": 1,
-      "jFact": 1,
-      "jNonFact": 0
-    },
-    {
-      "id": 38,
-      "missionId": "M8",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-08-25",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 39,
-      "missionId": null,
-      "categorie": "PRO",
-      "commentaire": "",
-      "date": "2026-01-05",
-      "consultantId": "TPT",
-      "type": "interne",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 40,
-      "missionId": null,
-      "categorie": "FORM",
-      "commentaire": "",
-      "date": "2026-02-05",
-      "consultantId": "XDB",
-      "type": "interne",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 41,
-      "missionId": null,
-      "categorie": "REU",
-      "commentaire": "",
-      "date": "2026-03-05",
-      "consultantId": "CLR",
-      "type": "interne",
-      "dureeH": 4,
-      "pctFact": 0,
-      "dureeJ": 0.5,
-      "jFact": 0,
-      "jNonFact": 0.5
-    },
-    {
-      "id": 42,
-      "missionId": null,
-      "categorie": "ADM",
-      "commentaire": "",
-      "date": "2026-03-18",
-      "consultantId": "SMR",
-      "type": "interne",
-      "dureeH": 4,
-      "pctFact": 0,
-      "dureeJ": 0.5,
-      "jFact": 0,
-      "jNonFact": 0.5
-    },
-    {
-      "id": 43,
-      "missionId": null,
-      "categorie": "AO",
-      "commentaire": "",
-      "date": "2026-04-05",
-      "consultantId": "TPT",
-      "type": "interne",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 44,
-      "missionId": null,
-      "categorie": "PART",
-      "commentaire": "",
-      "date": "2026-05-05",
-      "consultantId": "SMR",
-      "type": "interne",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 45,
-      "missionId": null,
-      "categorie": "OUT",
-      "commentaire": "",
-      "date": "2026-06-05",
-      "consultantId": "XDB",
-      "type": "interne",
-      "dureeH": 4,
-      "pctFact": 0,
-      "dureeJ": 0.5,
-      "jFact": 0,
-      "jNonFact": 0.5
-    },
-    {
-      "id": 46,
-      "missionId": null,
-      "categorie": "RD",
-      "commentaire": "",
-      "date": "2026-07-05",
-      "consultantId": "CLR",
-      "type": "interne",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 47,
-      "missionId": null,
-      "categorie": "MAL",
-      "commentaire": "",
-      "date": "2026-02-10",
-      "consultantId": "TPT",
-      "type": "absence",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 48,
-      "missionId": null,
-      "categorie": "CONG",
-      "commentaire": "",
-      "date": "2026-07-01",
-      "consultantId": "XDB",
-      "type": "absence",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 49,
-      "missionId": null,
-      "categorie": "CONG",
-      "commentaire": "",
-      "date": "2026-07-02",
-      "consultantId": "XDB",
-      "type": "absence",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 50,
-      "missionId": null,
-      "categorie": "CONG",
-      "commentaire": "",
-      "date": "2026-07-15",
-      "consultantId": "SMR",
-      "type": "absence",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 51,
-      "missionId": null,
-      "categorie": "CONG",
-      "commentaire": "",
-      "date": "2026-07-16",
-      "consultantId": "SMR",
-      "type": "absence",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 52,
-      "missionId": null,
-      "categorie": "CONG",
-      "commentaire": "",
-      "date": "2026-07-17",
-      "consultantId": "SMR",
-      "type": "absence",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 53,
-      "missionId": null,
-      "categorie": "CONG",
-      "commentaire": "Congés d'été",
-      "date": "2026-08-03",
-      "consultantId": "CLR",
-      "type": "absence",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 54,
-      "missionId": "M5",
-      "categorie": null,
-      "commentaire": "Matinée refacturée, après-midi cadrage interne non facturé",
-      "date": "2026-09-05",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 8,
-      "pctFact": 70,
-      "dureeJ": 1,
-      "jFact": 0.7,
-      "jNonFact": 0.3
-    },
-    {
-      "id": 55,
-      "missionId": "M4",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2025-03-10",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 32,
-      "pctFact": 100,
-      "dureeJ": 4,
-      "jFact": 4,
-      "jNonFact": 0
-    },
-    {
-      "id": 56,
-      "missionId": "M4",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2025-04-10",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 32,
-      "pctFact": 100,
-      "dureeJ": 4,
-      "jFact": 4,
-      "jNonFact": 0
-    },
-    {
-      "id": 57,
-      "missionId": "M4",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2025-05-10",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 32,
-      "pctFact": 100,
-      "dureeJ": 4,
-      "jFact": 4,
-      "jNonFact": 0
-    },
-    {
-      "id": 58,
-      "missionId": "M4",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2025-06-20",
-      "consultantId": "TPT",
-      "type": "mission",
-      "dureeH": 32,
-      "pctFact": 100,
-      "dureeJ": 4,
-      "jFact": 4,
-      "jNonFact": 0
-    },
-    {
-      "id": 59,
-      "missionId": "M9",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2025-06-15",
-      "consultantId": "MDL",
-      "type": "mission",
-      "dureeH": 32,
-      "pctFact": 100,
-      "dureeJ": 4,
-      "jFact": 4,
-      "jNonFact": 0
-    },
-    {
-      "id": 60,
-      "missionId": "M9",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2025-07-15",
-      "consultantId": "MDL",
-      "type": "mission",
-      "dureeH": 32,
-      "pctFact": 100,
-      "dureeJ": 4,
-      "jFact": 4,
-      "jNonFact": 0
-    },
-    {
-      "id": 61,
-      "missionId": "M9",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2025-08-15",
-      "consultantId": "MDL",
-      "type": "mission",
-      "dureeH": 32,
-      "pctFact": 100,
-      "dureeJ": 4,
-      "jFact": 4,
-      "jNonFact": 0
-    },
-    {
-      "id": 62,
-      "missionId": "M9",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2025-09-15",
-      "consultantId": "MDL",
-      "type": "mission",
-      "dureeH": 32,
-      "pctFact": 100,
-      "dureeJ": 4,
-      "jFact": 4,
-      "jNonFact": 0
-    },
-    {
-      "id": 63,
-      "missionId": null,
-      "categorie": "ADM",
-      "commentaire": "",
-      "date": "2025-07-03",
-      "consultantId": "MDL",
-      "type": "interne",
-      "dureeH": 4,
-      "pctFact": 0,
-      "dureeJ": 0.5,
-      "jFact": 0,
-      "jNonFact": 0.5
-    },
-    {
-      "id": 64,
-      "missionId": null,
-      "categorie": "CONG",
-      "commentaire": "",
-      "date": "2025-09-02",
-      "consultantId": "MDL",
-      "type": "absence",
-      "dureeH": 8,
-      "pctFact": 0,
-      "dureeJ": 1,
-      "jFact": 0,
-      "jNonFact": 1
-    },
-    {
-      "id": 65,
-      "missionId": "M10",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-04-20",
-      "consultantId": "SMR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 66,
-      "missionId": "M10",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-05-20",
-      "consultantId": "SMR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 67,
-      "missionId": "M10",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-06-20",
-      "consultantId": "SMR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 68,
-      "missionId": "M10",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-07-20",
-      "consultantId": "SMR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 69,
-      "missionId": "M11",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-05-15",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 70,
-      "missionId": "M11",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-06-15",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
-    },
-    {
-      "id": 71,
-      "missionId": "M11",
-      "categorie": null,
-      "commentaire": "",
-      "date": "2026-07-15",
-      "consultantId": "CLR",
-      "type": "mission",
-      "dureeH": 16,
-      "pctFact": 100,
-      "dureeJ": 2,
-      "jFact": 2,
-      "jNonFact": 0
+   ],
+   "commentaire": "Train Paris - déplacement site",
+   "montantHT": 89,
+   "montantTVA": 8.9,
+   "montantTTC": 97.9
+  },
+  {
+   "id": 3,
+   "date": "2026-08-23",
+   "consultantId": "RBL",
+   "affaireId": "A1",
+   "categorieFraisId": "CF5",
+   "refacturable": false,
+   "numeroBordereau": "FRAIS_XAD_2026_003",
+   "lignesTVA": [
+    {
+     "tauxTVA": 10,
+     "montantHT": 24.3,
+     "montantTVA": 2.43
     }
-  ],
-  "bordereauxFrais": [
+   ],
+   "commentaire": "Taxi personnel, non refacturé au client",
+   "montantHT": 24.3,
+   "montantTVA": 2.43,
+   "montantTTC": 26.73
+  },
+  {
+   "id": 4,
+   "date": "2026-08-20",
+   "consultantId": "RBL",
+   "affaireId": "A1",
+   "categorieFraisId": "CF2",
+   "refacturable": true,
+   "numeroBordereau": "FRAIS_XAD_2026_003",
+   "lignesTVA": [
     {
-      "numero": "FRAIS_XAD_2026_001",
-      "consultantId": "XDB",
-      "annee": 2026,
-      "seq": 1,
-      "statut": "payée",
-      "datePaiement": "2026-07-20"
+     "tauxTVA": 10,
+     "montantHT": 45,
+     "montantTVA": 4.5
     },
     {
-      "numero": "FRAIS_XAD_2026_002",
-      "consultantId": "XDB",
-      "annee": 2026,
-      "seq": 2,
-      "statut": "note à payer",
-      "datePaiement": null
-    },
-    {
-      "numero": "FRAIS_XAD_2026_003",
-      "consultantId": "XDB",
-      "annee": 2026,
-      "seq": 3,
-      "statut": "en saisie",
-      "datePaiement": null
-    },
-    {
-      "numero": "FRAIS_CLR_2026_001",
-      "consultantId": "CLR",
-      "annee": 2026,
-      "seq": 1,
-      "statut": "en saisie",
-      "datePaiement": null
+     "tauxTVA": 20,
+     "montantHT": 18,
+     "montantTVA": 3.6
     }
-  ],
-  "notesFrais": [
+   ],
+   "commentaire": "Déjeuner client — repas + vin",
+   "montantHT": 63,
+   "montantTVA": 8.1,
+   "montantTTC": 71.1
+  },
+  {
+   "id": 5,
+   "date": "2026-07-05",
+   "consultantId": "RBL",
+   "affaireId": "A1",
+   "categorieFraisId": "CF9",
+   "refacturable": true,
+   "numeroBordereau": "FRAIS_XAD_2026_001",
+   "lignesTVA": [
     {
-      "id": 1,
-      "date": "2026-08-11",
-      "consultantId": "XDB",
-      "affaireId": "A1",
-      "categorieFraisId": "CF1",
-      "refacturable": true,
-      "numeroBordereau": "FRAIS_XAD_2026_002",
-      "lignesTVA": [
-        {
-          "tauxTVA": 10,
-          "montantHT": 142.5,
-          "montantTVA": 14.25
-        }
-      ],
-      "commentaire": "Hôtel 2 nuits — déplacement diagnostic territorial",
-      "montantHT": 142.5,
-      "montantTVA": 14.25,
-      "montantTTC": 156.75
-    },
-    {
-      "id": 2,
-      "date": "2026-08-15",
-      "consultantId": "XDB",
-      "affaireId": "A1",
-      "categorieFraisId": "CF7",
-      "refacturable": true,
-      "numeroBordereau": "FRAIS_XAD_2026_002",
-      "lignesTVA": [
-        {
-          "tauxTVA": 10,
-          "montantHT": 89,
-          "montantTVA": 8.9
-        }
-      ],
-      "commentaire": "Train Paris - déplacement site",
-      "montantHT": 89,
-      "montantTVA": 8.9,
-      "montantTTC": 97.9
-    },
-    {
-      "id": 3,
-      "date": "2026-08-23",
-      "consultantId": "XDB",
-      "affaireId": "A1",
-      "categorieFraisId": "CF5",
-      "refacturable": false,
-      "numeroBordereau": "FRAIS_XAD_2026_003",
-      "lignesTVA": [
-        {
-          "tauxTVA": 10,
-          "montantHT": 24.3,
-          "montantTVA": 2.43
-        }
-      ],
-      "commentaire": "Taxi personnel, non refacturé au client",
-      "montantHT": 24.3,
-      "montantTVA": 2.43,
-      "montantTTC": 26.73
-    },
-    {
-      "id": 4,
-      "date": "2026-08-20",
-      "consultantId": "XDB",
-      "affaireId": "A1",
-      "categorieFraisId": "CF2",
-      "refacturable": true,
-      "numeroBordereau": "FRAIS_XAD_2026_003",
-      "lignesTVA": [
-        {
-          "tauxTVA": 10,
-          "montantHT": 45,
-          "montantTVA": 4.5
-        },
-        {
-          "tauxTVA": 20,
-          "montantHT": 18,
-          "montantTVA": 3.6
-        }
-      ],
-      "commentaire": "Déjeuner client — repas + vin",
-      "montantHT": 63,
-      "montantTVA": 8.1,
-      "montantTTC": 71.1
-    },
-    {
-      "id": 5,
-      "date": "2026-07-05",
-      "consultantId": "XDB",
-      "affaireId": "A1",
-      "categorieFraisId": "CF9",
-      "refacturable": true,
-      "numeroBordereau": "FRAIS_XAD_2026_001",
-      "lignesTVA": [
-        {
-          "tauxTVA": 20,
-          "montantHT": 210,
-          "montantTVA": 42
-        }
-      ],
-      "commentaire": "Vol A/R — comité de pilotage",
-      "montantHT": 210,
-      "montantTVA": 42,
-      "montantTTC": 252
-    },
-    {
-      "id": 6,
-      "date": "2026-07-08",
-      "consultantId": "XDB",
-      "affaireId": "A1",
-      "categorieFraisId": "CF1",
-      "refacturable": true,
-      "numeroBordereau": "FRAIS_XAD_2026_001",
-      "lignesTVA": [
-        {
-          "tauxTVA": 10,
-          "montantHT": 98,
-          "montantTVA": 9.8
-        }
-      ],
-      "commentaire": "Hôtel 1 nuit",
-      "montantHT": 98,
-      "montantTVA": 9.8,
-      "montantTTC": 107.8
-    },
-    {
-      "id": 7,
-      "date": "2026-08-26",
-      "consultantId": "XDB",
-      "affaireId": "A2",
-      "categorieFraisId": "CF12",
-      "refacturable": false,
-      "numeroBordereau": "FRAIS_XAD_2026_003",
-      "lignesTVA": [
-        {
-          "tauxTVA": 20,
-          "montantHT": 32.9,
-          "montantTVA": 6.58
-        }
-      ],
-      "commentaire": "Fournitures de bureau non refacturées",
-      "montantHT": 32.9,
-      "montantTVA": 6.58,
-      "montantTTC": 39.48
-    },
-    {
-      "id": 8,
-      "date": "2026-08-18",
-      "consultantId": "XDB",
-      "affaireId": "A10",
-      "categorieFraisId": "CF2",
-      "refacturable": false,
-      "numeroBordereau": "FRAIS_XAD_2026_003",
-      "lignesTVA": [
-        {
-          "tauxTVA": 10,
-          "montantHT": 18.5,
-          "montantTVA": 1.85
-        }
-      ],
-      "commentaire": "Déjeuner de travail interne, non refacturé",
-      "montantHT": 18.5,
-      "montantTVA": 1.85,
-      "montantTTC": 20.35
-    },
-    {
-      "id": 9,
-      "date": "2026-08-09",
-      "consultantId": "XDB",
-      "categorieTempsInterne": "FORM",
-      "categorieFraisId": "CF18",
-      "refacturable": false,
-      "numeroBordereau": "FRAIS_XAD_2026_003",
-      "lignesTVA": [
-        {
-          "tauxTVA": 20,
-          "montantHT": 350,
-          "montantTVA": 70
-        }
-      ],
-      "commentaire": "Formation méthodologie diagnostic territorial",
-      "montantHT": 350,
-      "montantTVA": 70,
-      "montantTTC": 420
-    },
-    {
-      "id": 10,
-      "date": "2026-08-04",
-      "consultantId": "XDB",
-      "categorieTempsInterne": "ADM",
-      "categorieFraisId": "CF20",
-      "refacturable": false,
-      "numeroBordereau": "FRAIS_XAD_2026_003",
-      "lignesTVA": [
-        {
-          "tauxTVA": 20,
-          "montantHT": 45,
-          "montantTVA": 9
-        }
-      ],
-      "commentaire": "Frais de dossier administratif",
-      "montantHT": 45,
-      "montantTVA": 9,
-      "montantTTC": 54
-    },
-    {
-      "id": 11,
-      "date": "2026-06-30",
-      "consultantId": "XDB",
-      "categorieTempsInterne": "RD",
-      "categorieFraisId": "CF13",
-      "refacturable": false,
-      "numeroBordereau": "FRAIS_XAD_2026_003",
-      "lignesTVA": [
-        {
-          "tauxTVA": 20,
-          "montantHT": 210,
-          "montantTVA": 42
-        }
-      ],
-      "commentaire": "Licence logiciel R&D interne",
-      "montantHT": 210,
-      "montantTVA": 42,
-      "montantTTC": 252
-    },
-    {
-      "id": 12,
-      "date": "2026-08-14",
-      "consultantId": "CLR",
-      "affaireId": "A7",
-      "categorieFraisId": "CF16",
-      "refacturable": false,
-      "numeroBordereau": "FRAIS_CLR_2026_001",
-      "lignesTVA": [
-        {
-          "tauxTVA": 20,
-          "montantHT": 120,
-          "montantTVA": 24
-        }
-      ],
-      "commentaire": "Inscription salon professionnel, non refacturée",
-      "montantHT": 120,
-      "montantTVA": 24,
-      "montantTTC": 144
-    },
-    {
-      "id": 13,
-      "date": "2026-07-30",
-      "consultantId": "CLR",
-      "categorieTempsInterne": "REU",
-      "categorieFraisId": "CF2",
-      "refacturable": false,
-      "numeroBordereau": "FRAIS_CLR_2026_001",
-      "lignesTVA": [
-        {
-          "tauxTVA": 10,
-          "montantHT": 60,
-          "montantTVA": 6
-        }
-      ],
-      "commentaire": "Repas séminaire interne",
-      "montantHT": 60,
-      "montantTVA": 6,
-      "montantTTC": 66
-    },
-    {
-      "id": 14,
-      "date": "2026-07-15",
-      "consultantId": "XDB",
-      "affaireId": "A1",
-      "categorieFraisId": "CF1",
-      "refacturable": false,
-      "numeroBordereau": "FRAIS_XAD_2026_003",
-      "lignesTVA": [
-        {
-          "tauxTVA": 10,
-          "montantHT": 75,
-          "montantTVA": 7.5
-        }
-      ],
-      "commentaire": "Nuit d'hôtel non refacturée (erreur de réservation)",
-      "montantHT": 75,
-      "montantTVA": 7.5,
-      "montantTTC": 82.5
+     "tauxTVA": 20,
+     "montantHT": 210,
+     "montantTVA": 42
     }
-  ]
+   ],
+   "commentaire": "Vol A/R — comité de pilotage",
+   "montantHT": 210,
+   "montantTVA": 42,
+   "montantTTC": 252
+  },
+  {
+   "id": 6,
+   "date": "2026-07-08",
+   "consultantId": "RBL",
+   "affaireId": "A1",
+   "categorieFraisId": "CF1",
+   "refacturable": true,
+   "numeroBordereau": "FRAIS_XAD_2026_001",
+   "lignesTVA": [
+    {
+     "tauxTVA": 10,
+     "montantHT": 98,
+     "montantTVA": 9.8
+    }
+   ],
+   "commentaire": "Hôtel 1 nuit",
+   "montantHT": 98,
+   "montantTVA": 9.8,
+   "montantTTC": 107.8
+  },
+  {
+   "id": 7,
+   "date": "2026-08-26",
+   "consultantId": "RBL",
+   "affaireId": "A2",
+   "categorieFraisId": "CF12",
+   "refacturable": false,
+   "numeroBordereau": "FRAIS_XAD_2026_003",
+   "lignesTVA": [
+    {
+     "tauxTVA": 20,
+     "montantHT": 32.9,
+     "montantTVA": 6.58
+    }
+   ],
+   "commentaire": "Fournitures de bureau non refacturées",
+   "montantHT": 32.9,
+   "montantTVA": 6.58,
+   "montantTTC": 39.48
+  },
+  {
+   "id": 8,
+   "date": "2026-08-18",
+   "consultantId": "RBL",
+   "affaireId": "A10",
+   "categorieFraisId": "CF2",
+   "refacturable": false,
+   "numeroBordereau": "FRAIS_XAD_2026_003",
+   "lignesTVA": [
+    {
+     "tauxTVA": 10,
+     "montantHT": 18.5,
+     "montantTVA": 1.85
+    }
+   ],
+   "commentaire": "Déjeuner de travail interne, non refacturé",
+   "montantHT": 18.5,
+   "montantTVA": 1.85,
+   "montantTTC": 20.35
+  },
+  {
+   "id": 9,
+   "date": "2026-08-09",
+   "consultantId": "RBL",
+   "categorieTempsInterne": "FORM",
+   "categorieFraisId": "CF18",
+   "refacturable": false,
+   "numeroBordereau": "FRAIS_XAD_2026_003",
+   "lignesTVA": [
+    {
+     "tauxTVA": 20,
+     "montantHT": 350,
+     "montantTVA": 70
+    }
+   ],
+   "commentaire": "Formation méthodologie diagnostic territorial",
+   "montantHT": 350,
+   "montantTVA": 70,
+   "montantTTC": 420
+  },
+  {
+   "id": 10,
+   "date": "2026-08-04",
+   "consultantId": "RBL",
+   "categorieTempsInterne": "ADM",
+   "categorieFraisId": "CF20",
+   "refacturable": false,
+   "numeroBordereau": "FRAIS_XAD_2026_003",
+   "lignesTVA": [
+    {
+     "tauxTVA": 20,
+     "montantHT": 45,
+     "montantTVA": 9
+    }
+   ],
+   "commentaire": "Frais de dossier administratif",
+   "montantHT": 45,
+   "montantTVA": 9,
+   "montantTTC": 54
+  },
+  {
+   "id": 11,
+   "date": "2026-06-30",
+   "consultantId": "RBL",
+   "categorieTempsInterne": "RD",
+   "categorieFraisId": "CF13",
+   "refacturable": false,
+   "numeroBordereau": "FRAIS_XAD_2026_003",
+   "lignesTVA": [
+    {
+     "tauxTVA": 20,
+     "montantHT": 210,
+     "montantTVA": 42
+    }
+   ],
+   "commentaire": "Licence logiciel R&D interne",
+   "montantHT": 210,
+   "montantTVA": 42,
+   "montantTTC": 252
+  },
+  {
+   "id": 12,
+   "date": "2026-08-14",
+   "consultantId": "MLN",
+   "affaireId": "A7",
+   "categorieFraisId": "CF16",
+   "refacturable": false,
+   "numeroBordereau": "FRAIS_MLN_2026_001",
+   "lignesTVA": [
+    {
+     "tauxTVA": 20,
+     "montantHT": 120,
+     "montantTVA": 24
+    }
+   ],
+   "commentaire": "Inscription salon professionnel, non refacturée",
+   "montantHT": 120,
+   "montantTVA": 24,
+   "montantTTC": 144
+  },
+  {
+   "id": 13,
+   "date": "2026-07-30",
+   "consultantId": "MLN",
+   "categorieTempsInterne": "REU",
+   "categorieFraisId": "CF2",
+   "refacturable": false,
+   "numeroBordereau": "FRAIS_MLN_2026_001",
+   "lignesTVA": [
+    {
+     "tauxTVA": 10,
+     "montantHT": 60,
+     "montantTVA": 6
+    }
+   ],
+   "commentaire": "Repas séminaire interne",
+   "montantHT": 60,
+   "montantTVA": 6,
+   "montantTTC": 66
+  },
+  {
+   "id": 14,
+   "date": "2026-07-15",
+   "consultantId": "RBL",
+   "affaireId": "A1",
+   "categorieFraisId": "CF1",
+   "refacturable": false,
+   "numeroBordereau": "FRAIS_XAD_2026_003",
+   "lignesTVA": [
+    {
+     "tauxTVA": 10,
+     "montantHT": 75,
+     "montantTVA": 7.5
+    }
+   ],
+   "commentaire": "Nuit d'hôtel non refacturée (erreur de réservation)",
+   "montantHT": 75,
+   "montantTVA": 7.5,
+   "montantTTC": 82.5
+  }
+ ]
 }

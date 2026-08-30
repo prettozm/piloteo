@@ -182,7 +182,71 @@ démarrer si la base est plus récente que le code (garde-fou de version de sch�
 | `unhealthy` en `docker ps` | `curl` interne échoue → consulter `docker compose logs`. |
 | Espace disque plein | Purger d'anciennes sauvegardes ; ajuster `PILOTEO_BACKUP_RETENTION`. |
 
-## 11. Capacité et limites
+## 11. Déploiement multi-clients sur Fly.io (recommandé)
+
+Pilotéo est **white-label** : une instance = un client, totalement isolée
+(application, volume, secrets et URL distincts). SQLite impose **une seule
+machine par client** (jamais `count > 1`).
+
+### Provisionner un nouveau client
+
+```bash
+# prérequis : flyctl installé et connecté (fly auth login)
+scripts/fly-new-client.sh dupont "Cabinet Dupont" ADM cdg
+```
+
+Le script crée l'app `piloteo-dupont`, son volume persistant, ses secrets
+(nom du cabinet, compte admin + **mot de passe généré affiché une seule fois**),
+puis déploie. Il affiche l'URL `https://piloteo-dupont.fly.dev` et les
+identifiants à transmettre au client par un canal sûr.
+
+### Personnaliser la marque
+
+- **Nom** : secret `PILOTEO_ORG_NAME` (posé par le script, modifiable via
+  `fly secrets set -a piloteo-<client> PILOTEO_ORG_NAME="…"`).
+- **Logo** : déposer `logo.svg` (ou `.png`/`.jpg`) dans `/data/branding/` sur le
+  volume du client (`fly ssh sftp shell -a piloteo-<client>`), servi ensuite sur
+  `/brand-logo`. Sans dépôt, un logo neutre est utilisé.
+
+### Réplication continue hors-site (Litestream)
+
+Fortement recommandée en production. Exporter les identifiants S3 avant de
+provisionner (ou les ajouter ensuite avec `fly secrets set`) :
+
+```bash
+export LITESTREAM_REPLICA_URL=s3://mon-bucket/piloteo-dupont
+export AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...
+export AWS_ENDPOINT_URL_S3=https://s3.fr-par.scw.cloud   # S3 non-AWS (UE)
+scripts/fly-new-client.sh dupont "Cabinet Dupont" ADM cdg
+```
+
+La base est restaurée depuis la réplique si le volume est vierge, puis répliquée
+en continu. Les sauvegardes quotidiennes internes (`/data/backups`) restent
+actives en complément.
+
+### Mise à jour d'un client
+
+```bash
+fly deploy -a piloteo-<client> --ha=false
+```
+
+Le garde-fou de version de schéma empêche de démarrer sur une base plus récente
+que le code. Déployer d'abord sur l'instance de recette, valider, puis les clients.
+
+## 12. Environnements de dev / recette gratuits
+
+- **Dev local** : `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`
+  (base jetable `./data-dev`, identifiants de dev, code monté en volume).
+- **Dev / recette cloud gratuits** : ouvrir le dépôt dans **GitHub Codespaces**
+  (`.devcontainer/` fourni) ; lancer `python server.py` et rendre le port 8080
+  **public** pour une recette partagée. **Données de démo uniquement.**
+- **Recette permanente gratuite** : VM **Oracle Cloud Always Free** avec le même
+  `docker compose`.
+
+> RGPD : sur tout environnement de dev/recette, **jamais de données réelles** —
+> uniquement le `seed.json` de démonstration (entièrement fictif).
+
+## 13. Capacité et limites
 
 Cette architecture convient tant que : quelques utilisateurs, une seule équipe,
 une seule instance, temps de réponse satisfaisant, conflits rares, pas

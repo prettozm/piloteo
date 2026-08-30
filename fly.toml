@@ -1,0 +1,46 @@
+# Modèle Fly.io — une application Fly PAR CLIENT (isolation forte : volume,
+# secrets et URL distincts). Le nom d'app est fourni au déploiement :
+#   fly deploy -a piloteo-<client>
+# Création complète d'un client : scripts/fly-new-client.sh <client>
+#
+# Contrainte d'architecture : UNE SEULE machine (SQLite mono-instance).
+# Ne jamais passer count > 1.
+
+primary_region = "cdg"  # Paris — données en France
+
+[build]
+
+[env]
+  PILOTEO_HOST = "0.0.0.0"
+  PILOTEO_PORT = "8080"
+  # Fly ne monte qu'un volume par machine : les sauvegardes vivent sur le même
+  # volume que la base.
+  PILOTEO_DATA_DIR = "/data"
+  PILOTEO_BACKUP_DIR = "/data/backups"
+  # TLS terminé par le proxy Fly (force_https ci-dessous) : cookies Secure + HSTS.
+  PILOTEO_FORCE_HTTPS = "1"
+  # Le proxy Fly (réseau privé) fournit X-Forwarded-For : plages par défaut OK.
+
+[[mounts]]
+  source = "piloteo_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Mono-instance permanente : pas d'arrêt auto (les sauvegardes quotidiennes
+  # et la synchronisation supposent un serveur qui vit).
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

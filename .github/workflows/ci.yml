@@ -86,3 +86,23 @@ jobs:
       - name: Nettoyage
         if: always()
         run: docker rm -f piloteo-ci 2>/dev/null || true
+
+  # Scan de vulnérabilités de l'image (OS + Python). Informatif dans un premier
+  # temps : une CVE fraîche dans l'image de base ne doit pas bloquer un correctif
+  # applicatif — la traiter reste à l'agenda (dependabot suit l'image de base).
+  trivy:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construire l'image
+        run: docker build -t piloteo:scan .
+
+      - name: Scan Trivy (CVE HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: piloteo:scan
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"

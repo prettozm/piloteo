@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="Pilotéo">
+  <circle cx="48" cy="48" r="44" fill="#1d5c54"/>
+  <circle cx="48" cy="48" r="44" fill="none" stroke="#e9b44c" stroke-width="4"/>
+  <path d="M34 68V30h17a13 13 0 0 1 0 26H42v12z" fill="#f6f1e7"/>
+  <path d="M42 36h9a7 7 0 0 1 0 14h-9z" fill="#1d5c54"/>
+</svg>

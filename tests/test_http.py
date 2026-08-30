@@ -227,6 +227,30 @@ class HttpTests(unittest.TestCase):
         st, _, _ = self.call("GET", "/favicon.ico")
         self.assertEqual(st, 204)
 
+    # --- white-label ---
+    def test_org_name_injected_in_index(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request("GET", "/")
+        r = c.getresponse(); body = r.read().decode()
+        c.close()
+        # le placeholder ne doit jamais fuiter ; la marque par défaut est injectée
+        self.assertNotIn("{{PILOTEO_ORG_NAME}}", body)
+        self.assertIn(server.ORG_NAME, body)
+
+    def test_brand_logo_served_with_default(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request("GET", "/brand-logo")
+        r = c.getresponse(); body = r.read()
+        c.close()
+        self.assertEqual(r.status, 200)
+        self.assertIn("image/svg", r.getheader("Content-Type"))
+        self.assertTrue(body.startswith(b"<svg"))
+
+    def test_health_reports_version(self):
+        st, body, _ = self.call("GET", "/api/health")
+        self.assertEqual(st, 200)
+        self.assertEqual(body.get("version"), server.APP_VERSION)
+
 
 if __name__ == "__main__":
     unittest.main()

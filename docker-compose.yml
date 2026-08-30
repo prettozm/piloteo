@@ -1,9 +1,8 @@
 services:
   piloteo:
     build: .
-    # L'uid applicatif du conteneur (1000). Les volumes ./data et ./backups
-    # sur l'hôte doivent lui appartenir : `sudo chown -R 1000:1000 data backups`.
-    user: "1000:1000"
+    # L'entrypoint démarre en root pour donner ./data et ./backups à l'uid 1000,
+    # puis abandonne les privilèges : l'application tourne en non-root.
     restart: unless-stopped
     env_file: .env
     ports:

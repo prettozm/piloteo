@@ -1,0 +1,23 @@
+# Surcouche développement : docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# - identifiants de dev pré-remplis (base jetable ./data-dev, JAMAIS de données réelles) ;
+# - code monté en volume : modifier server.py/index.html/app.js sans rebuild
+#   (redémarrer le conteneur pour recharger server.py).
+services:
+  piloteo:
+    environment:
+      PILOTEO_ADMIN_USERNAME: admin
+      PILOTEO_ADMIN_PASSWORD: mot-de-passe-de-dev-uniquement
+      PILOTEO_ADMIN_CONSULTANT_ID: CDM
+      PILOTEO_ADMIN_NAME: Admin Dev
+      PILOTEO_ORG_NAME: Pilotéo (dev)
+      PILOTEO_FORCE_HTTPS: "0"
+    env_file: []
+    volumes:
+      - ./data-dev:/data
+      - ./backups-dev:/backups
+      - ./server.py:/app/server.py:ro
+      - ./index.html:/app/index.html:ro
+      - ./app.js:/app/app.js:ro
+      - ./support.html:/app/support.html:ro
+      - ./support.js:/app/support.js:ro
+    read_only: false

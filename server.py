@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import html
 import ipaddress
 import json
 import mimetypes
@@ -41,6 +42,12 @@ HISTORY_LIMIT = int(os.environ.get("PILOTEO_HISTORY_LIMIT", "100"))
 BACKUP_RETENTION = int(os.environ.get("PILOTEO_BACKUP_RETENTION", "30"))
 SESSION_COOKIE = "piloteo_session"
 SCHEMA_VERSION = 1
+APP_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip() if (ROOT / "VERSION").exists() else "dev"
+
+# Marque affichée dans l'interface (white-label) : chaque client déploie avec
+# son propre nom via PILOTEO_ORG_NAME et, s'il le souhaite, son logo déposé
+# dans <PILOTEO_DATA_DIR>/branding/logo.(svg|png|jpg) — sinon logo neutre.
+ORG_NAME = os.environ.get("PILOTEO_ORG_NAME", "Pilotéo").strip() or "Pilotéo"
 
 # X-Forwarded-For n'est cru que si le pair TCP direct est un proxy de confiance.
 # Par défaut : boucle locale et plages privées, car le contrat de déploiement est
@@ -703,7 +710,7 @@ class PilotHandler(BaseHTTPRequestHandler):
         if path == "/api/health":
             try:
                 conn = db_connect(); conn.execute("SELECT 1").fetchone(); conn.close()
-                self.send_json(200, {"status": "ok"})
+                self.send_json(200, {"status": "ok", "version": APP_VERSION})
             except Exception:
                 self.send_json(503, {"status": "error"})
             return
@@ -760,10 +767,21 @@ class PilotHandler(BaseHTTPRequestHandler):
                             cache=(path == "/support.js"))
             return
         if path in {"/", "/index.html"}:
-            self.serve_file(ROOT / "index.html")
+            self.serve_file(ROOT / "index.html", template=True)
             return
         if path == "/app.js":
             self.serve_file(ROOT / "app.js", cache=True)
+            return
+        if path == "/brand-logo":
+            # Logo du client s'il a été déposé sur le volume, sinon logo neutre.
+            for candidate in (DATA_DIR / "branding" / "logo.svg",
+                              DATA_DIR / "branding" / "logo.png",
+                              DATA_DIR / "branding" / "logo.jpg",
+                              ROOT / "assets" / "logo-default.svg"):
+                if candidate.exists():
+                    self.serve_file(candidate, cache=True)
+                    return
+            self.send_error(404)
             return
         if path == "/favicon.ico":
             # Pas d'icône dédiée : répondre 204 plutôt que 404 (évite du bruit
@@ -774,10 +792,12 @@ class PilotHandler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
-    def serve_file(self, path: Path, cache: bool = False):
+    def serve_file(self, path: Path, cache: bool = False, template: bool = False):
         if not path.exists():
             self.send_error(404); return
         raw = path.read_bytes()
+        if template:
+            raw = raw.replace(b"{{PILOTEO_ORG_NAME}}", html.escape(ORG_NAME).encode("utf-8"))
         self.send_response(200)
         ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         if path.suffix == ".js":
