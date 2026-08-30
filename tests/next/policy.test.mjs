@@ -163,6 +163,45 @@ test("pilote peut créer une mission sur l'affaire qu'il pilote => accept", () =
 });
 
 // ---------------------------------------------------------------------------
+// Non-régression sécurité : usurpation de champ payload (autorisation fondée
+// sur l'entité réelle ciblée par entityId, jamais sur le payload de l'acteur).
+
+const userC2 = { workspaceId: "w1", memberId: "mem-c2", consultantId: "c2", role: "user", status: "active" };
+
+test("SÉCURITÉ: hijack cross-affaire d'une mission (payload.affaireId falsifié) => reject", () => {
+  const projection = buildProjection();
+  // m1 appartient réellement à a1 (pilotée par c1). c2 ne pilote que a2.
+  // c2 cible m1 (entityId) en prétendant (payload.affaireId=a2) piloter son affaire.
+  const event = { entityType: "missions", operation: "update", entityId: "m1" };
+  const payload = { id: "m1", affaireId: "a2", nom: "Détournée", consultantId: "c2", statut: "en cours" };
+  assert.equal(evaluate({ actorMembership: userC2, projection, event, payload }), "reject");
+});
+
+test("SÉCURITÉ: prise de contrôle d'une affaire tierce (payload.id falsifié) => reject", () => {
+  const projection = buildProjection();
+  // c2 pilote a2. Il cible a1 (entityId, pilotée par c1) mais usurpe payload.id=a2.
+  const event = { entityType: "affaires", operation: "update", entityId: "a1" };
+  const payload = { ...projection.affaires.a2, id: "a2", nom: "Prise de contrôle" };
+  assert.equal(evaluate({ actorMembership: userC2, projection, event, payload }), "reject");
+});
+
+test("SÉCURITÉ: déplacer une mission vers une affaire non pilotée => reject", () => {
+  const projection = buildProjection();
+  // c1 pilote a1 et la mission m1. Il tente de déplacer m1 vers a2 (pilotée par c2).
+  const event = { entityType: "missions", operation: "update", entityId: "m1" };
+  const payload = { id: "m1", affaireId: "a2", nom: "Mission 1", consultantId: "c1", statut: "en cours" };
+  assert.equal(evaluate({ actorMembership: userC1, projection, event, payload }), "reject");
+});
+
+test("SÉCURITÉ: usurpation de numero de bordereau (payload.numero != entityId) => reject", () => {
+  const projection = buildProjection();
+  // B1 appartient à c1. c2 cible B1 en usurpant un numero qui lui appartiendrait.
+  const event = { entityType: "bordereauxFrais", operation: "update", entityId: "B1" };
+  const payload = { numero: "B2", consultantId: "c2", annee: 2026, seq: 2, statut: "en saisie", datePaiement: null };
+  assert.equal(evaluate({ actorMembership: userC2, projection, event, payload }), "reject");
+});
+
+// ---------------------------------------------------------------------------
 // bordereauxFrais : transitions
 
 test("bordereau: transition autorisée (en saisie -> note à payer) => accept", () => {

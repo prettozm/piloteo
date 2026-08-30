@@ -178,6 +178,19 @@ export function evaluate({ actorMembership, projection, event, payload } = {}) {
   const newVal = operation === "delete" ? null : payload ?? null;
   const candidate = newVal || oldVal || {};
 
+  // Défense anti-usurpation (toutes collections) : le reducer indexe l'entité
+  // par `event.entityId` ; un payload ne peut donc pas déclarer une identité
+  // différente de `entityId`. Sans ce garde, un acteur autorisé sur l'entité
+  // qu'il *déclare* dans le payload pourrait faire écraser une AUTRE entité
+  // réellement ciblée par `entityId`. Le champ d'identité dépend de la
+  // collection (`numero` pour bordereauxFrais, `id` sinon).
+  if (newVal) {
+    const declaredId = newVal[ENTITY_KEY_FIELD[entityType]];
+    if (declaredId !== undefined && s(declaredId) !== s(entityId)) {
+      return "reject";
+    }
+  }
+
   if (entityType === "saisies") {
     if (operation === "delete") return "reject"; // suppression jamais autorisée en V1
     if (s(candidate.consultantId) !== cid || (oldVal && s(oldVal.consultantId) !== cid)) {
@@ -218,15 +231,35 @@ export function evaluate({ actorMembership, projection, event, payload } = {}) {
   }
 
   if (entityType === "affaires" || entityType === "missions") {
-    if (operation === "create" && entityType === "affaires") {
-      return "reject"; // création d'affaire réservée admin
-    }
     const affaires = proj.affaires || {};
-    const affairId = entityType === "affaires" ? candidate.id : candidate.affaireId;
-    const affair = affaires[affairId] || null;
-    if (!affair || s(affair.pilote) !== cid) return "reject";
-    if (entityType === "affaires" && newVal && s(newVal.pilote) !== cid) {
-      return "reject"; // changement de pilote réservé admin
+
+    if (entityType === "affaires") {
+      if (operation === "create") return "reject"; // création d'affaire réservée admin
+      // Autorisation fondée sur l'affaire RÉELLEMENT ciblée (`entityId`),
+      // jamais sur un `id` porté par le payload de l'acteur.
+      const affair = affaires[entityId] || null;
+      if (!affair || s(affair.pilote) !== cid) return "reject";
+      if (newVal && s(newVal.pilote) !== cid) return "reject"; // changement de pilote réservé admin
+      return "accept";
+    }
+
+    // missions : l'affaire de gouvernance est celle de la mission RÉELLE, pas
+    // celle déclarée dans un payload hostile.
+    if (operation === "create") {
+      // Créer une mission : l'acteur doit piloter l'affaire cible du payload.
+      const affair = affaires[s(newVal && newVal.affaireId)] || null;
+      if (!affair || s(affair.pilote) !== cid) return "reject";
+      return "accept";
+    }
+    // update / delete : l'affaire de référence est celle de la mission stockée
+    // à `entityId` (`oldVal`), pas celle prétendue par le payload.
+    if (!oldVal) return "reject";
+    const currentAffair = affaires[s(oldVal.affaireId)] || null;
+    if (!currentAffair || s(currentAffair.pilote) !== cid) return "reject";
+    if (newVal && s(newVal.affaireId) !== s(oldVal.affaireId)) {
+      // Déplacer une mission vers une autre affaire exige de piloter AUSSI la cible.
+      const targetAffair = affaires[s(newVal.affaireId)] || null;
+      if (!targetAffair || s(targetAffair.pilote) !== cid) return "reject";
     }
     return "accept";
   }
