@@ -2,10 +2,11 @@
   "name": "piloteo-e2e",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Outillage de test de Pilotéo : end-to-end navigateur (Playwright) et tests unitaires des modules local-first (node:test). L'application de production n'a aucune dépendance npm au runtime ; fake-indexeddb ne sert qu'aux tests Node.",
   "scripts": {
     "test:e2e": "node tests/e2e/smoke.mjs",
-    "test:next": "node --test tests/next/"
+    "test:next": "node --test \"tests/next/**/*.test.mjs\""
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5",
