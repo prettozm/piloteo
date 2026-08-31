@@ -136,6 +136,60 @@ sur un `mkdtemp` :
 
 Toute la suite `npm run test:next` doit rester **verte** (aucune régression).
 
+## 6bis. Point 1b — câblage dans l'application vivante (lot séparé)
+
+> Rend le mode Dossier réellement utilisable : quand l'utilisateur l'active dans
+> Réglages, `GET/PUT /api/state` est servi par le store event-first (§4) au lieu
+> du KV snapshot classique. **`app.js` reste STRICTEMENT inchangé.** Le chemin
+> par défaut (mode Dossier INACTIF) doit rester **identique bit à bit** au
+> comportement actuel — additif, zéro régression.
+
+Livrables :
+1. **`piloteo-solo-bridge.mjs`** (racine, chargé via `<script type="module">`) :
+   importe `src/integration/solo-store.js`, `src/storage/fsaccess-port.js`,
+   `src/storage/fsaccess-handle-store.js` et expose `window.PiloteoNext` :
+   - `hasFileSystemAccess: boolean`
+   - `async activateFolderFromPicker()` -> ouvre le picker, mémorise le handle,
+     renvoie un « engine » `{ async load()->{revision,state}, async commit(state)->{revision,state} }`
+     bâti sur `createSoloStore({backend: createFolderEventBackend({fsPort: createFsAccessPort(handle)})})`.
+   - `async resumeFolder()` -> `null` | `{needsPermission:true}` | `{engine}` (handle mémorisé).
+   - `__engineFromHandle(handle)` (hook de TEST : construit l'engine depuis un
+     FileSystemDirectoryHandle fourni — permet un e2e sans picker natif).
+   L'engine `load/commit` adapte le retour du store au contrat `/api/state`
+   (GET -> `{revision,state}` ; PUT/commit -> `{ok:true, revision, state, changes:{}}`,
+   en incluant `conflicts` s'il y en a).
+2. **`local-backend.js`** (modifs ADDITIVES) :
+   - Une indirection `activeEngine` pour `/api/state` : si `activeEngine` est
+     posé, `GET` = `activeEngine.load()`, `PUT` = `activeEngine.commit(state)` ;
+     sinon le chemin KV classique ACTUEL, inchangé.
+   - Activation Dossier : à la première activation sur un dossier VIDE, recopier
+     l'état courant de l'appareil dans le dossier (un `commit(currentState)`) pour
+     la continuité (mini-migration ; le point 5 la raffinera). Persister le mode
+     choisi (`localStorage` `piloteo_storage_mode` = `device|folder`) ; au boot,
+     si `folder`, tenter `resumeFolder()` et poser `activeEngine` (ou signaler la
+     re-permission requise).
+   - Réglages (section « Stockage ») : la ligne « Un dossier » devient
+     actionnable : bouton « Choisir un dossier » -> `activateFolderFromPicker`,
+     affichage du dossier actif, bouton « Revenir à cet appareil ». Sur navigateur
+     non compatible : rester informatif (déjà le cas).
+   - Garde-fou : si `window.PiloteoNext` est absent (module pas encore chargé /
+     échec), le mode Dossier est simplement indisponible — le classique fonctionne.
+3. **`index.html`** : ajouter `<script type="module" src="piloteo-solo-bridge.mjs"></script>`.
+   (Le module est différé : `local-backend.js` ne doit pas SUPPOSER `window.PiloteoNext`
+    présent au chargement — il le teste à l'usage.)
+4. **`.github/workflows/pages.yml`** : embarquer `src/` et `piloteo-solo-bridge.mjs`
+   dans `_site/` (le déploiement statique doit servir les modules ES).
+5. **Tests** :
+   - Un smoke Playwright (node, `PW_CHROMIUM`/`--no-sandbox`) : sert le dépôt en
+     statique, ouvre `index.html?solo=1`, et via `window.PiloteoNext.__engineFromHandle(fakeHandle)`
+     (handle en mémoire injecté dans la page) prouve un aller-retour `commit`->`load`
+     du mode Dossier DANS le navigateur. Vérifie aussi que le mode classique (par
+     défaut) démarre toujours et que le panneau Réglages s'ouvre (non-régression).
+   - Ne PAS casser `npm run test:next` ni le smoke Réglages existant.
+
+Hors périmètre 1b : migration complète (point 5), comptes/partage (points 2-3),
+Drive réel (point 4).
+
 ## 7. Contraintes transverses
 
 - Aucune dépendance nouvelle. Node >= 20, ESM. Pas de `require`.
