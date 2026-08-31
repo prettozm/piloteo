@@ -1,0 +1,1975 @@
+<!doctype html>
+<title>Pilotéo</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<style>
+  /* ============ Tokens ============ */
+  :root{
+    --bg:#ffffff;
+    --surface:#ffffff;
+    --surface-muted:#f6f5ee;
+    --surface-strong:#dcdacb;
+    --surface-accent:#fffbe6;
+    --border:#e3e1d3;
+    --text:#33352c;
+    --text-muted:#4a4b39;
+    --accent:#7c9a22;
+    --accent-strong:#5e7a17;
+    --brand-green:#a2c628;
+    --brand-green-light:#8cb332;
+    --brand-green-dark:#4f6a12;
+    --brand-green-tint:#d3e4a4;
+    --brand-ocre:#c04f15;
+    --ocre-deep:#8f3b10;
+    --chart-grey:#5c7692;
+    --chart-beige:#c9a556;
+    --chart-red:#e0433e;
+    --chart-yellow-1:#fdf3d9;
+    --chart-yellow-2:#f6d685;
+    --chart-yellow-3:#f3c141;
+    --chart-yellow-4:#d9a52a;
+    --chart-yellow-5:#b8850a;
+    --chart-yellow-6:#8f6407;
+    --sidebar-bg:#2b2c25;
+    --sidebar-text:#e6e5d8;
+    --sidebar-text-muted:#a3a493;
+    --sidebar-active:#3d4030;
+    --hero-bg:#3a4d12;
+    --hero-text:#f4f6ea;
+    --hero-text-muted:#c3cfa0;
+    --panel-head-bg:#f3c141;
+    --panel-head-text:#1d1a0d;
+    --status-good-bg:#eaf3dc;
+    --status-good-text:#3f6316;
+    --status-warn-bg:#fbeed7;
+    --status-warn-text:#8a5c0f;
+    --status-danger-bg:#faded9;
+    --status-danger-text:#8f2c1f;
+    --focus:#5e7a17;
+    --shadow: 0 1px 2px rgba(40,38,20,.06), 0 4px 14px rgba(40,38,20,.06);
+    --font-display:Georgia, 'Times New Roman', serif;
+    --font-sans:-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  /* Pilotéo garde volontairement une identité unique (couleurs du cabinet) :
+     pas d'adaptation au thème sombre du visiteur. */
+
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font-sans);
+    font-size:15px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3{ font-family:var(--font-sans); font-weight:600; margin:0; text-wrap:balance; }
+  table{ font-variant-numeric:tabular-nums; }
+  .mono{ font-family:var(--font-mono); }
+  button{ font-family:inherit; }
+  a{ color:inherit; }
+  :focus-visible{ outline:2px solid var(--focus); outline-offset:2px; }
+
+  /* ============ Identification screen ============ */
+  #identify-screen{
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:
+      radial-gradient(1100px 500px at 15% -10%, color-mix(in srgb, var(--brand-green) 16%, transparent), transparent),
+      radial-gradient(900px 500px at 100% 110%, color-mix(in srgb, var(--brand-ocre) 12%, transparent), transparent),
+      var(--bg);
+    padding:24px;
+  }
+  .id-card{
+    width:100%; max-width:420px; background:var(--surface); border:1px solid var(--border);
+    border-radius:16px; padding:36px 32px; box-shadow:var(--shadow);
+  }
+  .wordmark{
+    font-family:var(--font-display); font-weight:600; font-size:2rem; letter-spacing:.01em;
+    display:flex; align-items:baseline; gap:.5rem; margin-bottom:4px;
+  }
+  .wordmark .dot{ color:var(--brand-ocre); }
+  .id-sub{ color:var(--text-muted); font-size:.92rem; margin-bottom:28px; }
+  .id-list{ display:flex; flex-direction:column; gap:6px; max-height:340px; overflow-y:auto; }
+  .id-option{
+    display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+    padding:10px 12px; border-radius:10px; border:1px solid transparent; background:none;
+    cursor:pointer; color:var(--text); font-size:.96rem;
+  }
+  .id-option:hover{ background:var(--surface-muted); }
+  .id-avatar{
+    width:34px; height:34px; border-radius:50%; background:var(--brand-green); color:#26290f;
+    display:flex; align-items:center; justify-content:center; font-family:var(--font-mono);
+    font-weight:600; font-size:.78rem; flex:none;
+  }
+  .id-name{ font-weight:500; }
+  .id-role{ color:var(--text-muted); font-size:.82rem; }
+
+  /* ============ Shell ============ */
+  #main-shell{ min-height:100vh; }
+  #main-shell:not([hidden]){ display:flex; }
+  .sidebar{
+    width:236px; flex:none; background:var(--sidebar-bg); color:var(--sidebar-text);
+    display:flex; flex-direction:column; padding:22px 14px;
+  }
+  .sidebar .wordmark{ color:var(--sidebar-text); font-size:1.5rem; padding:0 10px; margin-bottom:10px; }
+  .sidebar .wordmark .dot{ color:var(--brand-green); }
+  .sidebar-brand{ display:flex; align-items:center; gap:12px; padding:0 10px; margin-bottom:22px; }
+  .sidebar-logo{ width:64px; height:64px; border-radius:50%; flex:none; display:block; }
+  .sidebar-sub{ color:var(--sidebar-text-muted); font-size:.84rem; }
+  .whoami-top{ justify-content:flex-end; text-align:right; padding:0 10px; margin-bottom:22px; }
+  .whoami-top .whoami-name{ font-size:.86rem; }
+  .whoami-top .switch-btn{ padding:3px 0 0; font-size:.7rem; }
+  nav{ display:flex; flex-direction:column; gap:2px; flex:1; }
+  .nav-label{
+    color:var(--sidebar-text-muted); font-size:.7rem; text-transform:uppercase; letter-spacing:.08em;
+    padding:14px 10px 6px;
+  }
+  .nav-item{
+    display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:9px;
+    color:var(--sidebar-text); text-decoration:none; font-size:.9rem; cursor:pointer; border:none;
+    background:none; width:100%; text-align:left;
+  }
+  .nav-item:hover{ background:var(--sidebar-active); }
+  .nav-item.active{ background:var(--sidebar-active); color:#fff; font-weight:500; box-shadow:inset 3px 0 0 var(--brand-green); }
+  .nav-item .ico{ width:18px; text-align:center; flex:none; opacity:.85; }
+  .nav-item .soon{ margin-left:auto; font-size:.68rem; color:var(--sidebar-text-muted); border:1px solid #ffffff22; padding:1px 6px; border-radius:99px; }
+  .whoami{ display:flex; align-items:center; gap:10px; padding:6px 10px; }
+  .whoami .id-avatar{ width:30px; height:30px; font-size:.72rem; }
+  .whoami-name{ font-size:.86rem; font-weight:500; }
+  .whoami-role{ font-size:.74rem; color:var(--sidebar-text-muted); }
+  .switch-btn{ background:none; border:none; color:var(--sidebar-text-muted); font-size:.76rem; cursor:pointer; padding:6px 10px; text-align:left; }
+  .switch-btn:hover{ color:var(--sidebar-text); }
+
+  .content{ flex:1; min-width:0; padding:28px 36px 60px; }
+  .topbar{ display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin-bottom:22px; flex-wrap:wrap; }
+  .topbar h1{ font-size:1.5rem; }
+  .topbar .hint{ color:var(--text-muted); font-size:.86rem; }
+
+  .placeholder{
+    border:1px dashed var(--border); border-radius:14px; padding:48px 28px; text-align:center;
+    color:var(--text-muted); background:var(--surface-muted);
+  }
+  .placeholder strong{ color:var(--text); }
+
+  /* ============ Cards / KPIs ============ */
+  .kpi-row{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:26px; }
+  /* Page Société : les 4 tuiles empilées sur une colonne à gauche du graphique « Production
+     facturable » (plutôt qu'en ligne au-dessus), même principe que Ma page ci-dessous. En dessous
+     de 900px, on repasse en ligne (grille auto-adaptative) au-dessus du graphique, comme avant. */
+  .societe-top-row{ display:grid; grid-template-columns:300px 1fr; gap:20px; align-items:start; margin-bottom:26px; }
+  .societe-top-row .kpi-row{ margin-bottom:0; }
+  #societe-kpis{ grid-template-columns:1fr; }
+  @media (max-width:900px){
+    .societe-top-row{ grid-template-columns:1fr; }
+    #societe-kpis{ grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+  }
+  /* Ma page : les 6 tuiles empilées sur une colonne à gauche du graphique « Ma production
+     facturable » (plutôt qu'en ligne au-dessus), pour que ce graphique ne s'étale plus sur toute
+     la largeur de la page. En dessous de 900px, on repasse en ligne (grille auto-adaptative) au-dessus
+     du graphique, comme avant. */
+  .mapage-top-row{ display:grid; grid-template-columns:300px 1fr; gap:20px; align-items:start; margin-bottom:26px; }
+  .mapage-top-row .kpi-row{ margin-bottom:0; }
+  #mapage-kpis{ grid-template-columns:1fr; }
+  @media (max-width:900px){
+    .mapage-top-row{ grid-template-columns:1fr; }
+    #mapage-kpis{ grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+  }
+  /* Suivi commercial (société) : 6 tuiles toujours dans le même ordre, les 2 dernières (pipeline en
+     attente, indépendant de l'année — cf. kpi-pipeline plus bas) un peu plus larges car sur 3 et 2
+     valeurs. */
+  #commercial-kpis{ grid-template-columns:1.3fr 1.2fr 1fr .7fr 1.3fr 1fr; }
+  @media (max-width:1150px){
+    #commercial-kpis{ grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+  }
+  .kpi{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; box-shadow:var(--shadow); }
+  .kpi-label{ font-size:.76rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:6px; }
+  .kpi-value{ font-family:var(--font-mono); font-size:1.5rem; font-weight:600; }
+  .kpi-value small{ font-size:.9rem; font-weight:500; color:var(--text-muted); }
+  .kpi.kpi-hero{ background:var(--hero-bg); border-color:var(--hero-bg); }
+  .kpi.kpi-hero .kpi-label{ color:var(--hero-text-muted); }
+  .kpi.kpi-hero .kpi-value{ color:var(--hero-text); }
+  .kpi.kpi-hero .kpi-value small{ color:var(--hero-text-muted); }
+  .kpi.kpi-gauge{ display:flex; flex-direction:column; gap:10px; }
+  .kpi.kpi-combo{ display:flex; flex-direction:column; gap:10px; }
+  .kpi-combo-row{ display:flex; flex-wrap:wrap; gap:8px 18px; }
+  .kpi-combo-item{ display:flex; flex-direction:column; gap:2px; }
+  .kpi-combo-value{ font-family:var(--font-mono); font-size:1.15rem; font-weight:600; }
+  .kpi-combo-sub{ font-size:.72rem; }
+  .kpi.kpi-hero .kpi-combo-value{ color:var(--hero-text); }
+  .kpi.kpi-hero .kpi-combo-sub{ color:var(--hero-text-muted); }
+  /* Variante jaune (couleur des bandeaux de panneau) pour les tuiles hors du périmètre habituel de la
+     page — ex. le pipeline en attente sur Suivi commercial, qui n'est pas filtré par l'année comme les
+     autres tuiles de la même rangée. */
+  .kpi.kpi-pipeline{ background:var(--panel-head-bg); border-color:var(--panel-head-bg); }
+  .kpi.kpi-pipeline .kpi-label{ color:var(--ocre-deep); }
+  .kpi.kpi-pipeline .kpi-value,
+  .kpi.kpi-pipeline .kpi-combo-value{ color:var(--panel-head-text); }
+  .kpi.kpi-pipeline .kpi-combo-sub{ color:var(--ocre-deep); }
+  .gauge-wrap{ display:flex; align-items:center; gap:14px; }
+  .gauge{
+    --pct:0; --gauge-color:var(--brand-green);
+    width:56px; height:56px; border-radius:50%; flex:none; position:relative;
+    background:conic-gradient(var(--gauge-color) calc(var(--pct)*1%), rgba(255,255,255,.2) 0);
+  }
+  .gauge::before{ content:""; position:absolute; inset:7px; border-radius:50%; background:var(--hero-bg); }
+  .gauge-value{ position:relative; display:flex; align-items:center; justify-content:center; height:100%;
+    font-family:var(--font-mono); font-weight:700; font-size:.84rem; color:var(--hero-text); }
+  .gauge-note{ font-size:.76rem; color:var(--hero-text-muted); font-family:var(--font-mono); line-height:1.5; }
+  .tjm-bar-svg{ width:100%; height:auto; display:block; }
+
+  section.panel{ background:var(--surface); border:1px solid var(--border); border-radius:14px; margin-bottom:24px; box-shadow:var(--shadow); overflow:hidden; }
+  .panel-head{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px;
+    border-bottom:1px solid var(--border); flex-wrap:wrap; background:var(--panel-head-bg); color:var(--panel-head-text);
+  }
+  .panel-head h2{ font-size:1.02rem; display:flex; align-items:center; gap:9px; color:var(--panel-head-text); }
+  .panel-head h2 svg{ width:19px; height:19px; flex:none; color:var(--panel-head-text); }
+  .panel-head .btn.ghost{ color:var(--panel-head-text); }
+  .panel-head .btn.ghost:hover{ background:rgba(0,0,0,.08); }
+  .panel-head .chip{ background:rgba(255,255,255,.55); }
+  .panel-body{ padding:16px 20px 20px; }
+  .panel-actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+  /* Filters */
+  .chip-filter{ display:flex; gap:6px; flex-wrap:wrap; }
+  .chip{
+    font-size:.78rem; padding:5px 11px; border-radius:99px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text-muted); cursor:pointer;
+  }
+  .chip.on{ background:color-mix(in srgb, var(--accent) 16%, var(--surface)); border-color:var(--accent); color:var(--accent-strong); font-weight:500; }
+
+  /* Listes de référence éditables (Tables & réglages) et caractéristiques d'affaire */
+  .reflist-chip{ display:inline-flex; align-items:center; gap:7px; padding-right:7px; }
+  .reflist-remove{
+    border:none; background:none; cursor:pointer; color:var(--text-muted);
+    font-size:.72rem; line-height:1; padding:0; display:inline-flex;
+  }
+  .reflist-remove:hover{ color:var(--status-danger-text); }
+  .reflist-add-row{ display:flex; gap:8px; margin-top:12px; }
+  .reflist-add-row input{ flex:1; }
+  .carac-group{ margin-bottom:14px; }
+  .carac-group:last-child{ margin-bottom:0; }
+  .carac-group .kpi-label{ margin-bottom:7px; }
+  .catfrais-group{ margin-bottom:14px; }
+  .catfrais-group:last-child{ margin-bottom:0; }
+  .catfrais-group-label{ font-size:.74rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-bottom:7px; }
+  .reflist-add-row.reflist-add-row-2{ flex-wrap:wrap; }
+  .reflist-add-row-2 input{ flex:1; min-width:180px; }
+
+  .btn{
+    font-size:.84rem; padding:7px 14px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text); cursor:pointer; font-weight:500;
+  }
+  .btn:hover{ background:var(--surface-muted); }
+  .btn.primary{ background:var(--accent-strong); border-color:var(--accent-strong); color:#fdfdf4; }
+  .btn.primary:hover{ background:var(--accent); border-color:var(--accent); }
+  .btn.ghost{ border-color:transparent; background:none; color:var(--text-muted); }
+  .btn.ghost:hover{ background:var(--surface-muted); color:var(--text); }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .num-voir{ display:flex; align-items:center; justify-content:flex-end; gap:8px; }
+  .btn-voir{
+    font-size:.72rem; padding:2px 9px; border-radius:6px; border:1px solid var(--border);
+    background:none; color:var(--text-muted); cursor:pointer; font-weight:600;
+  }
+  .btn-voir:hover{ background:var(--surface-muted); color:var(--text); }
+  .btn-voir:disabled{ opacity:.35; cursor:not-allowed; }
+
+  /* Tables */
+  .table-wrap{ overflow-x:auto; }
+  table.data{ width:100%; border-collapse:collapse; font-size:.87rem; min-width:560px; }
+  table.data th{
+    text-align:left; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted);
+    font-weight:600; padding:8px 12px; border-bottom:1px solid var(--border); white-space:nowrap;
+  }
+  table.data td{ padding:9px 12px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  table.data td.num, table.data th.num{ text-align:right; font-family:var(--font-mono); white-space:nowrap; }
+  table.data td.compact, table.data th.compact{ padding-left:6px; padding-right:6px; font-size:.8rem; color:var(--text-muted); min-width:0; }
+  table.data th.compact{ font-size:.66rem; }
+  table.data tbody tr:hover{ background:var(--surface-muted); }
+  table.data tfoot td{ font-weight:600; border-top:2px solid var(--border); border-bottom:none; background:var(--surface-strong); }
+  table.data tfoot tr.row-grand-total td{ background:var(--hero-bg); color:var(--hero-text); font-weight:700; border-top:2px solid var(--hero-bg); }
+
+  /* Ligne verticale matérialisant le bloc RAF + prévisionnel mensuel, séparé du reste du tableau.
+     Couleur volontairement plus marquée que --border pour rester visible sur fond blanc et sur les
+     lignes de sous-total/total en --surface-strong. */
+  .col-sep-left{ border-left:2px solid var(--accent); }
+
+  /* Cases de projection mensuelle éditables (pilote de mission, 6 mois ou plus restants) */
+  td.proj-cell{ padding:4px 4px; }
+  .proj-input{
+    width:44px; text-align:right; font-family:var(--font-mono); font-size:.8rem; color:var(--text);
+    background:transparent; border:1px solid transparent; border-radius:5px; padding:3px 4px;
+    -moz-appearance:textfield;
+  }
+  .proj-input::-webkit-outer-spin-button, .proj-input::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+  .proj-input:hover{ border-color:var(--border); }
+  .proj-input:focus{ outline:none; border-color:var(--brand-green); background:var(--bg); }
+  td.proj-manual .proj-input{ background:var(--status-warn-bg); border-color:transparent; font-weight:600; }
+  td.proj-manual .proj-input:focus{ border-color:var(--brand-green); }
+
+  /* Tri et filtre de colonnes */
+  table.data th.th-sortable{ cursor:pointer; user-select:none; }
+  table.data th.th-sortable:hover{ color:var(--text); }
+  table.data th .sort-arrow{ margin-left:4px; color:var(--accent-strong); }
+  .col-filter-btn{
+    border:none; background:none; cursor:pointer; color:var(--text-muted);
+    margin-left:4px; padding:2px; vertical-align:middle; border-radius:4px;
+    display:inline-flex; align-items:center;
+  }
+  .col-filter-btn:hover{ color:var(--text); background:var(--surface-muted); }
+  .col-filter-btn.active{ color:var(--accent-strong); font-weight:700; }
+  .col-filter-popover{
+    position:absolute; z-index:120; background:var(--surface); border:1px solid var(--border); border-radius:9px;
+    box-shadow:var(--shadow); padding:8px; min-width:180px; max-width:260px; font-size:.82rem; font-weight:400;
+    text-transform:none; letter-spacing:normal; color:var(--text);
+  }
+  .col-filter-popover .cfp-actions{ display:flex; gap:10px; padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid var(--border); }
+  .col-filter-popover .cfp-actions button{ background:none; border:none; color:var(--accent-strong); cursor:pointer; font-size:.76rem; padding:0; }
+  .col-filter-popover .cfp-actions button:hover{ text-decoration:underline; }
+  .col-filter-popover .cfp-list{ max-height:220px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+  .col-filter-popover label{ display:flex; align-items:center; gap:7px; cursor:pointer; padding:2px 3px; border-radius:5px; }
+  .col-filter-popover label:hover{ background:var(--surface-muted); }
+
+  /* Combobox de recherche (remplace un <select> quand la liste peut devenir longue, ex. Organisation) */
+  .combobox-wrap{ position:relative; }
+  .combobox-list{
+    position:absolute; top:100%; left:0; right:0; z-index:130; margin-top:4px;
+    background:var(--surface); border:1px solid var(--border); border-radius:9px;
+    box-shadow:var(--shadow); max-height:230px; overflow-y:auto; padding:4px;
+  }
+  .combobox-item{ padding:7px 10px; border-radius:6px; cursor:pointer; font-size:.86rem; }
+  .combobox-item:hover, .combobox-item.active{ background:var(--surface-muted); }
+  .combobox-empty{ padding:7px 10px; font-size:.82rem; color:var(--text-muted); }
+
+  /* Partenaires de l'affaire */
+  .partenaire-row{ border:1px solid var(--border); border-radius:9px; padding:12px; margin-bottom:10px; background:var(--surface-muted); }
+  .partenaire-row-main{ display:flex; gap:10px; align-items:flex-end; }
+  .partenaire-row-main .field{ flex:1; min-width:0; }
+  .partenaire-row-main .pp-remove{ flex:0 0 auto; }
+  .partenaire-row-sub{ display:flex; gap:10px; align-items:flex-end; margin-top:10px; flex-wrap:wrap; }
+  .partenaire-row-sub .field{ flex:1; min-width:180px; }
+
+  /* Lignes HT/TVA d'un frais (une note peut cumuler plusieurs taux, ex. restaurant) */
+  .frligne-row{ display:flex; gap:10px; align-items:flex-end; margin-bottom:10px; }
+  .frligne-row .field{ flex:1; min-width:0; }
+  .frligne-row .fl-remove{ flex:0 0 auto; }
+  .table-partenaires{ width:100%; border-collapse:collapse; font-size:.88rem; }
+  .table-partenaires th{ text-align:left; font-size:.74rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); padding:0 10px 8px; font-weight:600; }
+  .table-partenaires td{ padding:9px 10px; border-top:1px solid var(--border); }
+  .table-partenaires td.num{ text-align:right; font-family:var(--font-mono); }
+  .row-muted{ color:var(--text-muted); }
+  .row-affaire-total td{ background:var(--surface-muted); }
+  .affaire-name{ font-weight:500; }
+  .affaire-name .sub{ display:block; font-size:.76rem; color:var(--text-muted); font-weight:400; }
+  .affaire-name .eyebrow{ display:block; font-size:.86rem; color:var(--text-muted); font-weight:600; margin-bottom:1px; }
+
+  .pill{ display:inline-flex; align-items:center; gap:5px; font-size:.72rem; font-weight:600; padding:3px 9px; border-radius:99px; white-space:nowrap; }
+  .pill.good{ background:var(--status-good-bg); color:var(--status-good-text); }
+  .pill.warn{ background:var(--status-warn-bg); color:var(--status-warn-text); }
+  .pill.danger{ background:var(--status-danger-bg); color:var(--status-danger-text); }
+  .pill.neutral{ background:var(--surface-muted); color:var(--text-muted); border:1px solid var(--border); }
+  .dot-ind{ display:inline-block; width:9px; height:9px; border-radius:50%; flex:none; }
+  .dot-ind.good{ background:var(--status-good-text); }
+  .dot-ind.warn{ background:var(--status-warn-text); }
+  .dot-ind.danger{ background:var(--status-danger-text); }
+
+  .jbar-wrap{ display:flex; flex-direction:column; gap:6px; }
+  .jbar-label{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; font-size:.8rem; }
+  .jbar-label .jbar-nums{ font-family:var(--font-mono); color:var(--text-muted); }
+  .jbar-track{ height:8px; border-radius:99px; background:var(--surface-muted); border:1px solid var(--border); overflow:hidden; }
+  .jbar-fill{ height:100%; border-radius:99px; transition:width .2s ease; }
+  .jbar-fill.good{ background:var(--brand-green); }
+  .jbar-fill.warn{ background:var(--status-warn-text); }
+  .jbar-fill.danger{ background:var(--status-danger-text); }
+  .jbar-mini{ margin-top:5px; max-width:160px; }
+  .jbar-mini .jbar-track{ height:5px; }
+
+  /* Cohérence budgétaire — 3 catégories (Missions / Frais / Sous-traitance) */
+  .bc-status{ display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+  .bc-status-label{ font-weight:600; }
+  .bc-status-sub{ font-size:.82rem; color:var(--text-muted); margin-top:2px; }
+  .bc-grid{ display:grid; grid-template-columns:1.3fr 1.8fr 1fr; gap:14px; }
+  .bc-card{ background:var(--surface-muted); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+  .bc-card-head{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .bc-card-label{ font-size:.74rem; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; }
+  .bc-card-value{ font-family:var(--font-mono); font-size:1.15rem; font-weight:600; }
+  .bc-card-value small{ font-size:.78rem; font-weight:500; color:var(--text-muted); }
+  .bc-card .jbar-track{ margin-top:10px; }
+  .bc-card-legend{ display:flex; justify-content:space-between; gap:8px; font-size:.74rem; color:var(--text-muted); margin-top:6px; }
+  .bc-card-flat{ display:flex; flex-direction:column; justify-content:center; height:100%; }
+  .bc-card-note{ font-size:.74rem; color:var(--text-muted); margin-top:4px; }
+  @media (max-width:720px){ .bc-grid{ grid-template-columns:1fr; } }
+
+  /* Jauge verticale "% frais non refacturables / montant des missions", à droite de la tuile Frais. */
+  .bc-card-frais-row{ display:flex; gap:16px; align-items:stretch; }
+  .bc-card-frais-main{ flex:1; min-width:0; }
+  .bc-frais-gauge{ flex:none; width:112px; padding-left:16px; border-left:1px solid var(--border); display:flex; flex-direction:column; }
+  .bc-frais-gauge-title{ font-size:.68rem; color:var(--text-muted); line-height:1.3; margin-bottom:10px; text-align:center; }
+  .bc-frais-gauge-body{ display:flex; align-items:flex-start; gap:6px; }
+  .bc-frais-gauge-scale{ display:flex; flex-direction:column; justify-content:space-between; height:104px; font-size:.64rem; color:var(--text-muted); text-align:right; font-family:var(--font-mono); }
+  .bc-frais-gauge-track{
+    position:relative; flex:none; width:14px; height:104px; border-radius:7px; border:1px solid var(--border);
+    background:linear-gradient(to top, #f3c141 0%, #d9822b 45%, #a83a12 75%, #6b140c 100%);
+  }
+  .bc-frais-gauge-cursor{ position:absolute; left:100%; margin-left:6px; display:flex; align-items:center; gap:4px; transform:translateY(50%); white-space:nowrap; }
+  .bc-frais-gauge-cursor-arrow{ width:0; height:0; border-top:5px solid transparent; border-bottom:5px solid transparent; border-right:6px solid var(--text); flex:none; }
+  .bc-frais-gauge-cursor-value{ font-family:var(--font-mono); font-size:.76rem; font-weight:700; color:var(--text); }
+  @media (max-width:900px){
+    .bc-card-frais-row{ flex-direction:column; }
+    .bc-frais-gauge{ width:auto; border-left:none; border-top:1px solid var(--border); padding-left:0; padding-top:14px; }
+    .bc-frais-gauge-body{ justify-content:center; }
+  }
+
+  .badge-overrun{
+    display:inline-flex; align-items:center; gap:5px; font-size:.7rem; font-weight:700; padding:3px 8px;
+    border-radius:7px; background:var(--status-danger-bg); color:var(--status-danger-text); white-space:nowrap;
+  }
+
+  /* Alertes de facturation (Cabinet > Facturation) — 4 boutons à sélection unique à gauche,
+     détail (tableau des factures/affaires concernées) à droite. */
+  .fact-alert-grid{ display:grid; grid-template-columns:250px 1fr; gap:20px; align-items:start; }
+  @media (max-width:900px){ .fact-alert-grid{ grid-template-columns:1fr; } }
+  .fact-alert-buttons{ display:flex; flex-direction:column; gap:10px; }
+  .fact-alert-btn{
+    display:flex; flex-direction:column; gap:6px; align-items:flex-start; text-align:left;
+    font:inherit; color:inherit; background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; padding:14px 16px; cursor:pointer; transition:border-color .15s ease, background .15s ease;
+  }
+  .fact-alert-btn:hover{ border-color:var(--accent); }
+  .fact-alert-btn.on{ border-color:var(--accent-strong); background:var(--brand-green-tint); }
+  .fact-alert-btn .fab-count{ display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:1.6rem; font-weight:700; }
+  .fact-alert-btn .fab-label{ font-size:.82rem; color:var(--text-muted); font-weight:500; }
+  .fact-alert-detail .empty-note{ border:1px dashed var(--border); border-radius:12px; }
+  /* Détail simplifié des alertes de pilotage d'affaire (Mon Pilotage) — juste l'affaire (ou la
+     mission) concernée et un bouton d'action, pas un tableau complet comme pour la facturation. */
+  .pilotage-alerte-list{ display:flex; flex-direction:column; }
+  .pilotage-alerte-item{
+    display:flex; align-items:center; justify-content:space-between; gap:14px;
+    padding:13px 4px; border-bottom:1px solid var(--border);
+  }
+  .pilotage-alerte-item:last-child{ border-bottom:none; }
+  .pai-title{ font-weight:600; }
+  .pai-sub{ font-size:.82rem; color:var(--text-muted); margin-top:2px; }
+
+  .empty-note{ padding:22px; text-align:center; color:var(--text-muted); font-size:.88rem; }
+
+  /* Pagination des tableaux (table.data) — n'apparaît qu'au-delà de 10 lignes, juste sous le tableau. */
+  .table-pagination{
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px 20px;
+    padding:12px 4px 4px; border-top:1px solid var(--border); margin-top:10px; font-size:.82rem; color:var(--text-muted);
+  }
+  .tp-size{ display:flex; align-items:center; gap:8px; }
+  .tp-size select{
+    padding:4px 8px; border-radius:7px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:.82rem;
+  }
+  .tp-nav{ display:flex; align-items:center; gap:12px; }
+  .tp-info{ white-space:nowrap; }
+  .tp-page{ font-family:var(--font-mono); white-space:nowrap; }
+  .tp-btn{
+    width:26px; height:26px; border-radius:7px; border:1px solid var(--border); background:var(--surface);
+    color:var(--text); font-size:1rem; line-height:1; cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
+  }
+  .tp-btn:hover:not(:disabled){ background:var(--surface-muted); }
+  .tp-btn:disabled{ opacity:.4; cursor:default; }
+
+  /* Modal / saisie */
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(20,19,10,.45); align-items:flex-start;
+    justify-content:center; padding:5vh 20px; z-index:50; overflow-y:auto;
+  }
+  .modal-backdrop:not([hidden]){ display:flex; }
+  .modal{
+    background:var(--surface); border-radius:16px; width:100%; max-width:480px; box-shadow:var(--shadow);
+    border:1px solid var(--border);
+  }
+  .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 22px; border-bottom:1px solid var(--border); }
+  .modal-head h3{ font-size:1.05rem; }
+  .modal-close{ background:none; border:none; font-size:1.1rem; color:var(--text-muted); cursor:pointer; line-height:1; padding:4px; }
+  .modal-body{ padding:20px 22px; display:flex; flex-direction:column; gap:14px; }
+  .field:not([hidden]){ display:flex; flex-direction:column; gap:5px; }
+  .field label{ font-size:.78rem; font-weight:600; color:var(--text-muted); }
+  .field input, .field select, .field textarea{
+    font:inherit; font-size:.92rem; padding:8px 10px; border-radius:8px; border:1px solid var(--border);
+    background:var(--bg); color:var(--text); width:100%;
+  }
+  .field textarea{ resize:vertical; min-height:56px; }
+  .field-computed{
+    font:inherit; font-family:var(--font-mono); font-size:.92rem; font-weight:600; padding:8px 10px;
+    border-radius:8px; border:1px dashed var(--border); background:var(--surface-muted); color:var(--text);
+  }
+  .field-row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .modal-foot{ display:flex; justify-content:flex-end; gap:8px; padding:16px 22px 20px; }
+  .modal-tabs{ display:flex; gap:18px; padding:0 22px; border-bottom:1px solid var(--border); overflow-x:auto; }
+  .modal-tab{
+    appearance:none; background:none; border:none; font:inherit; font-size:.86rem; font-weight:600;
+    color:var(--text-muted); padding:12px 1px; margin-bottom:-1px; border-bottom:2px solid transparent;
+    cursor:pointer; white-space:nowrap;
+  }
+  .modal-tab:hover{ color:var(--text); }
+  .modal-tab.active{ color:var(--accent); border-bottom-color:var(--accent); }
+  .modal-tabpanel[hidden]{ display:none; }
+  .modal-tabpanel{ display:flex; flex-direction:column; gap:14px; }
+  .alert-msg{
+    font-size:.82rem; padding:10px 12px; border-radius:9px; background:var(--status-warn-bg); color:var(--status-warn-text);
+    display:none; gap:8px;
+  }
+  .alert-msg.show{ display:flex; }
+  .alert-msg.danger{ background:var(--status-danger-bg); color:var(--status-danger-text); }
+  /* Mise en évidence d'un champ obligatoire non renseigné (saveAffaire/saveMission) */
+  .field.field-error > label{ color:var(--status-danger-text); }
+  .field.field-error input, .field.field-error select, .field.field-error textarea{
+    border-color:var(--status-danger-text);
+    box-shadow:0 0 0 1px var(--status-danger-text);
+  }
+  .field.field-error .chip-filter{
+    border-radius:10px; box-shadow:0 0 0 1px var(--status-danger-text); padding:4px;
+  }
+
+  .toast{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%) translateY(20px); opacity:0;
+    background:var(--text); color:var(--bg); padding:10px 18px; border-radius:10px; font-size:.86rem;
+    box-shadow:var(--shadow); transition:opacity .25s ease, transform .25s ease; z-index:80; pointer-events:none;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  @media (prefers-reduced-motion: reduce){ .toast{ transition:none; } }
+
+  .mes-alertes-banner{
+    position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(16px); opacity:0;
+    z-index:200; display:flex; align-items:center; gap:14px; max-width:620px; width:calc(100% - 48px);
+    background:var(--status-warn-bg); color:var(--status-warn-text); padding:14px 16px 14px 18px;
+    border-radius:14px; box-shadow:var(--shadow); transition:opacity .25s ease, transform .25s ease;
+    pointer-events:none;
+  }
+  .mes-alertes-banner.show{ opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto; }
+  .mes-alertes-banner[hidden]{ display:none; }
+  .mes-alertes-banner-icon{ width:22px; height:22px; flex:none; }
+  .mes-alertes-banner-text{ flex:1; font-size:.86rem; font-weight:500; line-height:1.4; }
+  .mes-alertes-banner-actions{ display:flex; align-items:center; gap:8px; flex:none; }
+  .mes-alertes-banner .btn.primary{ padding:7px 14px; font-size:.82rem; }
+  .mes-alertes-banner-close{
+    background:none; border:none; color:inherit; opacity:.65; cursor:pointer;
+    font-size:1rem; line-height:1; padding:6px; border-radius:6px;
+  }
+  .mes-alertes-banner-close:hover{ opacity:1; background:color-mix(in srgb, var(--status-warn-text) 12%, transparent); }
+  @media (max-width:600px){
+    .mes-alertes-banner{ flex-wrap:wrap; bottom:12px; width:calc(100% - 24px); }
+    .mes-alertes-banner-actions{ width:100%; justify-content:flex-end; }
+  }
+  @media (prefers-reduced-motion: reduce){ .mes-alertes-banner{ transition:none; } }
+
+  .viewas-banner{
+    align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;
+    background:var(--status-warn-bg); color:var(--status-warn-text); padding:11px 18px;
+    border-radius:10px; margin-bottom:20px; font-size:.86rem; font-weight:500;
+  }
+  .viewas-banner:not([hidden]){ display:flex; }
+  .viewas-banner button{ flex:none; }
+
+  .chart-summary{ display:flex; gap:22px; flex-wrap:wrap; margin-bottom:10px; font-size:.86rem; color:var(--text-muted); }
+  .chart-summary-item{ display:flex; align-items:center; gap:7px; }
+  .chart-summary-item strong{ color:var(--text); font-family:var(--font-mono); font-weight:600; }
+  .chart-swatch{ width:12px; height:12px; border-radius:3px; flex:none; display:inline-block; }
+  .chart-swatch-realise{ background:var(--brand-green); }
+  .chart-swatch-prevision{
+    background-image:repeating-linear-gradient(45deg, var(--accent-strong) 0 2px, color-mix(in srgb, var(--brand-green) 28%, transparent) 2px 6px);
+  }
+  .chart-swatch-pipeline{
+    background-image:repeating-linear-gradient(45deg, var(--ocre-deep) 0 2px, color-mix(in srgb, var(--panel-head-bg) 55%, transparent) 2px 6px);
+  }
+  .chart-swatch-soustraitance-facturation{
+    background-image:repeating-linear-gradient(45deg, var(--ocre-deep) 0 2px, color-mix(in srgb, var(--panel-head-bg) 55%, transparent) 2px 6px);
+  }
+  .chart-total-label{ font-size:.76rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px; }
+  .chart-total-value{ font-family:var(--font-mono); font-size:1.5rem; font-weight:600; color:var(--text); margin-bottom:14px; }
+  .chart-svg{ width:100%; height:auto; display:block; }
+  .chart-grid{ stroke:var(--border); stroke-width:1; }
+  .chart-axis-label{ font-size:9.5px; fill:var(--text-muted); font-family:var(--font-mono); }
+  .chart-svg g rect:hover ~ text, .chart-svg path:hover{ opacity:.85; }
+  .chart-row-2col{ display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start; margin-bottom:20px; }
+  .chart-row-2col .panel{ margin-bottom:0; }
+  .chart-legend-wrap{ gap:12px 16px; font-size:.78rem; }
+  @media (max-width: 980px){ .chart-row-2col{ grid-template-columns:1fr; } }
+  .chart-donut-wrap{ display:flex; align-items:center; gap:30px; flex-wrap:wrap; }
+  .chart-donut-svg{ width:220px; height:220px; flex:none; }
+  .chart-donut-total{ font-family:var(--font-mono); font-weight:700; font-size:25px; fill:var(--text); }
+  .chart-donut-caption{ font-size:10.5px; fill:var(--text-muted); font-family:var(--font-mono); }
+  .chart-donut-legend{ flex:1 1 220px; flex-direction:column; align-items:flex-start; gap:9px; margin-bottom:0; }
+  .chart-donut-legend .chart-summary-item strong{ margin-left:2px; }
+  /* Répartition des temps — vue annuelle (Société et Mes temps uniquement — pas le donut « Répartition
+     gagné / perdu / en décision » du suivi commercial, qui partage les mêmes classes de base) :
+     donut agrandi, légende resserrée pour lui laisser la place dans la même zone de panneau. */
+  #chart-donut-societe .chart-donut-svg, #chart-donut-moi .chart-donut-svg{ width:270px; height:270px; }
+  #chart-donut-societe .chart-donut-legend, #chart-donut-moi .chart-donut-legend{ flex-basis:170px; font-size:.72rem; gap:6px; }
+  #chart-donut-societe .chart-donut-legend .chart-swatch, #chart-donut-moi .chart-donut-legend .chart-swatch{ width:10px; height:10px; }
+  /* Frais non refacturables (Mes frais + Cabinet > Frais) : même principe — donut agrandi, légende resserrée. */
+  #chart-mesfrais-donut-categorie .chart-donut-svg, #chart-mesfrais-donut-cible .chart-donut-svg,
+  #chart-frais-donut-categorie .chart-donut-svg, #chart-frais-donut-cible .chart-donut-svg{ width:250px; height:250px; }
+  #chart-mesfrais-donut-categorie .chart-donut-legend, #chart-mesfrais-donut-cible .chart-donut-legend,
+  #chart-frais-donut-categorie .chart-donut-legend, #chart-frais-donut-cible .chart-donut-legend{ flex-basis:150px; font-size:.7rem; gap:6px; }
+  #chart-mesfrais-donut-categorie .chart-donut-legend .chart-swatch, #chart-mesfrais-donut-cible .chart-donut-legend .chart-swatch,
+  #chart-frais-donut-categorie .chart-donut-legend .chart-swatch, #chart-frais-donut-cible .chart-donut-legend .chart-swatch{ width:10px; height:10px; }
+  .chart-tooltip{
+    position:fixed; z-index:300; pointer-events:none;
+    background:var(--sidebar-bg); color:var(--sidebar-text);
+    font-family:var(--font-mono); font-size:.78rem; font-weight:600;
+    padding:5px 10px; border-radius:6px; box-shadow:var(--shadow);
+    white-space:nowrap; opacity:0; transform:translateY(2px);
+    transition:opacity .08s ease, transform .08s ease;
+  }
+  .chart-tooltip.show{ opacity:1; transform:translateY(0); }
+  .chart-svg [data-tip]{ cursor:default; }
+
+
+  .login-form{ display:grid; gap:12px; margin-top:18px; }
+  .login-form label{ font-size:.78rem; color:var(--text-muted); font-weight:600; }
+  .login-form input{ width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font:inherit; background:#fff; color:var(--text); }
+  .login-error{ min-height:1.2em; color:#8f2c1f; font-size:.8rem; }
+  .sync-state{ margin-top:7px; font-size:.72rem; color:var(--sidebar-text-muted); }
+  .sync-state.pending{ color:#f6d685; }
+  .sync-state.error{ color:#ff9a8f; }
+  .support-link{ color:inherit; text-decoration:none; }
+
+  @media (max-width: 780px){
+    #main-shell{ flex-direction:column; }
+    .sidebar{ width:auto; flex-direction:row; align-items:center; overflow-x:auto; }
+    nav{ flex-direction:row; }
+    .nav-label, .whoami-top, .sidebar-brand{ display:none; }
+    .content{ padding:20px; }
+  }
+</style>
+
+<div id="app">
+
+  <!-- ============ Identification ============ -->
+  <div id="identify-screen">
+    <div class="id-card">
+      <div class="wordmark">Pilotéo<span class="dot">.</span></div>
+      <div class="id-sub">{{PILOTEO_ORG_NAME}} — suivi des affaires, du commercial et des temps</div>
+      <div class="id-list" id="id-list"></div>
+    </div>
+  </div>
+
+  <!-- ============ Main shell ============ -->
+  <div id="main-shell" hidden>
+    <aside class="sidebar">
+      <div class="wordmark">Pilotéo<span class="dot">.</span></div>
+      <div class="sidebar-brand">
+        <img class="sidebar-logo" src="/brand-logo" alt="Logo {{PILOTEO_ORG_NAME}}">
+        <div class="sidebar-sub">{{PILOTEO_ORG_NAME}}</div>
+      </div>
+      <div class="whoami whoami-top">
+        <div>
+          <div class="whoami-name" id="whoami-name">—</div>
+          <div class="whoami-role" id="whoami-role">—</div>
+          <button class="switch-btn" id="switch-user">Se déconnecter</button>
+          <div class="sync-state" id="sync-status">Connexion…</div>
+        </div>
+        <div class="id-avatar" id="whoami-avatar">--</div>
+      </div>
+      <nav>
+        <div class="nav-label">Moi</div>
+        <button class="nav-item active" data-view="mapage"><span class="ico">◆</span>Vue rapide</button>
+        <button class="nav-item" data-view="pilotage"><span class="ico">◆</span>Mon Pilotage</button>
+        <button class="nav-item" data-view="commercial-moi"><span class="ico">◆</span>Mon commercial</button>
+        <button class="nav-item" data-view="mestemps"><span class="ico">◆</span>Mes temps</button>
+        <button class="nav-item" data-view="mesfrais"><span class="ico">◆</span>Mes frais</button>
+
+        <div class="nav-label">{{PILOTEO_ORG_NAME}}</div>
+        <button class="nav-item" data-view="societe"><span class="ico">◆</span>Vue rapide</button>
+        <button class="nav-item" data-view="affaires"><span class="ico">◆</span>Portefeuille</button>
+        <button class="nav-item" data-view="commercial"><span class="ico">◆</span>Suivi commercial</button>
+        <button class="nav-item" data-view="facturation"><span class="ico">◆</span>Facturation</button>
+        <button class="nav-item" data-view="organisations"><span class="ico">◆</span>Clients et Partenaires</button>
+        <button class="nav-item" data-view="consultants"><span class="ico">◆</span>Consultants</button>
+        <button class="nav-item" data-view="frais"><span class="ico">◆</span>Frais</button>
+
+        <div class="nav-label">Administration</div>
+        <button class="nav-item" data-view="admin"><span class="ico">◆</span>Tables &amp; réglages</button>
+      </nav>
+    </aside>
+
+    <main class="content">
+      <div id="viewas-banner" class="viewas-banner" hidden>
+        <span>Vous consultez la page de <strong id="viewas-name">—</strong>, en tant qu'administrateur.</span>
+        <button type="button" class="btn ghost" id="viewas-retour">← Retour à mon profil</button>
+      </div>
+
+      <!-- ===== Ma page ===== -->
+      <section id="view-mapage">
+        <div class="topbar">
+          <div>
+            <h1 id="mapage-title">Ma page</h1>
+            <div class="hint">Vue personnelle — affaires et missions.</div>
+          </div>
+          <button class="btn primary" id="open-saisie">+ Saisir un temps</button>
+        </div>
+
+        <div class="mapage-top-row">
+          <div class="kpi-row" id="mapage-kpis"></div>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Ma production de missions</h2>
+              <div class="panel-actions">
+                <select class="field" id="select-annee-moi-chart" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.84rem;"></select>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div id="chart-production-moi"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/></svg>Mes affaires</h2>
+            <div class="panel-actions">
+              <div class="chip-filter" id="filtre-statut-affaires"></div>
+              <button class="btn ghost" data-export="mes-affaires">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-mes-affaires"></table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v18"/><path d="M5 4h11l-2.5 3.5L16 11H5"/></svg>Mes missions en cours</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" data-export="mes-missions">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-mes-missions"></table>
+          </div>
+        </section>
+
+      </section>
+
+      <!-- ===== Mes temps ===== -->
+      <section id="view-mestemps" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Mes temps</h1>
+            <div class="hint">Saisir un temps, puis retrouver ci-dessous ses saisies du mois — ou de l'année entière — et le récapitulatif annuel par affaire.</div>
+          </div>
+          <button class="btn primary" id="open-saisie-mestemps">+ Saisir un temps</button>
+        </div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg>Mes saisies</h2>
+            <div class="panel-actions">
+              <div class="chip-filter" id="mestemps-toggle">
+                <button type="button" class="chip on" data-mode="mois">Mois</button>
+                <button type="button" class="chip" data-mode="annee">Année</button>
+              </div>
+              <select class="field" id="select-annee-mestemps" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.84rem;" hidden></select>
+              <button class="btn ghost" data-export="mes-temps">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="row-muted" id="mestemps-sub" style="font-size:.84rem;padding:0 20px 12px;">—</div>
+          <div class="panel-body table-wrap" style="padding-top:0;">
+            <table class="data" id="table-mestemps"></table>
+          </div>
+        </section>
+
+        <div class="chart-row-2col">
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5A8.5 8.5 0 0 1 20.5 12H12Z"/></svg>Ma répartition des temps — vue annuelle</h2>
+            </div>
+            <div class="panel-body">
+              <div id="chart-donut-moi"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Ma répartition des temps</h2>
+            </div>
+            <div class="panel-body">
+              <div id="chart-repartition-moi"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg>Suivi de mes temps</h2>
+            <div class="panel-actions">
+              <select class="field" id="select-annee" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.84rem;"></select>
+              <button class="btn ghost" id="btn-detail-temps-moi">Détail des temps</button>
+              <button class="btn ghost" data-export="suivi-temps">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-suivi-temps"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Mes frais ===== -->
+      <section id="view-mesfrais" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Mes frais</h1>
+            <div class="hint">Saisir un frais, puis retrouver ci-dessous ses saisies du mois — ou de l'année entière.</div>
+          </div>
+          <button class="btn primary" id="open-frais">+ Saisir un frais</button>
+        </div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v13H6z"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>Mes notes de frais</h2>
+          </div>
+          <div class="row-muted" style="font-size:.84rem;padding:0 20px 12px;">Les frais saisis se regroupent automatiquement sur une note ouverte, par année. Demandez le paiement quand elle est complète — un frais saisi ensuite ouvre une nouvelle note.</div>
+          <div class="panel-body table-wrap" style="padding-top:0;">
+            <table class="data" id="table-mes-bordereaux"></table>
+          </div>
+        </section>
+
+        <div class="chart-row-2col">
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5A8.5 8.5 0 0 1 20.5 12H12Z"/></svg>Frais non refacturables en <span id="mesfrais-donut-annee-cat">—</span></h2>
+            </div>
+            <div class="row-muted" style="font-size:.84rem;padding:0 20px 4px;">Par grande catégorie</div>
+            <div class="panel-body">
+              <div id="chart-mesfrais-donut-categorie"></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5A8.5 8.5 0 0 1 20.5 12H12Z"/></svg>Frais non refacturables en <span id="mesfrais-donut-annee-cible">—</span></h2>
+            </div>
+            <div class="row-muted" style="font-size:.84rem;padding:0 20px 4px;">Par affaire et temps interne</div>
+            <div class="panel-body">
+              <div id="chart-mesfrais-donut-cible"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M3.5 9.5h17"/><path d="M7 13.5h4"/></svg>Mes frais</h2>
+            <div class="panel-actions">
+              <div class="chip-filter" id="mesfrais-toggle">
+                <button type="button" class="chip on" data-mode="mois">Mois</button>
+                <button type="button" class="chip" data-mode="annee">Année</button>
+              </div>
+              <select class="field" id="select-annee-mesfrais" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.84rem;" hidden></select>
+              <button class="btn ghost" data-export="mes-frais">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="row-muted" id="mesfrais-sub" style="font-size:.84rem;padding:0 20px 12px;">—</div>
+          <div class="panel-body table-wrap" style="padding-top:0;">
+            <table class="data" id="table-mesfrais"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Mon commercial ===== -->
+      <section id="view-commercial-moi" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Mon commercial</h1>
+            <div class="hint">Votre performance commerciale, distinguée selon que vous pilotez l'offre ou que vous y contribuez — montants ventilés selon la répartition saisie sur chaque affaire.</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label for="select-annee-commercial-moi" style="font-size:.82rem;color:var(--text-muted);font-weight:600;">Année de dépôt</label>
+            <select class="field" id="select-annee-commercial-moi" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.92rem;font-weight:600;"></select>
+          </div>
+        </div>
+
+        <div class="kpi-row" id="commercial-moi-kpis"></div>
+
+        <div class="chart-row-2col">
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5A8.5 8.5 0 0 1 20.5 12H12Z"/></svg>Répartition gagné / perdu / en décision</h2>
+              <div class="panel-actions">
+                <div class="chip-filter" id="chart-commercial-moi-donut-toggle">
+                  <button type="button" class="chip on" data-metric="nb">Nombre</button>
+                  <button type="button" class="chip" data-metric="montant">Montant</button>
+                </div>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div id="chart-commercial-moi-donut"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Évolution par année de dépôt</h2>
+            </div>
+            <div class="panel-body">
+              <div id="chart-commercial-moi-evolution"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Taux de transformation par type de vente</h2>
+          </div>
+          <div class="panel-body">
+            <div id="chart-commercial-moi-typevente"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l4-5"/><circle cx="12" cy="15" r="1" fill="currentColor" stroke="none"/></svg>Mes offres</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" data-export="commercial-moi">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-commercial-moi"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Mon Pilotage ===== -->
+      <section id="view-pilotage" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Mon Pilotage</h1>
+            <div class="hint">Vos affaires pilotées, leurs alertes de facturation et la qualité de leur pilotage.</div>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/></svg>Mes affaires</h2>
+            <div class="panel-actions">
+              <div class="chip-filter" id="filtre-statut-affaires-pilotage"></div>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-mes-affaires-pilotage"></table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>Mes alertes de facturation</h2>
+          </div>
+          <div class="panel-body">
+            <div class="fact-alert-grid">
+              <div class="fact-alert-buttons" id="mes-alertes-facturation-boutons"></div>
+              <div class="fact-alert-detail">
+                <div class="empty-note" id="mes-alertes-facturation-empty">Sélectionnez une catégorie d'alerte pour afficher le détail.</div>
+                <div class="table-wrap" id="mes-alertes-facturation-table-wrap" hidden>
+                  <table class="data" id="table-mes-alertes-facturation"></table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>Alertes sur mon pilotage d'affaire</h2>
+          </div>
+          <div class="panel-body">
+            <div class="fact-alert-grid">
+              <div class="fact-alert-buttons" id="pilotage-alertes-boutons"></div>
+              <div class="fact-alert-detail">
+                <div class="empty-note" id="pilotage-alertes-empty">Sélectionnez une catégorie d'alerte pour afficher le détail.</div>
+                <div class="pilotage-alerte-list" id="pilotage-alertes-list-wrap" hidden></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Société ===== -->
+      <section id="view-societe" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Vue rapide</h1>
+            <div class="hint">Vue consolidée du cabinet — effectifs et production.</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label for="select-annee-societe" style="font-size:.82rem;color:var(--text-muted);font-weight:600;">Année</label>
+            <select class="field" id="select-annee-societe" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.92rem;font-weight:600;"></select>
+          </div>
+        </div>
+
+        <div class="societe-top-row">
+          <div class="kpi-row" id="societe-kpis"></div>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Production facturable</h2>
+              <div class="panel-actions">
+                <div class="chip-filter" id="chart-metric-toggle">
+                  <button type="button" class="chip on" data-metric="jours">Jours</button>
+                  <button type="button" class="chip" data-metric="eur">€</button>
+                </div>
+                <div class="chip-filter">
+                  <button type="button" class="chip on" id="chart-pipeline-toggle">Potentiel commercial</button>
+                </div>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="row-muted" style="font-size:.84rem;margin-bottom:10px;">Sur les mois à venir, une 3ᵉ couche estime la charge complémentaire si le pipeline commercial pondéré se concrétise, étalée sur la période prévisionnelle de chaque affaire — désactivable via « Potentiel commercial », par nature hypothétique.</div>
+              <div id="chart-production-societe"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="chart-row-2col">
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5A8.5 8.5 0 0 1 20.5 12H12Z"/></svg>Répartition des temps — vue annuelle</h2>
+            </div>
+            <div class="panel-body">
+              <div id="chart-donut-societe"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Répartition complète des temps</h2>
+            </div>
+            <div class="panel-body">
+              <div id="chart-repartition-societe"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7"/><path d="M16.5 5.5a3.2 3.2 0 0 1 0 6.4"/><path d="M18.5 14c2.3.6 3.5 2.6 3.5 7"/></svg>Effectifs</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" data-export="effectifs">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-effectifs"></table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M21 7v6h-6"/></svg>Production par affaire</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" data-export="ca-affaires">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-ca-affaires"></table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg>Suivi des temps — société</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" id="btn-detail-temps-societe">Détail des temps</button>
+              <button class="btn ghost" data-export="suivi-temps-societe">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-suivi-temps-societe"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Consultants (cabinet) ===== -->
+      <section id="view-consultants" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Consultants</h1>
+            <div class="hint">Effectif du cabinet — statut, dates, TJM, temps partiel et ETP.</div>
+          </div>
+          <button class="btn primary" id="open-nouveau-consultant">+ Nouveau consultant</button>
+        </div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7"/><path d="M16.5 5.5a3.2 3.2 0 0 1 0 6.4"/><path d="M18.5 14c2.3.6 3.5 2.6 3.5 7"/></svg>Tous les consultants</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" data-export="consultants">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-consultants"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Frais (cabinet) ===== -->
+      <section id="view-frais" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Frais</h1>
+            <div class="hint">Tous les frais saisis par les consultants du cabinet, quel que soit leur statut de paiement.</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label for="select-annee-frais" style="font-size:.82rem;color:var(--text-muted);font-weight:600;">Année</label>
+            <select class="field" id="select-annee-frais" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.92rem;font-weight:600;"></select>
+          </div>
+        </div>
+
+        <div class="chart-row-2col">
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Frais par mois — refacturable / non refacturable (TTC)</h2>
+            </div>
+            <div class="panel-body">
+              <div id="chart-frais-mensuel"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5A8.5 8.5 0 0 1 20.5 12H12Z"/></svg>Frais non refacturables en <span id="frais-donut-annee">—</span></h2>
+            </div>
+            <div class="panel-body">
+              <div style="display:flex;flex-direction:column;gap:26px;">
+                <div>
+                  <div style="font-size:.82rem;font-weight:600;color:var(--text);margin-bottom:8px;">Par grande catégorie</div>
+                  <div id="chart-frais-donut-categorie"></div>
+                </div>
+                <div>
+                  <div style="font-size:.82rem;font-weight:600;color:var(--text);margin-bottom:8px;">Par affaire et temps interne</div>
+                  <div id="chart-frais-donut-cible"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v13H6z"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>Tous les frais</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" data-export="frais-societe">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-frais-societe"></table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v13H6z"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>Notes de frais</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" data-export="bordereaux">Exporter CSV</button>
+            </div>
+          </div>
+          <div style="margin-bottom:10px;padding:0 20px;color:var(--text-muted);font-size:.86rem;">Une note « note à payer » attend son règlement — marquez-la payée une fois le virement effectué, ses frais passent alors en « remboursé ».</div>
+          <div class="panel-body table-wrap" style="padding-top:0;">
+            <table class="data" id="table-admin-bordereaux"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Facturation (cabinet) ===== -->
+      <section id="view-facturation" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Facturation</h1>
+            <div class="hint">Toutes les factures des affaires du cabinet, filtrées par échéance prévisionnelle de facturation.</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label for="select-annee-facturation" style="font-size:.82rem;color:var(--text-muted);font-weight:600;">Année</label>
+            <select class="field" id="select-annee-facturation" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.92rem;font-weight:600;"></select>
+          </div>
+        </div>
+
+        <div class="kpi-row" id="facturation-kpis"></div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Facturation</h2>
+            <div class="panel-actions">
+              <div class="chip-filter">
+                <button type="button" class="chip" id="chart-soustraitance-facturation-toggle">Sous-traitance à régler</button>
+              </div>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="row-muted" style="font-size:.84rem;margin-bottom:10px;">Factures émises (déposées) mois par mois, missions et frais refacturables du cabinet — la sous-traitance à régler aux partenaires, qui ne reste pas au cabinet, est une 3ᵉ couche masquée par défaut, activable via « Sous-traitance à régler ».</div>
+            <div id="chart-facturation-mensuelle"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-facturation-alertes">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>Alertes de facturation</h2>
+          </div>
+          <div class="panel-body">
+            <div class="fact-alert-grid">
+              <div class="fact-alert-buttons" id="facturation-alertes-boutons"></div>
+              <div class="fact-alert-detail">
+                <div class="empty-note" id="facturation-alertes-empty">Sélectionnez une catégorie d'alerte pour afficher le détail.</div>
+                <div class="table-wrap" id="facturation-alertes-table-wrap" hidden>
+                  <table class="data" id="table-facturation-alertes"></table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v13H6z"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>Toutes les factures</h2>
+            <div class="panel-actions">
+              <div class="chip-filter" id="filtre-statut-facturation-societe"></div>
+              <button class="btn ghost" data-export="factures-societe">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-facturation-societe"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Organisations ===== -->
+      <section id="view-organisations" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Clients et Partenaires</h1>
+            <div class="hint">Clientes, prospects ou partenaires — le statut se déduit automatiquement des affaires saisies et des rôles qui y sont associés.</div>
+          </div>
+          <button class="btn primary" id="open-nouvelle-org">+ Nouvelle organisation</button>
+        </div>
+        <section class="panel">
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-organisations"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Affaires (portefeuille) ===== -->
+      <section id="view-affaires" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Portefeuille</h1>
+            <div class="hint">Portefeuille complet du cabinet, du dépôt commercial à la réalisation.</div>
+          </div>
+          <button class="btn primary" id="open-nouvelle-affaire">+ Nouvelle affaire</button>
+        </div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>Alertes Affaires</h2>
+          </div>
+          <div class="panel-body">
+            <div class="fact-alert-grid">
+              <div class="fact-alert-buttons" id="alertes-affaires-boutons"></div>
+              <div class="fact-alert-detail">
+                <div class="empty-note" id="alertes-affaires-empty">Sélectionnez une catégorie d'alerte pour afficher le détail.</div>
+                <div class="pilotage-alerte-list" id="alertes-affaires-list-wrap" hidden></div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/></svg>Toutes les affaires</h2>
+            <div class="panel-actions">
+              <div class="chip-filter" id="filtre-statut-portefeuille"></div>
+              <input type="search" id="recherche-affaires" placeholder="Rechercher (nom, organisation, mot-clé)" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.82rem;min-width:220px;">
+              <button class="btn ghost" data-export="portefeuille">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-portefeuille"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Détail affaire ===== -->
+      <section id="view-affaire-detail" hidden>
+        <div class="topbar">
+          <div>
+            <button class="btn ghost" id="retour-affaires" style="padding:4px 8px;margin-bottom:6px;">← Retour au portefeuille</button>
+            <h1 id="detail-affaire-nom">—</h1>
+            <div class="hint" id="detail-affaire-sub">—</div>
+          </div>
+          <div>
+            <button class="btn primary" id="open-modifier-affaire">Modifier l'affaire</button>
+          </div>
+        </div>
+
+        <div class="kpi-row" id="detail-affaire-kpis"></div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l4-5"/><circle cx="12" cy="15" r="1" fill="currentColor" stroke="none"/></svg>Cohérence budgétaire</h2>
+          </div>
+          <div class="panel-body" id="detail-coherence"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><path d="M4 6h.01"/><path d="M4 12h.01"/><path d="M4 18h.01"/></svg>Caractéristiques</h2>
+          </div>
+          <div class="panel-body" id="detail-caracteristiques"></div>
+        </section>
+
+        <section class="panel" id="panel-detail-partenaires" hidden>
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Partenaires</h2>
+          </div>
+          <div class="panel-body table-wrap" id="detail-partenaires"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v18"/><path d="M5 4h11l-2.5 3.5L16 11H5"/></svg>Missions de l'affaire</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" id="btn-detail-temps-affaire">Détail des temps</button>
+              <button class="btn ghost" data-export="missions-affaire">Exporter CSV</button>
+              <button class="btn primary" id="open-nouvelle-mission">+ Nouvelle mission</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-missions-affaire"></table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v13H6z"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>Factures de l'affaire</h2>
+            <div class="panel-actions">
+              <div class="chip-filter" id="filtre-statut-factures-affaire"></div>
+              <button class="btn ghost" data-export="factures-affaire">Exporter CSV</button>
+              <button class="btn primary" id="open-nouvelle-facture">+ Nouvelle facture</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-factures-affaire"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Suivi commercial (cabinet) ===== -->
+      <section id="view-commercial" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Suivi commercial</h1>
+            <div class="hint">Toutes les offres déposées par le cabinet, quel que soit leur statut actuel — filtré par année de dépôt.</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label for="select-annee-commercial" style="font-size:.82rem;color:var(--text-muted);font-weight:600;">Année de dépôt</label>
+            <select class="field" id="select-annee-commercial" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.92rem;font-weight:600;"></select>
+          </div>
+        </div>
+
+        <div class="kpi-row" id="commercial-kpis"></div>
+
+        <div class="chart-row-2col">
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5A8.5 8.5 0 0 1 20.5 12H12Z"/></svg>Répartition gagné / perdu / en décision</h2>
+              <div class="panel-actions">
+                <div class="chip-filter" id="chart-commercial-donut-toggle">
+                  <button type="button" class="chip on" data-metric="nb">Nombre</button>
+                  <button type="button" class="chip" data-metric="montant">Montant</button>
+                </div>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div id="chart-commercial-donut"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Évolution par année de dépôt</h2>
+            </div>
+            <div class="panel-body">
+              <div id="chart-commercial-evolution"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="chart-row-2col">
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V10"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>Taux de transformation par type de vente</h2>
+            </div>
+            <div class="panel-body">
+              <div id="chart-commercial-typevente"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7"/></svg>Répartition et performance par pilote commercial</h2>
+            </div>
+            <div class="panel-body">
+              <div id="chart-commercial-pilote"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l4-5"/><circle cx="12" cy="15" r="1" fill="currentColor" stroke="none"/></svg>Offres de l'année</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" data-export="commercial-societe">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-commercial-societe"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Détail des temps ===== -->
+      <section id="view-detail-temps" hidden>
+        <div class="topbar">
+          <div>
+            <button class="btn ghost" id="retour-detail-temps" style="padding:4px 8px;margin-bottom:6px;">← Retour</button>
+            <h1 id="detail-temps-titre">Détail des temps</h1>
+            <div class="hint" id="detail-temps-sub">—</div>
+          </div>
+        </div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg>Toutes les saisies</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" data-export="detail-temps">Exporter CSV</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table class="data" id="table-detail-temps"></table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ===== Tables & réglages ===== -->
+      <section id="view-admin" hidden>
+        <div class="topbar">
+          <div>
+            <h1>Tables &amp; réglages</h1>
+            <div class="hint">Données de référence du cabinet.</div>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><path d="M4 6h.01"/><path d="M4 12h.01"/><path d="M4 18h.01"/></svg>Méthodes</h2>
+          </div>
+          <div class="panel-body">
+            <div style="margin-bottom:10px;color:var(--text-muted);font-size:.86rem;">Liste éditable, cochée sur chaque affaire depuis le module de saisie.</div>
+            <div class="chip-filter" id="liste-methodes"></div>
+            <div class="reflist-add-row">
+              <input type="text" id="input-nouvelle-methode" placeholder="Ajouter une méthode...">
+              <button type="button" class="btn ghost" id="btn-ajouter-methode">+ Ajouter</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>Types de territoire</h2>
+          </div>
+          <div class="panel-body">
+            <div style="margin-bottom:10px;color:var(--text-muted);font-size:.86rem;">Liste éditable, cochée sur chaque affaire depuis le module de saisie.</div>
+            <div class="chip-filter" id="liste-territoires"></div>
+            <div class="reflist-add-row">
+              <input type="text" id="input-nouveau-territoire" placeholder="Ajouter un type de territoire...">
+              <button type="button" class="btn ghost" id="btn-ajouter-territoire">+ Ajouter</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M14.8 9.2 12 12l-2.8 2.8L12 12l2.8-2.8Z" fill="currentColor" stroke="none"/></svg>Domaines d'intervention</h2>
+          </div>
+          <div class="panel-body">
+            <div style="margin-bottom:10px;color:var(--text-muted);font-size:.86rem;">Liste éditable, cochée sur chaque affaire depuis le module de saisie.</div>
+            <div class="chip-filter" id="liste-domaines"></div>
+            <div class="reflist-add-row">
+              <input type="text" id="input-nouveau-domaine" placeholder="Ajouter un domaine d'intervention...">
+              <button type="button" class="btn ghost" id="btn-ajouter-domaine">+ Ajouter</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M3.5 9.5h17"/><path d="M7 13.5h4"/></svg>Sous-catégories de frais</h2>
+          </div>
+          <div class="panel-body">
+            <div style="margin-bottom:10px;color:var(--text-muted);font-size:.86rem;">Liste éditable, regroupée par catégorie, utilisée dans le formulaire « Saisir un frais ».</div>
+            <div id="liste-categories-frais"></div>
+            <div class="reflist-add-row reflist-add-row-2">
+              <input type="text" id="input-nouvelle-categorie-frais" list="datalist-categories-frais" placeholder="Catégorie (existante ou nouvelle)...">
+              <datalist id="datalist-categories-frais"></datalist>
+              <input type="text" id="input-nouvelle-souscategorie-frais" placeholder="Sous-catégorie...">
+              <button type="button" class="btn ghost" id="btn-ajouter-souscategorie-frais">+ Ajouter</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="support-admin-panel">
+          <div class="panel-head"><h2>Support &amp; exploitation</h2></div>
+          <div class="panel-body">
+            <div class="hint" style="margin-bottom:10px;">Comptes utilisateurs, sauvegardes et journal d'audit.</div>
+            <a class="btn ghost support-link" href="/support">Ouvrir la console support</a>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <!-- ============ Modal saisie de temps ============ -->
+  <div class="modal-backdrop" id="modal-saisie" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h3>Saisir un temps</h3>
+        <button class="modal-close" id="close-saisie">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-row">
+          <div class="field">
+            <label for="f-date">Date</label>
+            <input type="date" id="f-date">
+          </div>
+          <div class="field">
+            <label for="f-type">Type de temps</label>
+            <select id="f-type">
+              <option value="mission">Mission</option>
+              <option value="interne">Temps interne</option>
+              <option value="absence">Absence</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" id="wrap-mission">
+          <label for="f-mission">Mission</label>
+          <select id="f-mission"></select>
+        </div>
+        <div class="field" id="wrap-categorie" hidden>
+          <label for="f-categorie">Catégorie</label>
+          <select id="f-categorie"></select>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="f-duree">Durée (heures)</label>
+            <input type="number" id="f-duree" min="0" step="0.25" value="7">
+          </div>
+          <div class="field" id="wrap-pct">
+            <label for="f-pct">% facturable</label>
+            <input type="number" id="f-pct" min="0" max="100" step="5" value="100">
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-comment">Commentaire</label>
+          <textarea id="f-comment" placeholder="Facultatif"></textarea>
+        </div>
+        <div class="alert-msg" id="alert-depassement">⚠️ <span></span></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" id="cancel-saisie">Annuler</button>
+        <button class="btn primary" id="save-saisie">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Modal saisie de frais ============ -->
+  <div class="modal-backdrop" id="modal-frais" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h3>Saisir un frais</h3>
+        <button class="modal-close" data-close="modal-frais">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-row">
+          <div class="field">
+            <label for="fr-date">Date</label>
+            <input type="date" id="fr-date">
+          </div>
+          <div class="field">
+            <label for="fr-type">Affecté à</label>
+            <select id="fr-type">
+              <option value="affaire">Une affaire</option>
+              <option value="interne">Un temps interne</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" id="wrap-fr-affaire">
+          <label for="fr-affaire">Affaire concernée</label>
+          <select id="fr-affaire"></select>
+        </div>
+        <div class="field" id="wrap-fr-interne" hidden>
+          <label for="fr-interne">Temps interne concerné</label>
+          <select id="fr-interne"></select>
+        </div>
+        <div class="field">
+          <label for="fr-categorie">Sous-catégorie de frais</label>
+          <select id="fr-categorie"></select>
+        </div>
+        <div class="field" id="wrap-fr-refacturable">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:400;">
+            <input type="checkbox" id="fr-refacturable" style="width:auto;"> Refacturable au client (imputé sur le budget frais de l'affaire)
+          </label>
+        </div>
+        <div class="field">
+          <label>Détail HT / TVA <span style="font-weight:400;color:var(--text-muted);">— une note peut cumuler plusieurs taux (ex. repas et boissons alcoolisées au restaurant)</span></label>
+          <div id="fr-lignes-list"></div>
+          <button type="button" class="btn ghost" id="fr-lignes-add" style="margin-top:2px;align-self:flex-start;">+ Ajouter un taux de TVA</button>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Montant TVA</label>
+            <div class="field-computed" id="fr-montant-tva">0,00 €</div>
+          </div>
+          <div class="field">
+            <label>Montant TTC</label>
+            <div class="field-computed" id="fr-montant-ttc">0,00 €</div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="fr-comment">Commentaire</label>
+          <textarea id="fr-comment" placeholder="Facultatif — ex. n° de facture, motif"></textarea>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-frais">Annuler</button>
+        <button class="btn primary" id="save-frais">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Modal nouvelle organisation ============ -->
+  <div class="modal-backdrop" id="modal-org" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="modal-org-title">Nouvelle organisation</h3>
+        <button class="modal-close" data-close="modal-org">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label for="o-nom">Nom</label><input id="o-nom" placeholder="Ex : Ville de Nantes"></div>
+        <div class="field"><label for="o-adresse">Adresse postale</label><input id="o-adresse" placeholder="Facultatif"></div>
+        <div class="field"><label for="o-type">Type</label>
+          <select id="o-type">
+            <option>Collectivité</option><option>Services de l'État</option>
+            <option>Agences, SEM, Satellites</option><option>ESS</option>
+            <option>Entreprises</option><option>Autres</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-org">Annuler</button>
+        <button class="btn primary" id="save-org">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Modal liste des affaires d'une organisation (par rôle) ============ -->
+  <div class="modal-backdrop" id="modal-org-affaires" hidden>
+    <div class="modal" style="max-width:880px;">
+      <div class="modal-head">
+        <h3 id="modal-org-affaires-title">Affaires</h3>
+        <button class="modal-close" data-close="modal-org-affaires">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-wrap"><table class="data" id="table-org-affaires"></table></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-org-affaires">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Modal liste des frais d'une affaire ============ -->
+  <div class="modal-backdrop" id="modal-affaire-frais" hidden>
+    <div class="modal" style="max-width:960px;">
+      <div class="modal-head">
+        <h3 id="modal-affaire-frais-title">Frais</h3>
+        <button class="modal-close" data-close="modal-affaire-frais">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="row-muted" id="affaire-frais-sub" style="font-size:.84rem;margin-bottom:12px;">—</div>
+        <div class="table-wrap"><table class="data" id="table-affaire-frais"></table></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-affaire-frais">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Modal détail d'une note de frais (bordereau), depuis Cabinet > Frais ============ -->
+  <div class="modal-backdrop" id="modal-bordereau" hidden>
+    <div class="modal" style="max-width:960px;">
+      <div class="modal-head">
+        <h3 id="modal-bordereau-title">Note de frais</h3>
+        <button class="modal-close" data-close="modal-bordereau">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="row-muted" id="bordereau-sub" style="font-size:.84rem;margin-bottom:12px;">—</div>
+        <div class="table-wrap"><table class="data" id="table-bordereau-frais"></table></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn primary" id="btn-bordereau-payer" hidden>Marquer comme payée</button>
+        <button class="btn ghost" data-close="modal-bordereau">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Modal nouveau consultant ============ -->
+  <div class="modal-backdrop" id="modal-consultant" hidden>
+    <div class="modal" style="max-width:640px;">
+      <div class="modal-head">
+        <h3 id="modal-consultant-title">Nouveau consultant</h3>
+        <button class="modal-close" data-close="modal-consultant">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label for="c-nom">Nom</label><input id="c-nom" placeholder="Ex : Julie Marchand"></div>
+        <div class="field-row">
+          <div class="field"><label for="c-statut">Statut</label>
+            <select id="c-statut">
+              <option value="en poste">en poste</option>
+              <option value="stagiaire">stagiaire</option>
+              <option value="parti">parti</option>
+            </select>
+          </div>
+          <div class="field"><label for="c-tjm">TJM objectif (€)</label><input type="number" id="c-tjm" min="0" step="10" value="550"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="c-embauche">Date d'arrivée</label><input type="date" id="c-embauche"></div>
+          <div class="field"><label for="c-depart">Date de départ</label><input type="date" id="c-depart"></div>
+        </div>
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:400;">
+            <input type="checkbox" id="c-admin" style="width:auto;" disabled> Administrateur (géré dans Support)
+          </label>
+        </div>
+
+        <div class="field" id="c-partiel-wrap">
+          <label>Temps partiel par période</label>
+          <div style="font-size:.78rem;color:var(--text-muted);margin-top:-2px;">Laisser vide = temps plein sur toute la présence.</div>
+          <div id="c-partiel-list"></div>
+          <button type="button" class="btn ghost" id="c-partiel-add" style="margin-top:4px;align-self:flex-start;">+ Ajouter une période</button>
+        </div>
+        <div class="field" id="c-stagiaire-note" hidden style="font-size:.82rem;color:var(--text-muted);">
+          Les stagiaires comptent forfaitairement pour 25&nbsp;% de présence (RH comme production), sur toute leur période de présence — pas de période de temps partiel à définir.
+        </div>
+
+        <div class="alert-msg" id="alert-consultant-dates">⚠️ <span></span></div>
+        <div class="alert-msg danger" id="alert-consultant-partiel">⛔ <span></span></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-consultant">Annuler</button>
+        <button class="btn primary" id="save-consultant">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Modal nouvelle affaire ============ -->
+  <div class="modal-backdrop" id="modal-affaire" hidden>
+    <div class="modal" style="max-width:560px;">
+      <div class="modal-head">
+        <h3 id="modal-affaire-title">Nouvelle affaire</h3>
+        <button class="modal-close" data-close="modal-affaire">✕</button>
+      </div>
+      <div class="modal-tabs" id="a-tabs" role="tablist">
+        <button type="button" class="modal-tab active" data-tab="general">Informations générales</button>
+        <button type="button" class="modal-tab" data-tab="budget">Budget &amp; dates</button>
+        <button type="button" class="modal-tab" data-tab="carac">Caractéristiques</button>
+        <button type="button" class="modal-tab" data-tab="partenaires">Partenaires</button>
+        <button type="button" class="modal-tab" data-tab="commercial">Commercial</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-tabpanel" data-tabpanel="general">
+          <div class="field"><label for="a-nom">Nom de l'affaire</label><input id="a-nom" placeholder="Ex : Schéma directeur mobilité"></div>
+          <div class="field-row">
+            <div class="field combobox-wrap">
+              <label for="a-org-search">Organisation</label>
+              <input type="text" id="a-org-search" autocomplete="off" placeholder="Rechercher une organisation...">
+              <input type="hidden" id="a-org">
+              <div class="combobox-list" id="a-org-list" hidden></div>
+            </div>
+            <div class="field"><label for="a-abrege">Nom abrégé</label><input id="a-abrege" placeholder="Ex : Mobilité 2027"></div>
+          </div>
+          <div class="field"><label for="a-motscles">Mots-clés</label><input id="a-motscles" placeholder="#urbanisme #mobilité"></div>
+          <div class="field-row">
+            <div class="field"><label for="a-pilote">Pilote de l'affaire</label><select id="a-pilote"></select></div>
+            <div class="field"><label for="a-statut">Statut</label>
+              <select id="a-statut"><option>en commercialisation</option><option>en production</option><option>terminée</option><option>perdue</option></select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-tabpanel" data-tabpanel="budget" hidden>
+          <div class="field-row">
+            <div class="field"><label for="a-budget">Prestations Cabinet (€)</label><input type="number" id="a-budget" min="0" step="500" value="20000"></div>
+            <div class="field"><label for="a-jours">Nombre de jours vendus</label><input type="number" id="a-jours" min="0" step="1" value="30"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="a-frais">Frais Cabinet (€)</label><input type="number" id="a-frais" min="0" step="100" value="0"></div>
+            <div class="field"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="a-debut">Date prévisionnelle de début</label><input type="date" id="a-debut"></div>
+            <div class="field"><label for="a-fin">Date prévisionnelle de fin</label><input type="date" id="a-fin"></div>
+          </div>
+        </div>
+        <div class="modal-tabpanel" data-tabpanel="carac" hidden>
+          <div class="field">
+            <label>Méthodes</label>
+            <div class="chip-filter" id="a-methodes-picker"></div>
+          </div>
+          <div class="field">
+            <label>Types de territoire</label>
+            <div class="chip-filter" id="a-territoires-picker"></div>
+          </div>
+          <div class="field">
+            <label>Domaines d'intervention</label>
+            <div class="chip-filter" id="a-domaines-picker"></div>
+          </div>
+        </div>
+        <div class="modal-tabpanel" data-tabpanel="partenaires" hidden>
+          <div class="field" id="a-partenaires-wrap">
+            <label>Partenaires (5 maximum)</label>
+            <div style="font-size:.78rem;color:var(--text-muted);margin-top:-2px;">À choisir parmi les organisations. Un sous-traitant indirect est à payer par le cabinet — indique le montant.</div>
+            <div id="a-partenaires-list"></div>
+            <button type="button" class="btn ghost" id="a-partenaires-add" style="margin-top:4px;align-self:flex-start;">+ Ajouter un partenaire</button>
+          </div>
+        </div>
+        <div class="modal-tabpanel" data-tabpanel="commercial" hidden>
+          <div class="field-row">
+            <div class="field"><label for="a-pilote-comm">Pilote commercial</label><select id="a-pilote-comm"></select></div>
+            <div class="field"><label for="a-typevente">Type de vente</label>
+              <select id="a-typevente"><option>Appel d'offres</option><option>Appel à projet</option><option>Gré à gré</option><option>Bon de commande</option></select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="a-reussite">% de réussite</label>
+              <select id="a-reussite">
+                <option value="80">Très Fort (80%)</option><option value="60">Fort (60%)</option>
+                <option value="40" selected>Moyen (40%)</option><option value="20">Faible (20%)</option><option value="10">Très Faible (10%)</option>
+              </select>
+            </div>
+            <div class="field"><label for="a-depot">Date de dépôt de l'offre</label><input type="date" id="a-depot"></div>
+          </div>
+          <div class="field" id="a-repartition-wrap" style="margin-top:6px;">
+            <label>Répartition du budget missions entre consultants</label>
+            <div style="font-size:.78rem;color:var(--text-muted);margin-top:-2px;">Sert uniquement à scorer la performance commerciale (Suivi commercial / Mon commercial), pas à réserver les missions à venir. Assiette : le budget des missions uniquement (hors frais et sous-traitance). Sans répartition saisie, le pilote commercial est crédité de la totalité.</div>
+            <div id="a-repartition-list"></div>
+            <div id="a-repartition-total" style="font-size:.8rem;font-weight:600;margin-top:4px;"></div>
+            <button type="button" class="btn ghost" id="a-repartition-add" style="margin-top:4px;align-self:flex-start;">+ Ajouter un consultant</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-affaire">Annuler</button>
+        <button class="btn primary" id="save-affaire">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Modal nouvelle mission ============ -->
+  <div class="modal-backdrop" id="modal-mission" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="modal-mission-title">Nouvelle mission</h3>
+        <button class="modal-close" data-close="modal-mission">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label for="m-nom">Nom de la mission</label><input id="m-nom" placeholder="Ex : Diagnostic territorial"></div>
+        <div class="field-row">
+          <div class="field"><label for="m-consultant">Consultant</label><select id="m-consultant"></select></div>
+          <div class="field"><label for="m-statut">Statut</label><select id="m-statut"><option>en cours</option><option>terminée</option></select></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="m-enveloppe">Enveloppe temps facturable (jours)</label><input type="number" id="m-enveloppe" min="0" step="0.5" value="10"></div>
+          <div class="field"><label for="m-taux">Taux journalier (€)</label><input type="number" id="m-taux" min="0" step="10" value="600"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="m-debut">Date prévisionnelle de début</label><input type="date" id="m-debut"></div>
+          <div class="field"><label for="m-fin">Date prévisionnelle de fin</label><input type="date" id="m-fin"></div>
+        </div>
+        <div class="field"><label for="m-comment">Commentaires</label><textarea id="m-comment" placeholder="Facultatif"></textarea></div>
+        <div class="alert-msg" id="alert-mission-dates">⚠️ <span></span></div>
+        <div class="alert-msg danger" id="alert-mission-jours">⛔ <span></span></div>
+        <div class="alert-msg" id="alert-mission-budget">⚠️ <span></span></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-mission">Annuler</button>
+        <button class="btn primary" id="save-mission">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Modal nouvelle facture ============ -->
+  <div class="modal-backdrop" id="modal-facture" hidden>
+    <div class="modal" style="max-width:560px;">
+      <div class="modal-head">
+        <h3 id="modal-facture-title">Nouvelle facture</h3>
+        <button class="modal-close" data-close="modal-facture">✕</button>
+      </div>
+      <div class="modal-tabs" id="f-tabs" role="tablist">
+        <button type="button" class="modal-tab active" data-tab="saisie">Saisie</button>
+        <button type="button" class="modal-tab" data-tab="suivi">Suivi</button>
+        <button type="button" class="modal-tab" data-tab="notes">Notes</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-tabpanel" data-tabpanel="saisie">
+          <div class="field-row">
+            <div class="field"><label for="f-numero">Numéro de facture</label><input id="f-numero" placeholder="Ex : 2026-014"></div>
+            <div class="field" style="justify-content:flex-end;">
+              <label style="display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text);"><input type="checkbox" id="f-formation" style="width:auto;"> Formation (sans TVA)</label>
+            </div>
+          </div>
+          <div class="field"><label for="f-mission-ht">Budget mission — Montant HT (€)</label><input type="number" id="f-mission-ht" min="0" step="100" value="0"></div>
+          <div class="field"><label for="f-frais-ttc">Frais — Montant TTC (€)</label><input type="number" id="f-frais-ttc" min="0" step="10" value="0"></div>
+          <div class="field"><label for="f-soustraitance-ht">Sous-traitant refacturé — Montant HT (€)</label><input type="number" id="f-soustraitance-ht" min="0" step="100" value="0"></div>
+          <div class="field-computed" id="f-recap">—</div>
+        </div>
+        <div class="modal-tabpanel" data-tabpanel="suivi" hidden>
+          <div class="field"><label>Statut</label><div id="f-statut-pill" style="font-size:1rem;"></div></div>
+          <div class="field-row">
+            <div class="field"><label for="f-echeance-prev">Échéance prévisionnelle de facturation</label><input type="date" id="f-echeance-prev"></div>
+            <div class="field"><label for="f-echeance-paiement">Échéance prévisionnelle de paiement</label><input type="date" id="f-echeance-paiement"></div>
+          </div>
+          <div class="field" id="f-depot-wrap" hidden><label>Date de dépôt</label><div class="field-computed" id="f-depot-value">—</div></div>
+          <button type="button" class="btn primary" id="f-btn-deposer" style="align-self:flex-start;">Marquer déposée</button>
+          <div class="field" id="f-payee-wrap" hidden>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text);"><input type="checkbox" id="f-payee" style="width:auto;"> Facture payée</label>
+          </div>
+          <div class="field" id="f-datepaiement-wrap" hidden><label>Date de paiement</label><div class="field-computed" id="f-datepaiement-value">—</div></div>
+          <button type="button" class="btn ghost" id="f-btn-annuler" style="align-self:flex-start;color:var(--status-danger-text);">Annuler la facture</button>
+          <div class="alert-msg" id="alert-facture-numero">⚠️ <span></span></div>
+        </div>
+        <div class="modal-tabpanel" data-tabpanel="notes" hidden>
+          <div class="field"><label for="fact-comment">Commentaires</label><textarea id="fact-comment" placeholder="Notes, informations de facturation..."></textarea></div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-facture">Annuler</button>
+        <button class="btn primary" id="save-facture">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- Rappel d'alertes (facturation + pilotage d'affaire) affiché en bas de l'écran à l'arrivée sur
+       « Ma page », voir checkMesAlertesBanner(). -->
+  <div class="mes-alertes-banner" id="mes-alertes-banner" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="mes-alertes-banner-icon"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+    <div class="mes-alertes-banner-text" id="mes-alertes-banner-text">—</div>
+    <div class="mes-alertes-banner-actions">
+      <button type="button" class="btn primary" id="mes-alertes-banner-go">Mon Pilotage</button>
+      <button type="button" class="mes-alertes-banner-close" id="mes-alertes-banner-close" aria-label="Fermer">✕</button>
+    </div>
+  </div>
+</div>
+
+<script>window.PILOTEO_FORCE_SOLO=true;</script>
+<script src="piloteo-events.js"></script>
+<script src="local-backend.js"></script>
+<script src="app.js"></script>
