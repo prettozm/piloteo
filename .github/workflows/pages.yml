@@ -41,7 +41,9 @@ jobs:
         run: |
           set -eu
           mkdir -p _site/assets
-          cp index.html app.js piloteo-events.js local-backend.js sw-solo.js seed.json manifest.webmanifest _site/
+          cp index.html app.js piloteo-events.js local-backend.js sw-solo.js manifest.webmanifest _site/
+          # Seed PUBLIC neutre : aucune donnée personnelle sur le site déployé.
+          cp deploy/seed.public.json _site/seed.json
           cp assets/logo-default.svg _site/assets/ 2>/dev/null || true
           # Forcer le mode solo par défaut (pas besoin de ?solo=1 sur le site déployé).
           # On insère le drapeau juste avant le chargement de local-backend.js.

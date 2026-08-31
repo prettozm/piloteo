@@ -97,18 +97,29 @@
   function emptyState() {
     var s = {}; COLLECTIONS.forEach(function (k) { s[k] = []; }); return s;
   }
+  // Utilisateur générique par défaut : aucune donnée personnelle. Sert d'identité
+  // du membre solo quand le seed ne fournit aucun consultant (démarrage vierge).
+  function defaultConsultant() {
+    return { id: "MOI", nom: "Moi", trigramme: "MOI", statut: "en poste",
+      dateEmbauche: "2026-01-01", dateDepart: null, tjmBase: 0, admin: true, tempsPartiel: [] };
+  }
+  // Garantit un état exploitable : ne conserve que les 12 collections connues et
+  // s'assure qu'au moins un consultant existe (sinon app.js refuse le démarrage).
+  function ensureUsable(seed) {
+    var src = seed && typeof seed === "object" ? seed : {};
+    var s = emptyState();
+    COLLECTIONS.forEach(function (k) { if (Array.isArray(src[k])) s[k] = src[k]; });
+    if (!s.consultants.length) s.consultants = [defaultConsultant()];
+    return s;
+  }
   var _origFetch = window.fetch ? window.fetch.bind(window) : null;
 
   function loadSeed() {
-    if (!_origFetch) return Promise.resolve(emptyState());
+    if (!_origFetch) return Promise.resolve(ensureUsable(null));
     return _origFetch(basePath() + "seed.json", { credentials: "same-origin" })
-      .then(function (r) { return r.ok ? r.json() : emptyState(); })
-      .then(function (seed) {
-        var s = emptyState();
-        COLLECTIONS.forEach(function (k) { if (Array.isArray(seed[k])) s[k] = seed[k]; });
-        return s;
-      })
-      .catch(function () { return emptyState(); });
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (seed) { return ensureUsable(seed); })
+      .catch(function () { return ensureUsable(null); });
   }
 
   function getRecord() {
