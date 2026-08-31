@@ -25,6 +25,27 @@ jobs:
       - name: Lancer les tests
         run: python -m unittest discover -s tests -v
 
+  # Moteur local-first (src/*) : événements, causalité (P0.1), curseur de synchro
+  # (P0.2), crypto, policy, workspace, licence, migration, et adaptateurs de
+  # stockage (in-memory, folder, google-drive helpers). Dépendances reproductibles
+  # via `npm ci` (package-lock.json) ; fake-indexeddb est une devDependency.
+  next:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Installer les dépendances (reproductible)
+        run: npm ci
+
+      - name: Tests moteur Next + adaptateurs (node:test)
+        run: npm run test:next
+
   e2e:
     runs-on: ubuntu-latest
     steps:

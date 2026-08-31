@@ -208,7 +208,11 @@ export class SyncEngine {
    */
   createLocalEvent({ entityType, entityId, operation, payload }) {
     const versions = this._projection.__versions || {};
-    const currentVersion = versions[entityType]?.[entityId]?.version ?? 0;
+    const currentEntity = versions[entityType]?.[entityId];
+    const currentVersion = currentEntity?.version ?? 0;
+    // P0.1 — ancrage causal : l'événement descend explicitement du dernier
+    // événement ayant amené l'entité à son état courant (null si création).
+    const parentEventId = currentEntity?.lastEventId ?? null;
     const epoch = this.keyring.currentEpochNumber();
     if (epoch === null) {
       throw new Error("SyncEngine.createLocalEvent: keyring vide, aucune epoch courante disponible.");
@@ -222,6 +226,7 @@ export class SyncEngine {
       baseVersion: currentVersion,
       epoch,
       payload,
+      parentEventId,
     });
     return this.recordLocalEvent(event);
   }
@@ -292,6 +297,15 @@ export class SyncEngine {
     const { changes, cursor } = await this.adapter.listChanges(this._cursor);
     const rejections = [];
     let appendedAny = false;
+    // P0.2 — un échec RÉCUPÉRABLE (fetch d'un blob annoncé qui échoue
+    // temporairement) interdit d'avancer le curseur : sinon l'événement
+    // concerné sortirait du prochain `listChanges` et serait perdu à jamais.
+    // On conserve alors l'ancien curseur pour rejouer le batch plus tard ; les
+    // événements DÉJÀ traités dans ce même batch sont dans `_seen` et seront
+    // sautés sans ré-application (idempotence), seul l'événement en échec est
+    // re-fetché. Un rejet PERMANENT (signature/schéma/policy/…) n'est pas
+    // récupérable : l'événement est marqué `_seen`, on peut avancer le curseur.
+    let recoverableError = false;
 
     for (const change of changes) {
       if (!change || change.kind !== "event") {
@@ -308,7 +322,10 @@ export class SyncEngine {
       try {
         blob = await this.adapter.get("event", id);
       } catch (err) {
+        // NE PAS marquer `_seen` (l'événement n'a pas été traité) et retenir
+        // le curseur pour retry ultérieur.
         rejections.push(this._reject(id, "fetch", String((err && err.message) || err)));
+        recoverableError = true;
         continue;
       }
 
@@ -321,11 +338,15 @@ export class SyncEngine {
       }
     }
 
-    this._cursor = cursor;
-    await this._trySaveCursor();
     if (appendedAny) this._refreshProjection();
+    // Le curseur n'est commité QUE si le batch a été entièrement consommé sans
+    // erreur récupérable (cf. P0.2). En cas d'échec fetch, on garde l'ancien.
+    if (!recoverableError) {
+      this._cursor = cursor;
+      await this._trySaveCursor();
+    }
 
-    return { processed: changes.length, rejections };
+    return { processed: changes.length, rejections, cursorAdvanced: !recoverableError };
   }
 
   /**

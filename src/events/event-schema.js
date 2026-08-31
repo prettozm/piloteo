@@ -86,6 +86,7 @@ export function buildEvent({
   baseVersion,
   epoch,
   payload = null,
+  parentEventId,
 } = {}) {
   if (!isUuidLike(workspaceId)) {
     throw new TypeError("buildEvent: workspaceId doit être un UUID");
@@ -108,8 +109,17 @@ export function buildEvent({
   if (!isFiniteInteger(epoch) || epoch < 1) {
     throw new TypeError("buildEvent: epoch doit être un entier >= 1");
   }
+  // Référence causale explicite (P0.1) : eventId de l'événement dont CELUI-CI
+  // descend en ligne directe sur la même entité (= `lastEventId` de l'entité au
+  // moment de la construction). `null` pour une création (descend de rien).
+  // Facultatif dans la signature (compat ascendante des appelants historiques),
+  // mais dès qu'il est fourni il est inclus dans l'enveloppe — donc dans les
+  // octets signés — et vérifié par `conflict.js#classify`.
+  if (parentEventId !== undefined && parentEventId !== null && !isUuidLike(parentEventId)) {
+    throw new TypeError("buildEvent: parentEventId doit être un UUID, null, ou absent");
+  }
 
-  return {
+  const event = {
     version: EVENT_SCHEMA_VERSION,
     eventId: globalThis.crypto.randomUUID(),
     workspaceId,
@@ -122,6 +132,10 @@ export function buildEvent({
     createdAt: new Date().toISOString(),
     payload,
   };
+  if (parentEventId !== undefined) {
+    event.parentEventId = parentEventId;
+  }
+  return event;
 }
 
 /** Tri récursif des clés d'objet ; refuse les valeurs non sérialisables de façon déterministe. */
@@ -201,6 +215,13 @@ export function isWellFormedEnvelope(event) {
     typeof event.signature !== "string"
   ) {
     return false;
+  }
+
+  // parentEventId (P0.1) : facultatif ; s'il est présent, il doit être null ou
+  // un UUID (l'eventId d'un événement antérieur).
+  if (Object.prototype.hasOwnProperty.call(event, "parentEventId")) {
+    const p = event.parentEventId;
+    if (p !== null && !isUuidLike(p)) return false;
   }
 
   return true;
