@@ -232,25 +232,35 @@ une revue de sécurité dédiée. Ce document ne recommande ni l'une ni l'autre.
 
 ---
 
-## 7. Limites actuelles / ce qui n'est pas encore câblé
+## 7. État d'implémentation
 
-Le mode Dossier est **partiellement** implémenté à ce jour :
+L'adaptateur, ses deux ports et la couture d'activation sont **en place et
+testés** ; il reste le **câblage dans l'UI de l'application**.
 
-- **Le port navigateur (File System Access) n'existe pas encore.** L'adaptateur
-  `FolderStorageAdapter` ne fait aucune E/S lui-même : il délègue à un **port
-  filesystem** minimal injecté (`ensureDir`, `writeExclusive`, `readText`, `exists`,
-  `listFiles`, `stat`). Seul le port **Node** (`src/storage/node-fs-port.js`)
-  existe : il sert aux **tests** et à un **éventuel wrapper desktop** (Electron/Tauri)
-  disposant d'un accès `fs` direct. Le port navigateur équivalent, bâti sur
-  `showDirectoryPicker()` → `FileSystemDirectoryHandle`, **reste à écrire**.
+Disponible aujourd'hui :
 
-- **L'intégration UI du choix de dossier reste à faire.** Le déclenchement du
-  picker, la persistance du handle en IndexedDB, la gestion de la re-permission et
-  le raccordement au `SyncEngine` ne sont pas encore câblés dans l'interface.
+- **`FolderStorageAdapter`** (`src/storage/folder-storage-adapter.js`) : aucune E/S
+  propre, il délègue à un **port filesystem** minimal injecté (`ensureDir`,
+  `writeExclusive`, `readText`, `exists`, `listFiles`, `stat`).
+- **Port Node** (`src/storage/node-fs-port.js`) : tests + éventuel wrapper desktop
+  (Electron/Tauri) à accès `fs` direct.
+- **Port navigateur File System Access** (`src/storage/fsaccess-port.js`) : bâti sur
+  `showDirectoryPicker()` → `FileSystemDirectoryHandle`, write-once par
+  vérifier-puis-créer. `FolderStorageAdapter` tourne **à l'identique** au-dessus des
+  deux ports (prouvé par les tests).
+- **Persistance du dossier choisi** (`src/storage/fsaccess-handle-store.js`) : le
+  handle est mémorisé en IndexedDB pour retrouver le dossier au rechargement.
+- **Couture d'activation** (`src/storage/folder-mode.js`) :
+  `startFolderMode()` (choix + mémorisation) et `resumeFolderMode()` (reprise sans
+  dialogue si la permission tient), plus `grantAndConnect()` pour re-consentement.
 
-- **Périmètre navigateur confirmé Chromium desktop.** Firefox et Safari restent
-  hors périmètre sans wrapper desktop (voir §4).
+Reste à faire :
 
-L'adaptateur et son format sur disque sont, eux, en place et couverts par les tests
-via le port Node ; il manque le transport navigateur et le câblage UI pour rendre
-le mode Dossier utilisable de bout en bout dans la PWA.
+- **Câblage dans l'UI** : un bouton « Choisir un dossier » appelant
+  `startFolderMode()`, la reprise au démarrage via `resumeFolderMode()`, le message
+  de re-permission, et le raccordement au runtime (SyncEngine / mode solo). Ce
+  branchement dans `app.js`/`index.html` est le seul maillon restant pour un usage
+  de bout en bout dans la PWA.
+- **Périmètre navigateur** confirmé Chromium desktop ; Firefox/Safari hors périmètre
+  sans wrapper desktop (voir §4). `pickDirectory()` lève un message clair sur les
+  navigateurs non compatibles.
