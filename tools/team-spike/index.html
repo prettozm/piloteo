@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pilotéo — Spike Google Drive</title>
+<style>
+:root{--bg:#0e1518;--surf:#16212680;--card:#141f24;--ink:#e7eef1;--mut:#93a6b0;
+  --line:#24333a;--acc:#2cb7c1;--acc2:#3fc9d2;--ok:#38b67e;--okb:#102a22;--bad:#e0655a;--badb:#331817;--warn:#d69a2a;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;}
+.wrap{max-width:760px;margin:0 auto;padding:26px 18px 80px;}
+h1{font-size:24px;margin:0 0 4px;letter-spacing:-.01em;}
+.ey{font:600 11px/1 ui-monospace,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--acc);margin-bottom:10px;}
+p.lede{color:var(--mut);margin:6px 0 20px;}
+.card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:16px 18px;margin:14px 0;}
+.step{display:flex;gap:12px;align-items:flex-start;}
+.n{flex:none;width:26px;height:26px;border-radius:50%;background:var(--surf);border:1px solid var(--line);
+  display:grid;place-items:center;font:600 13px ui-monospace,monospace;color:var(--acc);}
+.step.done .n{background:var(--okb);border-color:var(--ok);color:var(--ok);}
+.step .t{font-weight:600;}
+.step .d{color:var(--mut);font-size:13.5px;margin-top:2px;}
+button{font:600 14px system-ui,sans-serif;color:#04252a;background:var(--acc);border:0;border-radius:10px;
+  padding:11px 16px;cursor:pointer;margin-top:12px;}
+button:hover{background:var(--acc2);} button:disabled{opacity:.4;cursor:not-allowed;}
+button.sec{background:transparent;color:var(--ink);border:1px solid var(--line);}
+button.sec:hover{border-color:var(--acc);color:var(--acc);}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+.log{margin-top:16px;background:#0b1215;border:1px solid var(--line);border-radius:11px;overflow:hidden;}
+.log h3{margin:0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);
+  padding:9px 12px;border-bottom:1px solid var(--line);}
+.log .body{max-height:340px;overflow:auto;padding:10px 12px;font-family:ui-monospace,monospace;font-size:12px;}
+.line{padding:3px 0;border-bottom:1px solid #12191d;white-space:pre-wrap;word-break:break-word;}
+.line.ok{color:var(--ok);} .line.bad{color:var(--bad);} .line.info{color:var(--mut);} .line.warn{color:var(--warn);}
+.verdict{margin-top:14px;padding:13px 15px;border-radius:11px;font-weight:600;display:none;}
+.verdict.show{display:block;} .verdict.ok{background:var(--okb);color:var(--ok);} .verdict.bad{background:var(--badb);color:var(--bad);}
+a{color:var(--acc2);} .small{font-size:12.5px;color:var(--mut);}
+.cfg{font-size:12px;color:var(--mut);word-break:break-all;background:#0b1215;border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-top:6px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="ey">Spike technique · Phase 6</div>
+  <h1>Pilotéo — connexion Google Drive</h1>
+  <p class="lede">Valide en conditions réelles, avec <b>ton</b> compte Google, toute la chaîne d'équipe :
+  connexion → création de l'espace sur ton Drive → événement <b>chiffré</b> publié → relu et <b>déchiffré</b> →
+  preuve que le fichier stocké sur Drive est <b>illisible</b>. Rien n'est envoyé à un serveur : c'est ton
+  navigateur qui parle directement à ton Drive.</p>
+
+  <div class="card">
+    <div class="cfg">Client ID : <span id="cfg-id" class="mono"></span><br>Origine : <span id="cfg-org" class="mono"></span> · Scope : <span class="mono">drive.file</span></div>
+  </div>
+
+  <div class="card step" id="s1">
+    <div class="n">1</div>
+    <div style="flex:1">
+      <div class="t">Se connecter avec Google</div>
+      <div class="d">Ouvre la fenêtre Google (utilise le compte ajouté en « test user »). Aucun mot de passe n'est vu par l'app.</div>
+      <button id="btn-login">Se connecter avec Google</button>
+    </div>
+  </div>
+
+  <div class="card step" id="s2">
+    <div class="n">2</div>
+    <div style="flex:1">
+      <div class="t">Créer l'espace de test sur le Drive</div>
+      <div class="d">Crée un dossier « Pilotéo - TEST … » et son sous-dossier <span class="mono">events/</span> dans ton Drive, et génère une clé de chiffrement d'espace (AES-256-GCM, jamais envoyée).</div>
+      <button id="btn-create" disabled>Créer l'espace</button>
+    </div>
+  </div>
+
+  <div class="card step" id="s3">
+    <div class="n">3</div>
+    <div style="flex:1">
+      <div class="t">Publier un événement chiffré</div>
+      <div class="d">Chiffre une saisie de démo puis l'envoie comme fichier immuable dans <span class="mono">events/</span>. Le contenu déposé est du chiffré, pas les données en clair.</div>
+      <button id="btn-put" disabled>Publier l'événement</button>
+    </div>
+  </div>
+
+  <div class="card step" id="s4">
+    <div class="n">4</div>
+    <div style="flex:1">
+      <div class="t">Relire &amp; déchiffrer</div>
+      <div class="d">Liste le dossier, télécharge le blob, le déchiffre, et vérifie que le clair correspond à l'original.</div>
+      <button id="btn-get" disabled>Relire &amp; déchiffrer</button>
+      <button id="btn-open" class="sec" disabled>Ouvrir le dossier dans Drive</button>
+    </div>
+  </div>
+
+  <div class="verdict" id="verdict"></div>
+
+  <div class="log"><h3>Journal</h3><div class="body" id="log"></div></div>
+  <p class="small" style="margin-top:14px">Astuce : ouvre la console du navigateur si une étape échoue — les erreurs Google (origine non autorisée, utilisateur non « test user », scope) y sont détaillées. Cette page se sert de l'API Drive REST directement, sans backend.</p>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+"use strict";
+// ⚠️ Le Client ID OAuth est PUBLIC (pas un secret) : il s'embarque sans risque.
+const CLIENT_ID = "940162140944-llbfni295begfk20egmvnuqd9sc37cj8.apps.googleusercontent.com";
+const SCOPE = "https://www.googleapis.com/auth/drive.file";
+
+document.getElementById("cfg-id").textContent = CLIENT_ID;
+document.getElementById("cfg-org").textContent = location.origin;
+
+const el = (id) => document.getElementById(id);
+const logBox = el("log");
+function log(msg, cls) { const d = document.createElement("div"); d.className = "line " + (cls || "info"); d.textContent = msg; logBox.appendChild(d); logBox.scrollTop = logBox.scrollHeight; }
+function done(stepId) { el(stepId).classList.add("done"); }
+function verdict(ok, msg) { const v = el("verdict"); v.className = "verdict show " + (ok ? "ok" : "bad"); v.textContent = msg; }
+
+// --- Crypto (AES-256-GCM, mêmes primitives que src/crypto) -----------------
+function b64u(bytes){ let s=""; for(let i=0;i<bytes.length;i++) s+=String.fromCharCode(bytes[i]); return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function unb64u(str){ let b=str.replace(/-/g,"+").replace(/_/g,"/"); const pad=b.length%4; if(pad===2)b+="=="; else if(pad===3)b+="="; const bin=atob(b); const out=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) out[i]=bin.charCodeAt(i); return out; }
+async function genKey(){ return crypto.subtle.generateKey({name:"AES-GCM",length:256}, true, ["encrypt","decrypt"]); }
+async function enc(key, obj){ const iv=crypto.getRandomValues(new Uint8Array(12)); const aad=new TextEncoder().encode("piloteo-crypto-v1");
+  const pt=new TextEncoder().encode(JSON.stringify(obj)); const ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv,additionalData:aad,tagLength:128},key,pt));
+  const env=new Uint8Array(1+12+ct.length); env[0]=1; env.set(iv,1); env.set(ct,13); return b64u(env); }
+async function dec(key, str){ const env=unb64u(str); if(env[0]!==1) throw new Error("version"); const iv=env.slice(1,13); const ct=env.slice(13);
+  const aad=new TextEncoder().encode("piloteo-crypto-v1"); const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv,additionalData:aad,tagLength:128},key,ct);
+  return JSON.parse(new TextDecoder().decode(pt)); }
+
+// --- Drive REST (scope drive.file) -----------------------------------------
+let accessToken=null, tokenClient=null, wsFolderId=null, eventsFolderId=null, wsKey=null, wsFolderLink=null, lastEventId=null, lastPlain=null, lastCipher=null;
+
+function driveHeaders(extra){ return Object.assign({ "Authorization":"Bearer "+accessToken }, extra||{}); }
+async function driveCreateFolder(name, parentId){
+  const meta={ name:name, mimeType:"application/vnd.google-apps.folder" }; if(parentId) meta.parents=[parentId];
+  const r=await fetch("https://www.googleapis.com/drive/v3/files?fields=id,webViewLink", { method:"POST", headers:driveHeaders({"Content-Type":"application/json"}), body:JSON.stringify(meta) });
+  if(!r.ok) throw new Error("createFolder "+r.status+" "+(await r.text())); return r.json();
+}
+async function driveUpload(name, parentId, textContent){
+  const boundary="piloteo-"+Math.random().toString(16).slice(2);
+  const meta={ name:name, parents:[parentId] };
+  const body="--"+boundary+"\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"+JSON.stringify(meta)+
+    "\r\n--"+boundary+"\r\nContent-Type: application/octet-stream\r\n\r\n"+textContent+"\r\n--"+boundary+"--";
+  const r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name", { method:"POST", headers:driveHeaders({"Content-Type":"multipart/related; boundary="+boundary}), body:body });
+  if(!r.ok) throw new Error("upload "+r.status+" "+(await r.text())); return r.json();
+}
+async function driveList(parentId){
+  const q=encodeURIComponent("'"+parentId+"' in parents and trashed=false");
+  const r=await fetch("https://www.googleapis.com/drive/v3/files?q="+q+"&fields=files(id,name,createdTime)&orderBy=createdTime", { headers:driveHeaders() });
+  if(!r.ok) throw new Error("list "+r.status+" "+(await r.text())); return (await r.json()).files||[];
+}
+async function driveDownload(fileId){
+  const r=await fetch("https://www.googleapis.com/drive/v3/files/"+fileId+"?alt=media", { headers:driveHeaders() });
+  if(!r.ok) throw new Error("download "+r.status+" "+(await r.text())); return r.text();
+}
+
+// --- Parcours --------------------------------------------------------------
+window.addEventListener("load", () => {
+  if(!window.google || !google.accounts){ log("Chargement de Google Identity Services…", "info"); }
+  el("btn-login").addEventListener("click", () => {
+    try{
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID, scope: SCOPE,
+        callback: (resp) => {
+          if(resp && resp.access_token){ accessToken=resp.access_token; log("Connecté ✓ (jeton d'accès reçu, court, non stocké)", "ok"); done("s1"); el("btn-create").disabled=false; }
+          else { log("Pas de jeton reçu : "+(resp && resp.error||"inconnu"), "bad"); }
+        },
+        error_callback: (err) => log("Erreur de connexion Google : "+(err && err.type||err), "bad")
+      });
+      log("Ouverture de la fenêtre Google…", "info");
+      tokenClient.requestAccessToken();
+    }catch(e){ log("GIS indisponible : "+e.message+" — la page est-elle servie depuis "+location.origin+" (origine autorisée) ?", "bad"); }
+  });
+
+  el("btn-create").addEventListener("click", async () => {
+    try{
+      el("btn-create").disabled=true;
+      const stamp=new Date().toISOString().slice(0,19).replace("T"," ");
+      log("Création du dossier « Pilotéo - TEST "+stamp+" »…","info");
+      const ws=await driveCreateFolder("Pilotéo - TEST "+stamp, null); wsFolderId=ws.id; wsFolderLink=ws.webViewLink;
+      log("Dossier espace créé ✓ id="+wsFolderId,"ok");
+      const ev=await driveCreateFolder("events", wsFolderId); eventsFolderId=ev.id;
+      log("Sous-dossier events/ créé ✓ id="+eventsFolderId,"ok");
+      wsKey=await genKey(); log("Clé d'espace AES-256-GCM générée ✓ (reste dans le navigateur)","ok");
+      done("s2"); el("btn-put").disabled=false; el("btn-open").disabled=false;
+    }catch(e){ log(e.message,"bad"); el("btn-create").disabled=false; }
+  });
+
+  el("btn-put").addEventListener("click", async () => {
+    try{
+      el("btn-put").disabled=true;
+      lastEventId = (crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random());
+      const MARKER="SECRET-MONTANT-12345";
+      lastPlain={ eventId:lastEventId, entityType:"saisies", operation:"create",
+        payload:{ id:"S-spike", date:"2026-09-01", consultantId:"RBL", dureeH:7, commentaire:MARKER } };
+      lastCipher=await enc(wsKey, lastPlain);
+      log("Payload chiffré (base64url) : "+lastCipher.slice(0,72)+"…","info");
+      const leak = lastCipher.indexOf(MARKER)!==-1 || lastCipher.indexOf("RBL")!==-1;
+      log(leak?"⚠ le marqueur apparaît en clair (anormal)":"Confidentialité : le clair n'apparaît PAS dans le blob ✓", leak?"bad":"ok");
+      const up=await driveUpload(lastEventId+".piloteo", eventsFolderId, lastCipher);
+      log("Événement publié sur Drive ✓ fichier="+up.name,"ok");
+      done("s3"); el("btn-get").disabled=false;
+    }catch(e){ log(e.message,"bad"); el("btn-put").disabled=false; }
+  });
+
+  el("btn-get").addEventListener("click", async () => {
+    try{
+      el("btn-get").disabled=true;
+      const files=await driveList(eventsFolderId);
+      log("Fichiers dans events/ : "+files.length+" ("+files.map(f=>f.name).join(", ")+")","info");
+      const target=files.find(f=>f.name===lastEventId+".piloteo")||files[0];
+      const cipher=await driveDownload(target.id);
+      const okCipher = cipher===lastCipher;
+      log("Blob téléchargé "+(okCipher?"identique à l'upload ✓":"(différent de l'upload)"), okCipher?"ok":"warn");
+      const plain=await dec(wsKey, cipher);
+      const roundtrip = JSON.stringify(plain)===JSON.stringify(lastPlain);
+      log("Déchiffré : "+JSON.stringify(plain.payload),"info");
+      log(roundtrip?"Round-trip chiffrement/déchiffrement OK ✓":"Round-trip ÉCHEC", roundtrip?"ok":"bad");
+      done("s4");
+      const confidential = cipher.indexOf("12345")===-1 && cipher.indexOf("RBL")===-1;
+      if(roundtrip && confidential) verdict(true, "✓ Spike réussi : connexion Google + création d'espace Drive + publication chiffrée + relecture déchiffrée, et le fichier stocké sur Drive est illisible sans la clé. La chaîne d'équipe est validée pour un utilisateur unique.");
+      else verdict(false, "Le spike a un problème — voir le journal ci-dessus.");
+    }catch(e){ log(e.message,"bad"); el("btn-get").disabled=false; }
+  });
+
+  el("btn-open").addEventListener("click", () => { if(wsFolderLink) window.open(wsFolderLink,"_blank"); });
+});
+</script>
+</body>
+</html>
