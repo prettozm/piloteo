@@ -186,10 +186,10 @@ window.addEventListener("load", () => {
       lastEventId = (crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random());
       const MARKER="SECRET-MONTANT-12345";
       lastPlain={ eventId:lastEventId, entityType:"saisies", operation:"create",
-        payload:{ id:"S-spike", date:"2026-09-01", consultantId:"RBL", dureeH:7, commentaire:MARKER } };
+        payload:{ id:"S-spike", date:"2026-09-01", consultantId:"MOI", dureeH:7, commentaire:MARKER } };
       lastCipher=await enc(wsKey, lastPlain);
       log("Payload chiffré (base64url) : "+lastCipher.slice(0,72)+"…","info");
-      const leak = lastCipher.indexOf(MARKER)!==-1 || lastCipher.indexOf("RBL")!==-1;
+      const leak = lastCipher.indexOf(MARKER)!==-1 || lastCipher.indexOf("MOI")!==-1;
       log(leak?"⚠ le marqueur apparaît en clair (anormal)":"Confidentialité : le clair n'apparaît PAS dans le blob ✓", leak?"bad":"ok");
       const up=await driveUpload(lastEventId+".piloteo", eventsFolderId, lastCipher);
       log("Événement publié sur Drive ✓ fichier="+up.name,"ok");
@@ -211,7 +211,7 @@ window.addEventListener("load", () => {
       log("Déchiffré : "+JSON.stringify(plain.payload),"info");
       log(roundtrip?"Round-trip chiffrement/déchiffrement OK ✓":"Round-trip ÉCHEC", roundtrip?"ok":"bad");
       done("s4");
-      const confidential = cipher.indexOf("12345")===-1 && cipher.indexOf("RBL")===-1;
+      const confidential = cipher.indexOf("12345")===-1 && cipher.indexOf("MOI")===-1;
       if(roundtrip && confidential) verdict(true, "✓ Spike réussi : connexion Google + création d'espace Drive + publication chiffrée + relecture déchiffrée, et le fichier stocké sur Drive est illisible sans la clé. La chaîne d'équipe est validée pour un utilisateur unique.");
       else verdict(false, "Le spike a un problème — voir le journal ci-dessus.");
     }catch(e){ log(e.message,"bad"); el("btn-get").disabled=false; }

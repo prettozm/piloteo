@@ -18,14 +18,14 @@
   const today = new Date();
   const CURRENT_YEAR = today.getFullYear();
 
-  // NB : Antoine Verger passe à 80% à partir du 1er avril (exemple de temps partiel par période) ;
-  // Élise Salmon arrive le 12 juin de l'année en cours (exemple de prorata d'ETP à l'arrivée) ;
-  // Noah Granger est stagiaire (statut à part, compté forfaitairement à 25% de présence) ;
-  // Martin Roux est parti — embauché puis reparti sur l'année précédente (exemple de présence
-  // entièrement contenue dans une année passée, et de panorama Société différent d'une année à l'autre).
-  // trigramme : 2 premières lettres du prénom + 1ʳᵉ lettre du nom (ex. Robin Blanchet → RBL),
-  // calculé une fois à la création du consultant puis figé (comme id) — sert de base aux numéros
-  // de notes de frais (voir bordereauxFrais plus bas).
+  // Exemples de cas gérés par le jeu de données : un consultant passe à 80% en
+  // cours d'année (temps partiel par période) ; un autre arrive en cours d'année
+  // (prorata d'ETP à l'arrivée) ; un stagiaire (statut à part, ~25% de présence) ;
+  // un consultant parti sur une année passée (présence entièrement contenue dans
+  // une année révolue, panorama Société différent d'une année à l'autre).
+  // trigramme : 2 premières lettres du prénom + 1ʳᵉ lettre du nom (ex. « Prénom
+  // Nom » → PRN), calculé une fois à la création du consultant puis figé (comme
+  // id) — sert de base aux numéros de notes de frais (voir bordereauxFrais plus bas).
   let consultants = [];
   let nextConsultantIdSuffix = 1;
 
@@ -3492,7 +3492,7 @@
   }
 
   // Trigramme réglementaire : 2 premières lettres du prénom + 1ʳᵉ lettre du nom (accents retirés),
-  // rendu unique en cas d'homonymie (2ᵉ Robin Blanchet → RBL2, etc.) — utilisé dans les numéros de
+  // rendu unique en cas d'homonymie (2ᵉ « Prénom Nom » → PRN2, etc.) — utilisé dans les numéros de
   // notes de frais (FRAIS_<trigramme>_<année>_<n°>).
   function computeTrigramme(nom){
     const strip = s => (s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[^A-Z]/g,"");
