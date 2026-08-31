@@ -45,13 +45,52 @@
 //   et « une révision monotone ». Aucune logique de conflit/replay n'y vit —
 //   c'est le rôle d'`EventLog`/`reduce`, appelés uniquement par
 //   `createSoloStore`.
+// - PÉRIMÈTRE : ce store est MONO-ÉCRIVAIN par backend. `commit(nextState)`
+//   diffe l'état FRAIS du backend contre le `nextState` fourni : si deux
+//   écrivains concurrents (deux onglets, deux appareils sur le MÊME dossier
+//   synchronisé) committent des `nextState` calculés sur des bases différentes,
+//   le dernier écrit gagne AU CHAMP près, sans détection de « lost update » —
+//   comme le fait déjà le backend snapshot classique. La vraie concurrence
+//   multi-écrivains (chaque client émettant ses propres événements depuis SA
+//   base, conflits par entité) est le rôle de `SyncEngine` (événements signés,
+//   `parentEventId` posé côté client), PAS de ce pont snapshot. Le point 1b ne
+//   doit donc PAS exposer un même backend solo à des écritures concurrentes.
+//   `commit` remonte néanmoins dans son retour (`conflicts`) tout événement
+//   qu'il a écrit mais qui n'a pas été appliqué (conflit de causalité), pour
+//   qu'un écart ne passe jamais pour un succès silencieux.
+// - ROBUSTESSE `commit` : ne jette jamais. Une entité sans identité, avec une
+//   identité vide, ou portant une clé réservée (`__deleted`...) est consignée
+//   dans `applied.rejected` (jamais perdue en silence, jamais un throw global).
 
-import { buildEvent, ENTITY_TYPES, identityValue } from "../events/event-schema.js";
+import { buildEvent, ENTITY_TYPES, identityKey, identityValue } from "../events/event-schema.js";
 import { EventLog } from "../events/event-log.js";
 import { validatePayload } from "../events/validation.js";
 import { FolderStorageAdapter } from "../storage/folder-storage-adapter.js";
 
 const COLLECTIONS = Object.keys(ENTITY_TYPES);
+
+// Clés de méta-données INTERNES à la projection/aux tombstones : un payload
+// métier ne doit JAMAIS en porter (sinon `__deleted` dans un payload ferait
+// disparaître l'entité de tout snapshot — cf. revue « red team » #5). Rejetées.
+const RESERVED_KEYS = Object.freeze(["__deleted", "__deletedAt", "__versions", "__conflicts"]);
+function hasReservedKey(payload) {
+  return (
+    payload && typeof payload === "object" &&
+    RESERVED_KEYS.some((k) => Object.prototype.hasOwnProperty.call(payload, k))
+  );
+}
+
+/**
+ * Sérialisation stable (clés d'OBJET triées, ordre des TABLEAUX conservé) pour
+ * comparer deux entités sans faux "update" dû à un simple réordonnancement de
+ * clés (les tableaux, eux, sont ordonnés : les réordonner est un vrai changement).
+ */
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  const keys = Object.keys(value).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",") + "}";
+}
 
 /** Indexe un tableau d'entités par leur valeur d'identité (clé propre à `entityType`). */
 function mapByIdentity(list, entityType) {
@@ -85,69 +124,75 @@ function lineageOf(versionBucket, id) {
  */
 export function snapshotToEventsDiff(oldState, newState, { workspaceId, actorId, epoch, projection } = {}) {
   const events = [];
+  const rejected = [];
   const versionsRoot = (projection && projection.__versions) || {};
 
+  const reject = (entityType, entityId, reason) =>
+    rejected.push({ eventId: null, entityType, entityId: entityId ?? null, reason });
+
+  // Construit un événement en tolérant l'échec (ex: entityId vide -> buildEvent
+  // lève) : jamais de throw qui ferait échouer TOUT le commit (red team #4).
+  const tryBuild = (spec) => {
+    try {
+      events.push(buildEvent(spec));
+    } catch (err) {
+      reject(spec.entityType, spec.entityId, `enveloppe rejetée: ${(err && err.message) || err}`);
+    }
+  };
+
   for (const entityType of COLLECTIONS) {
+    const key = identityKey(entityType);
     const oldMap = mapByIdentity(oldState && oldState[entityType], entityType);
-    const newMap = mapByIdentity(newState && newState[entityType], entityType);
     const versionBucket = versionsRoot[entityType] || {};
 
+    // newMap validé : une entité sans identité (red team #3) ou portant une clé
+    // réservée (#5) est REJETÉE explicitement, jamais perdue en silence.
+    const newMap = new Map();
+    const rawList = Array.isArray(newState && newState[entityType]) ? newState[entityType] : [];
+    for (const item of rawList) {
+      const raw = item ? item[key] : undefined;
+      if (raw === undefined || raw === null || raw === "") {
+        reject(entityType, raw === "" ? "" : null, `identité (${key}) manquante ou vide`);
+        continue;
+      }
+      if (hasReservedKey(item)) {
+        reject(entityType, String(raw), `payload interdit : contient une clé réservée (${RESERVED_KEYS.join(", ")})`);
+        continue;
+      }
+      newMap.set(String(raw), item);
+    }
+
     for (const [id, entity] of newMap) {
+      const known = Object.prototype.hasOwnProperty.call(versionBucket, id);
       if (!oldMap.has(id)) {
-        events.push(
-          buildEvent({
-            workspaceId,
-            entityType,
-            entityId: id,
-            operation: "create",
-            actorId,
-            baseVersion: 0,
-            epoch,
-            payload: entity,
-            parentEventId: null,
-          }),
-        );
+        if (!known) {
+          // Vraie création : l'identité n'a aucun lineage antérieur.
+          tryBuild({ workspaceId, entityType, entityId: id, operation: "create", actorId, baseVersion: 0, epoch, payload: entity, parentEventId: null });
+        } else {
+          // Résurrection après suppression : l'identité possède DÉJÀ un lineage
+          // (tombstone). L'événement doit descendre du dernier eventId connu,
+          // sinon `classify` le rejette en conflit et l'entité reste supprimée à
+          // jamais (red team #1). On émet donc un update ancré sur ce lineage.
+          const { baseVersion, parentEventId } = lineageOf(versionBucket, id);
+          tryBuild({ workspaceId, entityType, entityId: id, operation: "update", actorId, baseVersion, epoch, payload: entity, parentEventId });
+        }
         continue;
       }
       const before = oldMap.get(id);
-      if (JSON.stringify(before) !== JSON.stringify(entity)) {
+      if (stableStringify(before) !== stableStringify(entity)) {
         const { baseVersion, parentEventId } = lineageOf(versionBucket, id);
-        events.push(
-          buildEvent({
-            workspaceId,
-            entityType,
-            entityId: id,
-            operation: "update",
-            actorId,
-            baseVersion,
-            epoch,
-            payload: entity,
-            parentEventId,
-          }),
-        );
+        tryBuild({ workspaceId, entityType, entityId: id, operation: "update", actorId, baseVersion, epoch, payload: entity, parentEventId });
       }
     }
 
     for (const [id] of oldMap) {
       if (newMap.has(id)) continue;
       const { baseVersion, parentEventId } = lineageOf(versionBucket, id);
-      events.push(
-        buildEvent({
-          workspaceId,
-          entityType,
-          entityId: id,
-          operation: "delete",
-          actorId,
-          baseVersion,
-          epoch,
-          payload: null,
-          parentEventId,
-        }),
-      );
+      tryBuild({ workspaceId, entityType, entityId: id, operation: "delete", actorId, baseVersion, epoch, payload: null, parentEventId });
     }
   }
 
-  return events;
+  return { events, rejected };
 }
 
 /**
@@ -220,14 +265,14 @@ export function createSoloStore({ backend } = {}) {
       const { workspaceId, actorId, epoch } = backend.identity();
       const currentSnapshot = projectionToSnapshot(projection);
 
-      const events = snapshotToEventsDiff(currentSnapshot, nextState, {
+      const { events, rejected } = snapshotToEventsDiff(currentSnapshot, nextState, {
         workspaceId,
         actorId,
         epoch,
         projection,
       });
 
-      const rejected = [];
+      const writtenIds = [];
       let count = 0;
       for (const event of events) {
         const verdict = validatePayload(event.entityType, event.operation, event.payload);
@@ -241,16 +286,25 @@ export function createSoloStore({ backend } = {}) {
           continue;
         }
         await backend.appendEvent(event);
+        writtenIds.push(event.eventId);
         count += 1;
       }
 
       // Aucun événement écrit : la projection courante reste valable telle quelle.
       const finalProjection = count > 0 ? await replayProjection() : projection;
       const revision = await backend.revision();
+
+      // Conflits CAUSÉS PAR CE COMMIT : un événement qu'on vient d'écrire mais
+      // qui n'a pas été appliqué (classé "conflict" au replay). Sans ceci, une
+      // écriture silencieusement écartée passerait pour un succès (red team #1/#2).
+      const written = new Set(writtenIds);
+      const conflicts = (finalProjection.__conflicts || []).filter((c) => written.has(c.eventId));
+
       return {
         revision,
         state: projectionToSnapshot(finalProjection),
         applied: { count, rejected },
+        conflicts,
       };
     },
   };
@@ -315,17 +369,27 @@ export function createIndexedDbEventBackend({ indexedDB, dbName } = {}) {
         db = await openDb();
       }
       if (!cachedIdentity) {
-        const existing = await run("meta", "readonly", (store) => store.get("identity"));
-        if (existing) {
-          cachedIdentity = existing;
-        } else {
-          cachedIdentity = {
-            workspaceId: globalThis.crypto.randomUUID(),
-            actorId: globalThis.crypto.randomUUID(),
-            epoch: 1,
+        // Get-or-create ATOMIQUE dans une seule transaction readwrite : deux
+        // onglets qui démarrent en même temps ne divergent pas d'identité — la
+        // 2e transaction voit ce que la 1re a écrit (red team #7).
+        cachedIdentity = await new Promise((resolve, reject) => {
+          const tx = db.transaction("meta", "readwrite");
+          const store = tx.objectStore("meta");
+          const getReq = store.get("identity");
+          getReq.onsuccess = () => {
+            if (getReq.result) { resolve(getReq.result); return; }
+            const fresh = {
+              workspaceId: globalThis.crypto.randomUUID(),
+              actorId: globalThis.crypto.randomUUID(),
+              epoch: 1,
+            };
+            store.put(fresh, "identity");
+            resolve(fresh);
           };
-          await run("meta", "readwrite", (store) => store.put(cachedIdentity, "identity"));
-        }
+          getReq.onerror = () => reject(getReq.error);
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error);
+        });
       }
     },
 
@@ -377,12 +441,25 @@ export function createFolderEventBackend({ fsPort } = {}) {
         if (await adapter.exists("workspace", "manifest")) {
           cachedIdentity = await adapter.get("workspace", "manifest");
         } else {
-          cachedIdentity = {
+          const fresh = {
             workspaceId: globalThis.crypto.randomUUID(),
             actorId: globalThis.crypto.randomUUID(),
             epoch: 1,
           };
-          await adapter.putImmutable("workspace", "manifest", cachedIdentity);
+          try {
+            await adapter.putImmutable("workspace", "manifest", fresh);
+            cachedIdentity = fresh;
+          } catch (err) {
+            // Course d'initialisation : un autre écrivain (autre onglet/appareil
+            // sur un dossier synchronisé) a créé le manifest entre le exists() et
+            // notre écriture (write-once). On relit le sien plutôt que d'échouer
+            // (red team #6).
+            if (await adapter.exists("workspace", "manifest")) {
+              cachedIdentity = await adapter.get("workspace", "manifest");
+            } else {
+              throw err;
+            }
+          }
         }
       }
     },

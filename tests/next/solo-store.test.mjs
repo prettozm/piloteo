@@ -355,3 +355,99 @@ for (const kind of BACKEND_KINDS) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// Régressions issues de la revue « red team » (durcissement)
+// ---------------------------------------------------------------------------
+
+for (const kind of BACKEND_KINDS) {
+  test(`solo-store [${kind}] : recreate après delete du MÊME id -> ré-apparaît, sans conflit (red team #1)`, async () => {
+    await withBackend(kind, async ({ makeBackend }) => {
+      const store = createSoloStore({ backend: makeBackend() });
+      await store.commit({ ...emptySnapshot(), consultants: [consultant("c-1", "Alice")] });
+      const del = await store.commit({ ...emptySnapshot(), consultants: [] });
+      assert.equal(del.state.consultants.length, 0);
+
+      const re = await store.commit({ ...emptySnapshot(), consultants: [consultant("c-1", "Alice v2")] });
+      assert.equal(re.applied.count, 1, "un événement écrit");
+      assert.equal(re.conflicts.length, 0, "aucun conflit : la résurrection s'applique");
+      assert.equal(re.state.consultants.length, 1, "l'entité recréée réapparaît");
+      assert.equal(re.state.consultants[0].nom, "Alice v2");
+
+      const reloaded = await store.load();
+      assert.equal(reloaded.state.consultants.length, 1);
+      assert.equal(reloaded.conflicts.length, 0);
+    });
+  });
+
+  test(`solo-store [${kind}] : entité sans identité -> rejetée (jamais perdue en silence) (red team #3)`, async () => {
+    await withBackend(kind, async ({ makeBackend }) => {
+      const store = createSoloStore({ backend: makeBackend() });
+      const res = await store.commit({
+        ...emptySnapshot(),
+        consultants: [consultant("c-ok", "Valide"), { nom: "Sans id" }],
+      });
+      assert.equal(res.applied.count, 1, "seule l'entité valide est écrite");
+      assert.equal(res.applied.rejected.length, 1);
+      assert.equal(res.applied.rejected[0].entityType, "consultants");
+      assert.match(res.applied.rejected[0].reason, /identité.*manquante|manquante ou vide/i);
+      assert.equal(res.state.consultants.length, 1);
+    });
+  });
+
+  test(`solo-store [${kind}] : identité vide "" -> rejetée sans throw, les valides passent (red team #4)`, async () => {
+    await withBackend(kind, async ({ makeBackend }) => {
+      const store = createSoloStore({ backend: makeBackend() });
+      // Ne doit PAS lever, malgré buildEvent qui refuse un entityId vide.
+      const res = await store.commit({
+        ...emptySnapshot(),
+        consultants: [consultant("", "Id vide"), consultant("c-ok", "Valide")],
+      });
+      assert.equal(res.applied.count, 1);
+      assert.equal(res.applied.rejected.length, 1);
+      assert.equal(res.state.consultants.length, 1);
+      assert.equal(res.state.consultants[0].id, "c-ok");
+    });
+  });
+
+  test(`solo-store [${kind}] : payload avec clé réservée __deleted -> rejeté (anti-injection) (red team #5)`, async () => {
+    await withBackend(kind, async ({ makeBackend }) => {
+      const store = createSoloStore({ backend: makeBackend() });
+      const res = await store.commit({
+        ...emptySnapshot(),
+        consultants: [{ id: "c-x", nom: "Piégé", __deleted: true }, consultant("c-ok", "Valide")],
+      });
+      assert.equal(res.applied.count, 1, "l'entité piégée n'est pas écrite");
+      assert.equal(res.applied.rejected.length, 1);
+      assert.match(res.applied.rejected[0].reason, /réservée|__deleted/i);
+      // L'entité valide, elle, est bien présente (et pas cachée par un faux tombstone).
+      assert.equal(res.state.consultants.length, 1);
+      assert.equal(res.state.consultants[0].id, "c-ok");
+    });
+  });
+
+  test(`solo-store [${kind}] : réordonnancement des clés d'objet -> aucun faux "update" (red team #8)`, async () => {
+    await withBackend(kind, async ({ makeBackend }) => {
+      const store = createSoloStore({ backend: makeBackend() });
+      await store.commit({ ...emptySnapshot(), consultants: [{ id: "c-1", nom: "Alice", tel: "01" }] });
+      // Même contenu, clés dans un ordre différent -> 0 événement.
+      const res = await store.commit({ ...emptySnapshot(), consultants: [{ tel: "01", id: "c-1", nom: "Alice" }] });
+      assert.equal(res.applied.count, 0, "aucun événement pour un simple réordonnancement de clés");
+    });
+  });
+}
+
+// Course d'initialisation du backend Dossier (red team #6) : deux backends sur
+// le MÊME dossier vierge, init() en parallèle -> pas d'exception, identité commune.
+test("solo-store [folder] : init concurrent sur dossier vierge -> identité unique, sans throw (red team #6)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piloteo-solo-store-race-"));
+  try {
+    const a = createFolderEventBackend({ fsPort: new NodeFsPort(root) });
+    const b = createFolderEventBackend({ fsPort: new NodeFsPort(root) });
+    await Promise.all([a.init(), b.init()]); // ne doit pas rejeter (retry-then-read)
+    assert.equal(a.identity().workspaceId, b.identity().workspaceId, "même workspaceId persisté");
+    assert.equal(a.identity().actorId, b.identity().actorId, "même actorId persisté");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
