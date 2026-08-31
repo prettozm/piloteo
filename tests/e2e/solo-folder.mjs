@@ -167,6 +167,42 @@ try {
 
   ok(consoleErrors.length === 0, `aucune erreur console pendant le test dossier (${consoleErrors.length})`);
   if (consoleErrors.length) consoleErrors.slice(0, 5).forEach((e) => console.log("    console:", e));
+
+  // --- Cohérence mode Dossier (correctifs revue 1b a/c) : /api/me, /api/state et
+  //     la sauvegarde doivent refléter le DOSSIER actif, pas le snapshot classique.
+  const consistency = await page.evaluate(async () => {
+    function notFound() { const e = new Error("nf"); e.name = "NotFoundError"; return e; }
+    class FFile { constructor(n){ this.kind="file"; this.name=n; this._c=""; this._m=1; }
+      async getFile(){ const c=this._c; return { size:new TextEncoder().encode(c).length, lastModified:this._m, text:async()=>c }; }
+      async createWritable(){ const s=this; let b=""; return { async write(x){ b+=x; }, async close(){ s._c=b; s._m++; } }; } }
+    class FDir { constructor(n="root"){ this.kind="directory"; this.name=n; this._ch=new Map(); }
+      async getDirectoryHandle(n,{create}={}){ let h=this._ch.get(n); if(h){ if(h.kind!=="directory") throw notFound(); return h; } if(!create) throw notFound(); h=new FDir(n); this._ch.set(n,h); return h; }
+      async getFileHandle(n,{create}={}){ let h=this._ch.get(n); if(h){ if(h.kind!=="file") throw notFound(); return h; } if(!create) throw notFound(); h=new FFile(n); this._ch.set(n,h); return h; }
+      async *values(){ for(const h of this._ch.values()) yield h; }
+      async queryPermission(){ return "granted"; } async requestPermission(){ return "granted"; } }
+
+    // Dossier peuplé d'un consultant DISTINCT du snapshot classique de l'appareil.
+    const engine = window.PiloteoNext.__engineFromHandle(new FDir("PiloteoReconnect"));
+    const folderState = {
+      consultants: [{ id: "FOLDER-C", nom: "Depuis Dossier", trigramme: "FDR", statut: "en poste",
+        dateEmbauche: "2026-01-01", dateDepart: null, tjmBase: 0, admin: true, tempsPartiel: [] }],
+      organisations: [], affaires: [], methodes: [], typesTerritoire: [], domainesIntervention: [],
+      categoriesFrais: [], missions: [], factures: [], saisies: [], bordereauxFrais: [], notesFrais: [],
+    };
+    await engine.commit(folderState);
+    window.PiloteoLocal._useEngineForTest(engine); // active le dossier sans sélecteur natif
+
+    const me = await (await fetch("/api/me")).json();
+    const st = await (await fetch("/api/state")).json();
+    return {
+      modeFolder: window.PiloteoLocal._storageMode() === "folder",
+      meConsultant: me.user && me.user.consultant_id,
+      stateFirstConsultant: st.state && st.state.consultants[0] && st.state.consultants[0].id,
+    };
+  });
+  ok(consistency.modeFolder, "mode Dossier actif (hook de test)");
+  ok(consistency.meConsultant === "FOLDER-C", `/api/me reflète le dossier (consultant_id=${consistency.meConsultant}) — correctif (a)`);
+  ok(consistency.stateFirstConsultant === "FOLDER-C", "/api/state reflète le dossier");
 } catch (e) {
   failures.push("exception: " + (e && e.message || e));
   console.error(e);

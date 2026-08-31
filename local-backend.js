@@ -183,6 +183,24 @@
     return activeEngine ? activeEngine.load() : getRecord();
   }
 
+  // Écriture d'état UNIFIÉE : route vers le dossier actif (commit event-first) ou
+  // vers IndexedDB (chemin classique). Utilisée par TOUT ce qui persiste l'état
+  // hors `/api/state` — édition d'identité, import de sauvegarde — pour que ces
+  // opérations agissent sur le stockage RÉELLEMENT actif (correctifs revue 1b :
+  // en mode Dossier, l'identité/l'import doivent viser le dossier, pas un snapshot
+  // IndexedDB figé). En mode par défaut, comportement identique à l'ancien `_putState`.
+  function putStateUnified(state) {
+    return withFolderReady(function () {
+      if (activeEngine) {
+        return activeEngine.commit(state).then(function (r) { return { revision: r.revision, state: r.state }; });
+      }
+      return getRecord().then(function (rec) {
+        var next = { revision: (rec.revision || 0) + 1, state: state };
+        return idbPut(STATE_KEY, next).then(function () { return next; });
+      });
+    });
+  }
+
   // Active le mode Dossier : ouvre le sélecteur natif, puis :
   //  - dossier VIDE (aucun event) -> y recopie l'état courant de l'appareil (un
   //    commit) pour la continuité (mini-migration ; le point 5 la raffinera) ;
@@ -309,7 +327,14 @@
     method = (method || "GET").toUpperCase();
 
     if (path === "/api/me" || (path === "/api/login" && method === "POST")) {
-      return getRecord().then(function (rec) { return json(200, { user: soloUser(rec.state) }); });
+      // Correctif revue 1b (a) : en mode Dossier, l'identité (consultant_id) doit
+      // provenir du DOSSIER actif, sinon app.js peut refuser le démarrage
+      // (« Compte non rattaché ») en reprenant un dossier peuplé sur un autre
+      // appareil. `withFolderReady` garantit la reprise avant lecture ; en mode
+      // par défaut, `stateRecord()` vaut `getRecord()` — inchangé.
+      return withFolderReady(function () {
+        return stateRecord().then(function (rec) { return json(200, { user: soloUser(rec.state) }); });
+      });
     }
     if (path === "/api/logout" && method === "POST") {
       return Promise.resolve(json(200, { ok: true }));
@@ -430,7 +455,9 @@
   }
 
   function exportBackup() {
-    return getRecord().then(function (rec) {
+    // Correctif revue 1b (c) : exporter le stockage ACTIF (dossier si actif),
+    // pas un snapshot IndexedDB figé — sinon la sauvegarde serait obsolète/fausse.
+    return stateRecord().then(function (rec) {
       var backup = {
         format: BACKUP_FORMAT,
         exportedAt: new Date().toISOString(),
@@ -452,7 +479,7 @@
     }
     var state = {};
     COLLECTIONS.forEach(function (k) { state[k] = Array.isArray(data.state[k]) ? data.state[k] : []; });
-    return window.PiloteoLocal._putState(state);
+    return putStateUnified(state); // vise le stockage actif (dossier si actif)
   }
 
   // --- Identité de l'administrateur solo (fiche consultant admin de l'état) ---
@@ -462,21 +489,24 @@
     return i;
   }
   function getIdentity() {
-    return getRecord().then(function (rec) {
+    // Correctif revue 1b (b) : lire l'identité depuis le stockage ACTIF.
+    return stateRecord().then(function (rec) {
       var cs = (rec.state && rec.state.consultants) || [];
       var i = adminConsultantIndex(cs);
       return i >= 0 ? cs[i] : null;
     });
   }
   function saveIdentity(nom, trigramme) {
-    return getRecord().then(function (rec) {
+    // Correctif revue 1b (b) : éditer l'identité DANS le stockage actif (dossier
+    // si actif), pas un snapshot IndexedDB invisible de l'app.
+    return stateRecord().then(function (rec) {
       var state = rec.state; var cs = (state.consultants || []).slice();
       var i = adminConsultantIndex(cs);
       if (i < 0) return null;
       var tri = String(trigramme || cs[i].trigramme || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
       cs[i] = Object.assign({}, cs[i], { nom: (nom || cs[i].nom || "Moi"), trigramme: tri || cs[i].trigramme });
       state.consultants = cs;
-      return window.PiloteoLocal._putState(state);
+      return putStateUnified(state);
     });
   }
 
@@ -709,10 +739,8 @@
     _installed: false,
     // Utilitaires exposés pour l'export/import de sauvegarde (Phase 2C).
     _getRecord: getRecord,
-    _putState: function (state) { return getRecord().then(function (rec) {
-      var next = { revision: (rec.revision || 0) + 1, state: state };
-      return idbPut(STATE_KEY, next).then(function () { return next; });
-    }); },
+    // Route vers le stockage ACTIF (dossier si actif), cf. correctifs revue 1b.
+    _putState: putStateUnified,
     _stateKey: STATE_KEY,
     _collections: COLLECTIONS,
     // Point 1b : introspection/actions du mode Dossier, exposées pour les tests
@@ -722,6 +750,13 @@
     _activateFolder: activateFolder,
     _deactivateFolder: deactivateFolder,
     _retryFolderPermission: retryFolderPermission,
+    // Hook de TEST : pose un engine (ex: construit via PiloteoNext.__engineFromHandle
+    // sur un faux dossier) comme moteur actif, SANS passer par le sélecteur natif
+    // (non automatisable). Permet aux e2e de prouver que /api/me, la sauvegarde et
+    // l'identité visent bien le dossier actif (correctifs revue 1b a/b/c).
+    _useEngineForTest: function (engine) {
+      activeEngine = engine; storageMode = "folder"; _folderReady = Promise.resolve();
+    },
     _getJournal: function () { return idbGet(JOURNAL_KEY).then(function (j) { return Array.isArray(j) ? j : []; }); },
     // Invariant Phase 3 : l'état reconstruit en rejouant le journal doit être
     // identique (ensembliste) au snapshot courant.
