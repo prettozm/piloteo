@@ -88,7 +88,10 @@ function hasReservedKey(payload) {
 function stableStringify(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
-  const keys = Object.keys(value).sort();
+  // Clés à valeur `undefined` omises (comme `canonicalValue` d'event-schema, qui
+  // les ignore avant persistance) : sinon un `{a:undefined}` transitoire de l'UI
+  // paraîtrait différer de l'entité rejouée (qui n'a pas la clé) -> event superflu.
+  const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
   return "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",") + "}";
 }
 
