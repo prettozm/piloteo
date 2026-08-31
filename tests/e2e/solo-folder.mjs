@@ -203,6 +203,27 @@ try {
   ok(consistency.modeFolder, "mode Dossier actif (hook de test)");
   ok(consistency.meConsultant === "FOLDER-C", `/api/me reflète le dossier (consultant_id=${consistency.meConsultant}) — correctif (a)`);
   ok(consistency.stateFirstConsultant === "FOLDER-C", "/api/state reflète le dossier");
+
+  // --- Conflit dossier (correctif revue 1b #1/#7) : un commit avec conflits doit
+  //     sortir en HTTP 409 (pas 200 silencieux), avec des libellés en CHAÎNES.
+  const conflict = await page.evaluate(async () => {
+    const state1 = { consultants: [{ id: "MOI", nom: "X", admin: true }], organisations: [], affaires: [],
+      methodes: [], typesTerritoire: [], domainesIntervention: [], categoriesFrais: [], missions: [],
+      factures: [], saisies: [], bordereauxFrais: [], notesFrais: [] };
+    // Engine STUB : son commit signale un conflit (comme le ferait un dossier
+    // synchronisé modifié ailleurs), pour tester le mapping 409 du câblage.
+    window.PiloteoLocal._useEngineForTest({
+      folderName: "StubConflit",
+      load: async () => ({ revision: 1, state: state1 }),
+      commit: async () => ({ ok: true, revision: 2, state: state1, changes: {},
+        conflicts: [{ eventId: "e1", entityType: "consultants", entityId: "MOI", baseVersion: 1 }] }),
+    });
+    const res = await fetch("/api/state", { method: "PUT", body: JSON.stringify({ base_revision: 1, state: state1 }) });
+    const data = await res.json();
+    return { status: res.status, conflicts: data.conflicts, allStrings: Array.isArray(data.conflicts) && data.conflicts.every((c) => typeof c === "string") };
+  });
+  ok(conflict.status === 409, `commit avec conflit -> HTTP 409 (reçu ${conflict.status}) — correctif #1`);
+  ok(conflict.allStrings, `conflicts en chaînes lisibles (${JSON.stringify(conflict.conflicts)}) — correctif #7`);
 } catch (e) {
   failures.push("exception: " + (e && e.message || e));
   console.error(e);

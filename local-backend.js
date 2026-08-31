@@ -150,7 +150,13 @@
     if (_folderReady) return _folderReady;
     _folderReady = waitForPiloteoNext(4000).then(function (PN) {
       if (!PN) {
-        console.warn("[Pilotéo solo] mode Dossier mémorisé mais le pont de stockage n'a pas chargé ; cet appareil reste utilisé.");
+        // Correctif revue 1b (#5/#6) : le pont ne s'est pas chargé (hors ligne,
+        // cache incomplet…) alors que le mode Dossier était mémorisé -> on retombe
+        // sur cet appareil, mais avec un AVERTISSEMENT VISIBLE (pas un simple
+        // console.warn), car l'utilisateur verrait sinon les données de l'appareil
+        // en croyant travailler dans son dossier.
+        showFolderBanner("Mode Dossier indisponible (hors ligne ou chargement incomplet). " +
+          "Les données affichées sont celles de cet appareil, pas de votre dossier. Rechargez une fois en ligne.");
         return;
       }
       return PN.resumeFolder().then(function (result) {
@@ -160,14 +166,54 @@
           console.info("[Pilotéo] mode Dossier repris" + (result.engine.folderName ? " (" + result.engine.folderName + ")" : "") + ".");
         } else if (result && result.needsPermission) {
           folderNeedsPermission = true;
-          console.warn("[Pilotéo solo] dossier mémorisé : autorisation à renouveler (Réglages > Stockage & synchronisation).");
+          showFolderBanner("Votre dossier nécessite de renouveler l'autorisation d'accès.",
+            "Redonner l'accès", function () {
+              retryFolderPermission().then(function () { location.reload(); })
+                .catch(function (e) { alert("Accès au dossier refusé : " + ((e && e.message) || e)); });
+            });
         }
         // `result === null` : jamais activé malgré le drapeau (improbable) — on reste sur cet appareil.
       }).catch(function (e) {
-        console.warn("[Pilotéo solo] reprise du dossier impossible : " + ((e && e.message) || e));
+        showFolderBanner("Reprise du dossier impossible : " + ((e && e.message) || e) +
+          " Les données affichées sont celles de cet appareil.");
       });
     });
     return _folderReady;
+  }
+
+  // Bannière VISIBLE (haut de page) pour les incidents du mode Dossier (au boot :
+  // pont non chargé, permission à renouveler…). Contrairement à un console.warn,
+  // l'utilisateur la voit. Optionnellement un bouton d'action. Idempotente.
+  function showFolderBanner(message, actionLabel, actionFn) {
+    function build() {
+      var existing = document.getElementById("piloteo-folder-banner");
+      if (existing) existing.remove();
+      var bar = document.createElement("div");
+      bar.id = "piloteo-folder-banner";
+      bar.setAttribute("role", "alert");
+      bar.setAttribute("style", "position:fixed;left:0;right:0;top:0;z-index:2147483003;" +
+        "background:#8a6d1f;color:#fff;font:500 13px/1.4 system-ui,-apple-system,sans-serif;" +
+        "padding:10px 14px;display:flex;gap:12px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.25);");
+      var txt = document.createElement("span");
+      txt.style.flex = "1"; txt.textContent = message;
+      bar.appendChild(txt);
+      if (actionLabel && typeof actionFn === "function") {
+        var act = document.createElement("button");
+        act.type = "button"; act.textContent = actionLabel;
+        act.setAttribute("style", "background:#fff;color:#14212b;border:none;border-radius:6px;" +
+          "padding:6px 12px;font-weight:600;cursor:pointer;");
+        act.addEventListener("click", actionFn);
+        bar.appendChild(act);
+      }
+      var close = document.createElement("button");
+      close.type = "button"; close.textContent = "✕"; close.setAttribute("aria-label", "Fermer");
+      close.setAttribute("style", "background:none;border:none;color:#fff;font-size:16px;cursor:pointer;");
+      close.addEventListener("click", function () { bar.remove(); });
+      bar.appendChild(close);
+      document.body.appendChild(bar);
+    }
+    if (document.body) build();
+    else document.addEventListener("DOMContentLoaded", build, { once: true });
   }
 
   // Exécute `fn` (qui produit la réponse `/api/state`) après une éventuelle
@@ -212,8 +258,22 @@
     return window.PiloteoNext.activateFolderFromPicker().then(function (engine) {
       return engine.load().then(function (loaded) {
         var isEmpty = COLLECTIONS.every(function (c) { return !((loaded.state && loaded.state[c]) || []).length; });
-        if (!isEmpty) return null; // dossier déjà peuplé : rien à recopier, on le charge tel quel
-        return getRecord().then(function (rec) { return engine.commit(rec.state); });
+        if (!isEmpty) {
+          // Correctif revue 1b (#2) : dossier déjà peuplé -> on l'affiche TEL QUEL,
+          // sans fusion. Avertir explicitement que les données de cet appareil ne
+          // seront pas affichées ni fusionnées (elles restent sauvegardées en local).
+          var msg = "Ce dossier contient déjà des données Pilotéo.\n\n" +
+            "En l'activant, ce sont CES données qui s'affichent. Les données de cet " +
+            "appareil restent sauvegardées localement mais ne seront ni affichées ni " +
+            "fusionnées.\n\nActiver ce dossier ?";
+          if (typeof window.confirm === "function" && !window.confirm(msg)) {
+            throw new Error("Activation annulée.");
+          }
+          return null; // charger le dossier tel quel
+        }
+        // Correctif revue 1b (#3/#4) : recopier le stockage ACTIF (stateRecord) en
+        // garantissant >=1 consultant (ensureUsable) pour qu'app.js démarre.
+        return stateRecord().then(function (rec) { return engine.commit(ensureUsable(rec.state)); });
       }).then(function () {
         activeEngine = engine;
         folderNeedsPermission = false;
@@ -355,9 +415,25 @@
       return withFolderReady(function () {
         if (activeEngine) {
           // Mode Dossier : le store event-first (piloteo-solo-bridge.mjs) rend
-          // déjà la forme exacte attendue par app.js ({ok,revision,state,changes,conflicts?}).
-          return activeEngine.commit(state).then(function (result) { return json(200, result); })
-            .catch(function (e) { return json(500, { error: "Écriture dans le dossier impossible : " + ((e && e.message) || e) }); });
+          // déjà la forme attendue par app.js ({ok,revision,state,changes,conflicts?}).
+          return activeEngine.commit(state).then(function (result) {
+            // Correctif revue 1b (#1/#7) : un conflit RÉEL (dossier synchronisé
+            // modifié ailleurs) ne doit PAS passer pour un succès à 200 — sinon
+            // app.js recharge l'état gagnant sans le dire et la modification locale
+            // est perdue en silence. On renvoie 409 avec l'état gagnant rechargé et
+            // des libellés de conflit LISIBLES (chaînes, car app.js fait join(", ")),
+            // ce qui déclenche la bannière « Une donnée a aussi été modifiée ailleurs ».
+            if (result.conflicts && result.conflicts.length) {
+              return json(409, {
+                revision: result.revision,
+                state: result.state,
+                conflicts: result.conflicts.map(function (c) {
+                  return (c.entityType || "élément") + (c.entityId ? " " + c.entityId : "");
+                }),
+              });
+            }
+            return json(200, result);
+          }).catch(function (e) { return json(500, { error: "Écriture dans le dossier impossible : " + ((e && e.message) || e) }); });
         }
         // Chemin KV classique ACTUEL, inchangé (mode par défaut, ou dossier indisponible).
         return getRecord().then(function (rec) {
@@ -479,6 +555,9 @@
     }
     var state = {};
     COLLECTIONS.forEach(function (k) { state[k] = Array.isArray(data.state[k]) ? data.state[k] : []; });
+    // Correctif revue 1b (#4) : garantir >=1 consultant, sinon app.js refuse de
+    // démarrer (« Compte non rattaché ») et affiche un écran de connexion trompeur.
+    state = ensureUsable(state);
     return putStateUnified(state); // vise le stockage actif (dossier si actif)
   }
 
