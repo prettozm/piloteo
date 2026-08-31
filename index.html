@@ -1970,5 +1970,9 @@
 </div>
 
 <script src="piloteo-events.js"></script>
+<!-- Pont mode Dossier (point 1b) : module ES, différé de fait (comme `defer`).
+     local-backend.js ne suppose jamais sa présence au chargement, il le teste
+     à l'usage — voir piloteo-solo-bridge.mjs. -->
+<script type="module" src="piloteo-solo-bridge.mjs"></script>
 <script src="local-backend.js"></script>
 <script src="app.js"></script>

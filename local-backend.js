@@ -112,6 +112,132 @@
     if (!s.consultants.length) s.consultants = [defaultConsultant()];
     return s;
   }
+  // --- Point 1b (docs/next/CONVERGENCE_CONTRACT.md §6bis) : indirection ----
+  // ADDITIF, réversible : tant que `activeEngine` n'est pas posé, `/api/state`
+  // suit EXACTEMENT le chemin KV ci-dessus (getRecord/idbPut) — inchangé bit à
+  // bit. `activeEngine` (posé par `activateFolder()` ci-dessous, ou repris au
+  // boot) bascule `/api/state` sur le store event-first du dossier choisi
+  // (`window.PiloteoNext`, voir piloteo-solo-bridge.mjs) : un « engine »
+  // `{load, commit}` qui rend directement la forme attendue par `handle()`.
+  var STORAGE_MODE_KEY = "piloteo_storage_mode"; // localStorage : "folder" | absent (= cet appareil)
+  var activeEngine = null;           // engine {load,commit} du dossier actif, ou null (mode classique)
+  var folderNeedsPermission = false; // dossier mémorisé mais permission à ré-accorder (geste utilisateur requis)
+  var storageMode = null;
+  try { storageMode = localStorage.getItem(STORAGE_MODE_KEY); } catch (e) { storageMode = null; }
+
+  // Attend `window.PiloteoNext` (posé par le module `piloteo-solo-bridge.mjs`,
+  // chargé en `<script type="module">` donc différé de fait) jusqu'à
+  // `timeoutMs` ; résout à `null` passé ce délai — garde-fou du contrat : le
+  // module absent/pas encore chargé rend simplement le mode Dossier indisponible.
+  function waitForPiloteoNext(timeoutMs) {
+    return new Promise(function (resolve) {
+      var waited = 0, step = 50;
+      (function poll() {
+        if (window.PiloteoNext) { resolve(window.PiloteoNext); return; }
+        waited += step;
+        if (waited >= timeoutMs) { resolve(null); return; }
+        setTimeout(poll, step);
+      })();
+    });
+  }
+
+  // Reprise au boot (mémoïsée : un seul essai par chargement de page). Si le
+  // mode mémorisé est "folder", tente `resumeFolder()` et pose `activeEngine`,
+  // ou consigne le besoin de re-permission. N'est appelée que par
+  // `withFolderReady` ci-dessous, jamais pour le mode par défaut.
+  var _folderReady = null;
+  function ensureFolderReady() {
+    if (_folderReady) return _folderReady;
+    _folderReady = waitForPiloteoNext(4000).then(function (PN) {
+      if (!PN) {
+        console.warn("[Pilotéo solo] mode Dossier mémorisé mais le pont de stockage n'a pas chargé ; cet appareil reste utilisé.");
+        return;
+      }
+      return PN.resumeFolder().then(function (result) {
+        if (result && result.engine) {
+          activeEngine = result.engine;
+          folderNeedsPermission = false;
+          console.info("[Pilotéo] mode Dossier repris" + (result.engine.folderName ? " (" + result.engine.folderName + ")" : "") + ".");
+        } else if (result && result.needsPermission) {
+          folderNeedsPermission = true;
+          console.warn("[Pilotéo solo] dossier mémorisé : autorisation à renouveler (Réglages > Stockage & synchronisation).");
+        }
+        // `result === null` : jamais activé malgré le drapeau (improbable) — on reste sur cet appareil.
+      }).catch(function (e) {
+        console.warn("[Pilotéo solo] reprise du dossier impossible : " + ((e && e.message) || e));
+      });
+    });
+    return _folderReady;
+  }
+
+  // Exécute `fn` (qui produit la réponse `/api/state`) après une éventuelle
+  // reprise du dossier. Mode par défaut (`storageMode !== "folder"`) : appelle
+  // `fn()` immédiatement, sans détour — comportement STRICTEMENT inchangé.
+  function withFolderReady(fn) {
+    if (storageMode !== "folder") return fn();
+    return ensureFolderReady().then(fn);
+  }
+
+  // `{revision, state}` courant, depuis le dossier actif si posé, sinon IndexedDB.
+  function stateRecord() {
+    return activeEngine ? activeEngine.load() : getRecord();
+  }
+
+  // Active le mode Dossier : ouvre le sélecteur natif, puis :
+  //  - dossier VIDE (aucun event) -> y recopie l'état courant de l'appareil (un
+  //    commit) pour la continuité (mini-migration ; le point 5 la raffinera) ;
+  //  - dossier déjà peuplé -> on charge simplement ce qu'il contient, sans y
+  //    toucher.
+  function activateFolder() {
+    if (!window.PiloteoNext) return Promise.reject(new Error("Le pont de stockage dossier n'a pas chargé (rechargez la page)."));
+    if (!window.PiloteoNext.hasFileSystemAccess) return Promise.reject(new Error("Navigateur non compatible (Chrome/Edge/Opera sur ordinateur requis)."));
+    return window.PiloteoNext.activateFolderFromPicker().then(function (engine) {
+      return engine.load().then(function (loaded) {
+        var isEmpty = COLLECTIONS.every(function (c) { return !((loaded.state && loaded.state[c]) || []).length; });
+        if (!isEmpty) return null; // dossier déjà peuplé : rien à recopier, on le charge tel quel
+        return getRecord().then(function (rec) { return engine.commit(rec.state); });
+      }).then(function () {
+        activeEngine = engine;
+        folderNeedsPermission = false;
+        storageMode = "folder";
+        try { localStorage.setItem(STORAGE_MODE_KEY, "folder"); } catch (e) {}
+        _folderReady = Promise.resolve(); // reprise déjà faite : court-circuite un ensureFolderReady() ultérieur
+        return { folderName: engine.folderName };
+      });
+    });
+  }
+
+  // Revient au stockage « cet appareil » : l'engine dossier est abandonné (les
+  // données DU DOSSIER restent intactes, non supprimées) ; `/api/state` repasse
+  // sur IndexedDB (son dernier snapshot, celui d'avant activation ou d'une
+  // précédente utilisation classique).
+  function deactivateFolder() {
+    activeEngine = null;
+    folderNeedsPermission = false;
+    storageMode = null;
+    try { localStorage.removeItem(STORAGE_MODE_KEY); } catch (e) {}
+    _folderReady = Promise.resolve();
+  }
+
+  // Re-demande la permission sur le dossier mémorisé. À appeler depuis un VRAI
+  // geste utilisateur (clic) : la File System Access API refuse `requestPermission`
+  // hors interaction, ce que le boot silencieux ne peut pas fournir.
+  function retryFolderPermission() {
+    if (!window.PiloteoNext) return Promise.reject(new Error("Le pont de stockage dossier n'a pas chargé (rechargez la page)."));
+    return window.PiloteoNext.resumeFolder().then(function (result) {
+      if (result && result.engine) {
+        activeEngine = result.engine;
+        folderNeedsPermission = false;
+        storageMode = "folder";
+        try { localStorage.setItem(STORAGE_MODE_KEY, "folder"); } catch (e) {}
+        _folderReady = Promise.resolve();
+        return { folderName: result.engine.folderName };
+      }
+      if (result && result.needsPermission) { folderNeedsPermission = true; throw new Error("Autorisation refusée pour ce dossier."); }
+      throw new Error("Aucun dossier mémorisé.");
+    });
+  }
+
   var _origFetch = window.fetch ? window.fetch.bind(window) : null;
 
   function loadSeed() {
@@ -189,22 +315,36 @@
       return Promise.resolve(json(200, { ok: true }));
     }
     if (path === "/api/state" && method === "GET") {
-      return getRecord().then(function (rec) { return json(200, { revision: rec.revision, state: rec.state }); });
+      // Point 1b : mode par défaut (storageMode !== "folder") -> `withFolderReady`
+      // appelle `fn()` immédiatement et `activeEngine` est toujours null ici, donc
+      // `stateRecord()` vaut `getRecord()` : chemin STRICTEMENT identique à avant.
+      return withFolderReady(function () {
+        return stateRecord().then(function (rec) { return json(200, { revision: rec.revision, state: rec.state }); });
+      });
     }
     if (path === "/api/state" && method === "PUT") {
       var incoming;
       try { incoming = JSON.parse(body || "{}"); } catch (e) { return Promise.resolve(json(400, { error: "JSON invalide" })); }
       var state = incoming && incoming.state;
       if (!state || typeof state !== "object") return Promise.resolve(json(400, { error: "état manquant" }));
-      return getRecord().then(function (rec) {
-        var nextRevision = (rec.revision || 0) + 1;
-        var prevState = rec.state;
-        // Journal Phase 3 (additif) puis snapshot (source rendue à l'app : ordre
-        // intact, aucun réordonnancement côté UI).
-        return appendJournal(prevState, state).then(function () {
-          return idbPut(STATE_KEY, { revision: nextRevision, state: state }).then(function () {
-            // Un seul client en solo : jamais de conflit, jamais de filtrage.
-            return json(200, { ok: true, revision: nextRevision, state: state, changes: {} });
+      return withFolderReady(function () {
+        if (activeEngine) {
+          // Mode Dossier : le store event-first (piloteo-solo-bridge.mjs) rend
+          // déjà la forme exacte attendue par app.js ({ok,revision,state,changes,conflicts?}).
+          return activeEngine.commit(state).then(function (result) { return json(200, result); })
+            .catch(function (e) { return json(500, { error: "Écriture dans le dossier impossible : " + ((e && e.message) || e) }); });
+        }
+        // Chemin KV classique ACTUEL, inchangé (mode par défaut, ou dossier indisponible).
+        return getRecord().then(function (rec) {
+          var nextRevision = (rec.revision || 0) + 1;
+          var prevState = rec.state;
+          // Journal Phase 3 (additif) puis snapshot (source rendue à l'app : ordre
+          // intact, aucun réordonnancement côté UI).
+          return appendJournal(prevState, state).then(function () {
+            return idbPut(STATE_KEY, { revision: nextRevision, state: state }).then(function () {
+              // Un seul client en solo : jamais de conflit, jamais de filtrage.
+              return json(200, { ok: true, revision: nextRevision, state: state, changes: {} });
+            });
           });
         });
       });
@@ -442,16 +582,64 @@
 
       // Section 3 — Stockage & synchronisation
       body.appendChild(sectionTitle("Stockage & synchronisation"));
-      var hasFsa = (typeof window.showDirectoryPicker === "function");
-      var modes = [
-        ["Cet appareil (navigateur)", "Actif", "#137a3f", "Vos données sont enregistrées dans ce navigateur (IndexedDB), hors ligne."],
-        ["Un dossier (OneDrive, SharePoint, Drive…)", hasFsa ? "Bientôt" : "Navigateur non compatible", hasFsa ? "#8a6d1f" : "#8a3b2f",
-          hasFsa ? "Moteur prêt et testé ; le câblage en écriture vive dans l'app est la prochaine étape proposée."
-                 : "Nécessite Chrome/Edge/Opera sur ordinateur (File System Access)."],
-        ["Google Drive", "Bientôt", "#8a6d1f", "Adaptateur prêt ; activation par identifiant OAuth (GOOGLE_CLIENT_ID), après le câblage dossier."],
-        ["Serveur hébergé", "Disponible séparément", "#5b6b76", "Déploiement Docker (voir docs/deployment). Mode centralisé, hors application solo."]
-      ];
-      modes.forEach(function (m) { body.appendChild(modeRow(m[0], m[1], m[2], m[3])); });
+      var hasFsa = window.PiloteoNext ? !!window.PiloteoNext.hasFileSystemAccess : (typeof window.showDirectoryPicker === "function");
+      var folderActive = !!activeEngine;
+
+      body.appendChild(modeRow("Cet appareil (navigateur)",
+        folderActive ? "Disponible" : "Actif",
+        folderActive ? "#5b6b76" : "#137a3f",
+        "Vos données sont enregistrées dans ce navigateur (IndexedDB), hors ligne."));
+
+      // Ligne « Un dossier » : actionnable (point 1b). Choisir un dossier /
+      // dossier actif affiché / revenir à cet appareil / re-permission.
+      var folderBadge, folderColor, folderDesc;
+      if (folderActive) {
+        folderBadge = "Actif"; folderColor = "#137a3f";
+        folderDesc = "Vos données sont enregistrées dans le dossier" +
+          (activeEngine.folderName ? " « " + activeEngine.folderName + " »" : " choisi") +
+          " — accessible depuis vos autres appareils s'il est synchronisé (OneDrive, SharePoint, Drive…).";
+      } else if (folderNeedsPermission) {
+        folderBadge = "Accès à renouveler"; folderColor = "#8a6d1f";
+        folderDesc = "Un dossier a été choisi précédemment ; ré-autorisez-le pour reprendre où vous en étiez.";
+      } else if (hasFsa) {
+        folderBadge = "Disponible"; folderColor = "#8a6d1f";
+        folderDesc = "Enregistre vos données dans un dossier de votre choix (local, OneDrive, SharePoint, Drive Desktop…) au lieu de ce navigateur.";
+      } else {
+        folderBadge = "Navigateur non compatible"; folderColor = "#8a3b2f";
+        folderDesc = "Nécessite Chrome/Edge/Opera sur ordinateur (File System Access).";
+      }
+      var folderRow = modeRow("Un dossier (OneDrive, SharePoint, Drive…)", folderBadge, folderColor, folderDesc);
+      var folderMsg = el("div", "font-size:12.5px;color:#5b6b76;min-height:16px;margin-top:6px;");
+      var folderActions = el("div", "display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;");
+      if (folderActive) {
+        folderActions.appendChild(mkBtn("Revenir à cet appareil", function () {
+          deactivateFolder();
+          alert("Retour à cet appareil. L'application va se recharger.");
+          location.reload();
+        }));
+      } else if (folderNeedsPermission) {
+        folderActions.appendChild(mkBtn("Redonner l'accès", function () {
+          folderMsg.textContent = "Demande d'autorisation…";
+          retryFolderPermission().then(function () {
+            alert("Accès restauré. L'application va se recharger.");
+            location.reload();
+          }).catch(function (e) { folderMsg.textContent = "Échec : " + ((e && e.message) || e); });
+        }, true));
+      } else if (hasFsa) {
+        folderActions.appendChild(mkBtn("Choisir un dossier", function () {
+          folderMsg.textContent = "Sélection du dossier…";
+          activateFolder().then(function () {
+            alert("Dossier activé. L'application va se recharger.");
+            location.reload();
+          }).catch(function (e) { folderMsg.textContent = "Échec : " + ((e && e.message) || e); });
+        }, true));
+      }
+      if (folderActions.childNodes.length) folderRow.appendChild(folderActions);
+      folderRow.appendChild(folderMsg);
+      body.appendChild(folderRow);
+
+      body.appendChild(modeRow("Google Drive", "Bientôt", "#8a6d1f", "Adaptateur prêt ; activation par identifiant OAuth (GOOGLE_CLIENT_ID), après le câblage dossier."));
+      body.appendChild(modeRow("Serveur hébergé", "Disponible séparément", "#5b6b76", "Déploiement Docker (voir docs/deployment). Mode centralisé, hors application solo."));
 
       // Section 4 — Session
       body.appendChild(sectionTitle("Session"));
@@ -527,6 +715,13 @@
     }); },
     _stateKey: STATE_KEY,
     _collections: COLLECTIONS,
+    // Point 1b : introspection/actions du mode Dossier, exposées pour les tests
+    // et un usage avancé éventuel (le panneau Réglages les utilise déjà en interne).
+    _storageMode: function () { return storageMode; },
+    _hasActiveFolderEngine: function () { return !!activeEngine; },
+    _activateFolder: activateFolder,
+    _deactivateFolder: deactivateFolder,
+    _retryFolderPermission: retryFolderPermission,
     _getJournal: function () { return idbGet(JOURNAL_KEY).then(function (j) { return Array.isArray(j) ? j : []; }); },
     // Invariant Phase 3 : l'état reconstruit en rejouant le journal doit être
     // identique (ensembliste) au snapshot courant.

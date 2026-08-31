@@ -17,6 +17,8 @@ on:
       - "index.html"
       - "app.js"
       - "local-backend.js"
+      - "piloteo-solo-bridge.mjs"
+      - "src/**"
       - "sw-solo.js"
       - "seed.json"
       - "manifest.webmanifest"
@@ -42,6 +44,12 @@ jobs:
           set -eu
           mkdir -p _site/assets
           cp index.html app.js piloteo-events.js local-backend.js sw-solo.js manifest.webmanifest _site/
+          # Point 1b : le pont mode Dossier est un module ES qui importe src/*
+          # (event-log, reducer, storage...) — les deux doivent être servis en
+          # statique pour que le mode Dossier soit utilisable sur le site déployé.
+          cp piloteo-solo-bridge.mjs _site/
+          mkdir -p _site/src
+          cp -r src/. _site/src/
           # Seed PUBLIC neutre : aucune donnée personnelle sur le site déployé.
           cp deploy/seed.public.json _site/seed.json
           cp assets/logo-default.svg _site/assets/ 2>/dev/null || true
