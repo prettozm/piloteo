@@ -15,3 +15,6 @@ __pycache__/
 # Baseline de snapshot (fixture locale de refactoring, régénérable)
 tests/e2e/snapshot.baseline.json
 tests/e2e/csvexport.baseline.json
+
+# Scratch des sous-agents de revue (red team) — jamais versionné
+.redteam_repro/
