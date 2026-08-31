@@ -1,3 +1,7 @@
+> ⚠️ L'instantané `.zip` initial a été retiré : il embarquait l'ancien script de
+> génération contenant des données réelles. L'état V1 de référence reste accessible
+> via l'historique Git du dépôt source privé (`piloteo-src`).
+
 # Archives Pilotéo
 
 Ce dossier conserve des **instantanés figés** de Pilotéo, pris à un moment
