@@ -443,8 +443,18 @@ export async function createRevocation({
  * Vérifie une fiche de révocation : `crypto.verify` de `proof` avec la clé
  * publique de `revocation.issuerId` retrouvée via `registry` (DÉJÀ vérifié —
  * jamais une fiche brute), ET que l'émetteur a le rang d'autorité suffisant
- * pour révoquer le rôle ACTUEL (dans ce `registry`) du membre visé. Ne lève
- * jamais : renvoie `{ok:false, reason}`.
+ * pour révoquer le rôle (dans ce `registry`) du membre visé. Ne lève jamais :
+ * renvoie `{ok:false, reason}`.
+ *
+ * ORG_REVOCATION_CONTRACT.md §2bis : cette fonction ne vérifie PLUS
+ * `issuerMembership.status === "active"` — sur le registre CANDIDAT passé
+ * par `buildTrustedMembership` (passe 2), ce statut est figé AVANT
+ * application des révocations et lire "active" ici ne prouve rien (c'était
+ * la faille 5c : code mort qui laissait un émetteur déjà révoqué émettre de
+ * nouvelles révocations). Le contrôle "émetteur non révoqué" est désormais
+ * assuré STRUCTURELLEMENT par `buildTrustedMembership` (passe 2, via son
+ * `revokedSet` qui grandit de façon monotone et est reconsulté à CHAQUE
+ * révocation évaluée) — jamais par un champ de statut figé lu ici.
  * @param {object} revocation
  * @param {{registry:{getPublicKey:Function, getMembership:Function}}} params
  * @returns {Promise<{ok:boolean, reason?:string}>}
@@ -464,8 +474,8 @@ export async function verifyRevocation(revocation, { registry } = {}) {
     return { ok: false, reason: `émetteur inconnu de l'ensemble de confiance (${revocation.issuerId})` };
   }
   const issuerMembership = registry.getMembership(revocation.issuerId);
-  if (!issuerMembership || issuerMembership.status !== "active") {
-    return { ok: false, reason: "émetteur non actif (révoqué ou inconnu) — aucune autorité" };
+  if (!issuerMembership) {
+    return { ok: false, reason: "émetteur inconnu de l'ensemble de confiance — aucune autorité" };
   }
   const revokedMembership = registry.getMembership(revocation.revokedMemberId);
   if (!revokedMembership) {
@@ -578,19 +588,60 @@ function isCandidateShape(record) {
  * `invitationId` pas déjà utilisé (anti-rejeu). Toute fiche refusée est
  * JOURNALISÉE dans `rejected` (jamais ignorée en silence).
  *
- * ORG_REVOCATION_CONTRACT.md §2 — étendu en 3 passes pour la révocation
- * signée : (1) l'algorithme ci-dessus (INCHANGÉ) établit un ensemble de
- * confiance CANDIDAT (clés/rôles/lignée), sans tenir compte des révocations ;
- * (2) chaque fiche de `revocations` est vérifiée (`verifyRevocation`) contre
- * ce registre candidat (émetteur de confiance + rang suffisant + proof
- * valide) — une révocation invalide va dans `rejected`, jamais appliquée ;
- * (3) re-filtrage par point fixe : une fiche candidate n'est admise dans
- * l'ensemble FINAL que si, sur toute sa lignée jusqu'à la genèse, aucun
- * émetteur intermédiaire n'était révoqué AVANT d'avoir émis son maillon
- * (`invitation.createdAt < issuer.revokedAt` si révoqué). Le membre révoqué
- * lui-même reste dans `membershipStore` avec `status:"revoked"` (pour que
- * `SyncEngine` bloque ses événements) mais ne peut plus servir d'émetteur
- * valide pour un maillon postérieur à sa révocation.
+ * ORG_REVOCATION_CONTRACT.md §2bis (CORRECTIF SÉCURITÉ, remplace tout le §2
+ * horodaté) — un membre révoqué a une autorité NULLE, immédiatement : AUCUNE
+ * fiche (invitation OU révocation) dont il est l'émetteur n'est admise,
+ * quelle que soit la date qu'il déclare. `createdAt`/`revokedAt` ne sont
+ * JAMAIS comparés entre eux (un membre révoqué contrôle et signe ces deux
+ * champs — les comparer serait forgeable par la personne même que la
+ * comparaison est censée contraindre : c'était la faille 1, backdating
+ * d'invitation). Étendu en 3 passes :
+ *
+ * (1) l'algorithme ci-dessus (INCHANGÉ) établit un ensemble de confiance
+ *     CANDIDAT (clés/rôles/lignée), sans tenir compte des révocations — sert
+ *     uniquement à connaître les clés/rôles candidats pour la passe 2.
+ *
+ * (2) point fixe des révocations : `revokedSet` (memberId -> {revokedBy,
+ *     revokedAt}) croît de façon MONOTONE (jamais retiré). Une révocation
+ *     n'est appliquée QUE si, au moment où elle est tranchée : son proof est
+ *     valide, son émetteur est dans l'ensemble candidat avec un rang
+ *     suffisant (`verifyRevocation`, qui ne consulte plus aucun statut figé
+ *     — faille 5c), ET son émetteur n'est PAS (encore) dans `revokedSet` à
+ *     cet instant. Pour ne jamais dépendre de l'ordre d'arrivée du tableau
+ *     `revocations` (une révocation légitime émise par quelqu'un lui-même
+ *     révoqué par ailleurs ne doit JAMAIS s'appliquer, même si sa propre
+ *     révocation n'est évaluée qu'ensuite dans le tableau), l'évaluation se
+ *     fait par VAGUES : à chaque vague, une révocation dont l'émetteur est
+ *     encore la cible d'une AUTRE révocation pas encore tranchée est
+ *     REPORTÉE (son sort en dépend) ; seules les révocations dont l'émetteur
+ *     est déjà stable (confirmé révoqué, ou plus visé par aucune révocation
+ *     en attente) sont tranchées. Ce mécanisme résout tout enchaînement
+ *     acyclique (A révoque B qui avait révoqué C) de façon déterministe
+ *     QUELLE QUE SOIT l'ordre d'entrée. S'il reste des révocations non
+ *     tranchées une fois le point fixe atteint (un vrai CYCLE — ex.
+ *     révocation mutuelle A<->B), elles sont tranchées par un ordre total
+ *     déterministe et reproductible (tri `[revokedMemberId, issuerId]`
+ *     croissant) : la cible dont le `memberId` est lexicographiquement le
+ *     plus PETIT est révoquée en premier (avec un `revokedSet` encore vide à
+ *     cet instant), ce qui invalide ensuite la révocation adverse (son
+ *     émetteur vient d'être ajouté à `revokedSet`) — choix arbitraire mais
+ *     STABLE, documenté ici (aucune horloge de confiance ne permet de
+ *     trancher "qui a réellement agi en premier"). Une révocation jamais
+ *     applicable (émetteur non autorisé/inconnu/lui-même révoqué, proof
+ *     invalide) va dans `rejected`.
+ *
+ * (3) ensemble de confiance FINAL : re-parcourt `candidateTrusted` depuis la
+ *     genèse (son ordre garantit que l'émetteur de chaque fiche y apparaît
+ *     AVANT elle) ; un membre n'est admis QUE si son émetteur d'invitation
+ *     est dans l'ensemble de confiance final ET n'est PAS dans `revokedSet`
+ *     — récursivement, via `chainValid` : la chaîne ENTIÈRE jusqu'à la
+ *     genèse ne doit traverser AUCUN émetteur révoqué. AUCUNE comparaison de
+ *     date. Le membre révoqué lui-même reste dans `membershipStore`/
+ *     `registry` avec `status:"revoked"` (pour que `SyncEngine` bloque ses
+ *     événements) mais n'est plus jamais un émetteur valide pour quiconque
+ *     il aurait invité (conséquence assumée par le contrat : les invités
+ *     d'un membre révoqué perdent leur ancre de confiance et doivent être
+ *     ré-invités par une autorité encore valide).
  * @param {{manifest:object, memberRecords?:Array<object>, revocations?:Array<object>}} params
  * @returns {Promise<{registry:object, membershipStore:import("./memberships.js").MembershipStore, trusted:Array<object>, revoked:Array<{memberId:string, revokedAt:string, revokedBy:string}>, rejected:Array<{record:object, reason:string}>}>}
  */
@@ -720,36 +771,112 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
   }
 
   // ===========================================================================
-  // PASSE 2 — collecte des révocations valides, vérifiées contre le registre
-  // CANDIDAT de la passe 1 (émetteur de confiance + rang suffisant + proof
-  // valide — §1/`verifyRevocation`, qui applique déjà `canRevokeRole`). Une
-  // révocation invalide (proof bidon, émetteur inconnu/non autorisé, cible
-  // inconnue) est journalisée dans `rejected`, sans aucun effet.
+  // PASSE 2 — ORG_REVOCATION_CONTRACT.md §2bis : point fixe des révocations.
+  // `revokedSet` (memberId -> {revokedBy, revokedAt}) croît de façon
+  // MONOTONE. AUCUNE comparaison de date nulle part ici (faille 1 : un
+  // membre révoqué contrôle et signe `createdAt`/`revokedAt`, comparer ces
+  // champs serait forgeable par la personne même que ça devrait contraindre).
+  //
+  // Une révocation n'est appliquée QUE si, au moment où elle est TRANCHÉE :
+  // proof valide + émetteur dans l'ensemble candidat + rang suffisant
+  // (`verifyRevocation`, qui ne lit plus aucun statut figé — faille 5c), ET
+  // émetteur PAS (encore) dans `revokedSet` à cet instant précis.
+  //
+  // Pour ne jamais dépendre de l'ordre d'arrivée du tableau `revocations`
+  // (une révocation légitime émise par quelqu'un qui sera révoqué par
+  // ailleurs ne doit JAMAIS s'appliquer, même si CETTE révocation-ci figure
+  // avant celle qui le révoque dans le tableau d'entrée), l'évaluation se
+  // fait par VAGUES : à chaque vague, une révocation dont l'émetteur est
+  // encore la cible d'une AUTRE révocation pas encore tranchée est REPORTÉE
+  // (son sort en dépend) ; seules les révocations dont l'émetteur est déjà
+  // stable (confirmé révoqué, ou plus visé par aucune révocation en attente)
+  // sont tranchées. Répété jusqu'à stabilité (plus aucune vague ne tranche
+  // quoi que ce soit) : résout tout enchaînement ACYCLIQUE de façon
+  // déterministe quel que soit l'ordre d'entrée.
+  //
+  // S'il reste des révocations non tranchées une fois le point fixe atteint
+  // — un vrai CYCLE, ex. révocation mutuelle A<->B —, elles sont tranchées
+  // dans un ordre total déterministe et REPRODUCTIBLE : tri par
+  // `[revokedMemberId, issuerId]` croissant, puis un dernier passage dans CET
+  // ordre. La cible dont le `memberId` est lexicographiquement le plus PETIT
+  // est ainsi traitée en premier (avec un `revokedSet` encore vide pour elle
+  // à cet instant) et gagne : elle est ajoutée à `revokedSet`, et son
+  // émetteur (l'autre partie du duel) s'y retrouve donc déjà quand vient le
+  // tour de la révocation adverse — qui échoue puisque son propre émetteur
+  // est désormais révoqué. Choix arbitraire mais STABLE et documenté :
+  // aucune horloge de confiance ne permet de trancher "qui a réellement agi
+  // en premier" dans ce dossier.
   // ===========================================================================
 
-  /** memberId révoqué -> {revokedAt, revokedBy} (la plus ANCIENNE révocation
-   *  valide gagne : c'est le moment réel où l'autorité de l'émetteur a cessé,
-   *  et retenir la plus tardive romprait moins de maillons qu'il ne le faut). */
-  const revokedMap = new Map();
-  for (const revocation of revocations) {
+  function revocationSortKey(r) {
+    const target = (r && r.revokedMemberId) || "";
+    const issuer = (r && r.issuerId) || "";
+    return `${target} ${issuer}`;
+  }
+  const sortedRevocations = [...revocations].sort((a, b) => {
+    const ka = revocationSortKey(a);
+    const kb = revocationSortKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  const revokedSet = new Map(); // memberId -> {revokedBy, revokedAt}
+  const decided = new Set(); // indices de sortedRevocations déjà tranchés (appliqués OU rejetés)
+
+  async function decide(revocation) {
+    if (revokedSet.has(revocation && revocation.issuerId)) {
+      rejected.push({
+        record: revocation,
+        reason: `révocation invalide : émetteur déjà révoqué (${revocation.issuerId}) — aucune autorité, quelle que soit la date déclarée`,
+      });
+      return;
+    }
     const result = await verifyRevocation(revocation, { registry: candidateRegistry });
     if (!result.ok) {
       rejected.push({ record: revocation, reason: `révocation invalide : ${result.reason}` });
-      continue;
+      return;
     }
-    const existing = revokedMap.get(revocation.revokedMemberId);
-    if (!existing || revocation.revokedAt < existing.revokedAt) {
-      revokedMap.set(revocation.revokedMemberId, { revokedAt: revocation.revokedAt, revokedBy: revocation.issuerId });
+    revokedSet.set(revocation.revokedMemberId, { revokedBy: revocation.issuerId, revokedAt: revocation.revokedAt });
+  }
+
+  // Vagues : tant qu'une vague complète tranche au moins une révocation, on
+  // recommence (les révocations reportées peuvent devenir tranchables une
+  // fois leur émetteur devenu stable).
+  let progressedRevocations = true;
+  while (progressedRevocations) {
+    progressedRevocations = false;
+    const pendingTargets = new Set(
+      sortedRevocations.filter((_, i) => !decided.has(i)).map((r) => r && r.revokedMemberId)
+    );
+    for (let i = 0; i < sortedRevocations.length; i++) {
+      if (decided.has(i)) continue;
+      const revocation = sortedRevocations[i];
+      const issuerId = revocation && revocation.issuerId;
+      if (!revokedSet.has(issuerId) && pendingTargets.has(issuerId)) {
+        // L'émetteur est lui-même visé par une révocation pas encore
+        // tranchée : son sort n'est pas encore connu, on reporte.
+        continue;
+      }
+      await decide(revocation);
+      decided.add(i);
+      progressedRevocations = true;
     }
+  }
+  // Point fixe atteint : ce qui reste est un vrai CYCLE (ex. révocation
+  // mutuelle) — tranché dans l'ordre déterministe fixé par le tri ci-dessus.
+  for (let i = 0; i < sortedRevocations.length; i++) {
+    if (decided.has(i)) continue;
+    await decide(sortedRevocations[i]);
+    decided.add(i);
   }
 
   // ===========================================================================
-  // PASSE 3 — re-filtrage (point fixe) : reconstruit l'ensemble de confiance
-  // FINAL. `candidateTrusted` est déjà dans un ordre où l'émetteur de chaque
-  // fiche apparaît AVANT elle (invariant de la BFS de la passe 1 : une fiche
-  // n'est admise qu'une fois son émetteur déjà dans `candidateRegistry`) —
-  // un seul passage linéaire suffit donc pour propager la cascade, sans
-  // nouveau point fixe explicite.
+  // PASSE 3 — ORG_REVOCATION_CONTRACT.md §2bis : ensemble de confiance FINAL.
+  // `candidateTrusted` est déjà dans un ordre où l'émetteur de chaque fiche
+  // apparaît AVANT elle (invariant de la BFS de la passe 1) — un seul
+  // passage linéaire suffit donc pour propager la cascade. Un membre n'est
+  // admis QUE si son émetteur d'invitation est dans l'ensemble de confiance
+  // final ET n'est PAS dans `revokedSet` — récursivement, via `chainValid` :
+  // AUCUNE comparaison de date nulle part.
   // ===========================================================================
 
   const registry = createTrustRegistry();
@@ -765,8 +892,11 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
   // publiée et admise (boucle ci-dessous, qui réécrit alors ces mêmes
   // valeurs sans effet). La révocation de l'owner reste possible même sans
   // fiche genèse publiée : le manifeste seul suffit à l'identifier comme
-  // cible/émetteur.
-  const ownerRevoked = revokedMap.has(manifest.ownerMemberId);
+  // cible/émetteur. La genèse elle-même n'est JAMAIS exclue de l'ensemble de
+  // confiance final par sa propre révocation (sa fiche reste légitime, seul
+  // son statut change) — seuls SES invités perdent leur ancre si elle est
+  // révoquée (`chainValid`/`revokedSet` plus bas s'appliquent à eux).
+  const ownerRevoked = revokedSet.has(manifest.ownerMemberId);
   registry._add(manifest.ownerMemberId, manifest.ownerPublicKeyJwk, "owner", ownerRevoked ? "revoked" : "active");
   chainValid.set(manifest.ownerMemberId, true);
 
@@ -783,16 +913,11 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
         // final (son propre maillon était cassé) : cascade.
         ok = false;
         breakReason = `chaîne cassée (cascade) : l'émetteur (${issuerId}) est lui-même exclu de l'ensemble de confiance final`;
-      } else {
-        const issuerRevocation = revokedMap.get(issuerId);
-        // Un émetteur non révoqué reste valide. Un émetteur révoqué reste
-        // valide pour tout maillon ÉMIS AVANT sa révocation (il avait
-        // l'autorité à ce moment) ; un maillon émis à/après `revokedAt` casse
-        // la chaîne.
-        if (issuerRevocation && !(invitation.createdAt < issuerRevocation.revokedAt)) {
-          ok = false;
-          breakReason = `chaîne cassée : invitation émise par ${issuerId} le ${invitation.createdAt}, après sa révocation (${issuerRevocation.revokedAt})`;
-        }
+      } else if (revokedSet.has(issuerId)) {
+        // §2bis : l'émetteur est révoqué -> autorité NULLE, quelle que soit
+        // la date déclarée par l'invitation. Aucune exception "avant/après".
+        ok = false;
+        breakReason = `chaîne cassée : l'émetteur (${issuerId}) est révoqué — son autorité est nulle, quelle que soit la date déclarée par l'invitation`;
       }
     }
 
@@ -807,7 +932,7 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
     // SA fiche qui reste légitime (chaîne intacte JUSQU'À lui), seul son
     // statut change — pour que `SyncEngine` bloque ses événements FUTURS
     // (docs/next/05 §9) sans jamais le faire disparaître silencieusement.
-    const status = revokedMap.has(record.memberId) ? "revoked" : record.membership.status;
+    const status = revokedSet.has(record.memberId) ? "revoked" : record.membership.status;
     registry._add(record.memberId, record.publicKeyJwk, record.membership.role, status);
     membershipStore.add({ ...record.membership, status });
   }
@@ -815,8 +940,10 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
   // `revoked` : uniquement les révocations valides dont la CIBLE fait partie
   // de l'ensemble de confiance final (sa propre chaîne, jusqu'à ELLE, est
   // intacte) — une révocation valide visant un membre dont la fiche est par
-  // ailleurs rejetée pour une autre raison n'a rien à révoquer.
-  const revoked = Array.from(revokedMap.entries())
+  // ailleurs rejetée pour une autre raison n'a rien à révoquer. `revokedAt`
+  // est conservé à titre INFORMATIF/traçabilité seulement — il n'entre plus
+  // dans AUCUNE décision.
+  const revoked = Array.from(revokedSet.entries())
     .filter(([memberId]) => chainValid.get(memberId) === true)
     .map(([memberId, info]) => ({ memberId, revokedAt: info.revokedAt, revokedBy: info.revokedBy }));
 

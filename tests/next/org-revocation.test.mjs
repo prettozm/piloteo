@@ -281,7 +281,7 @@ test("buildTrustedMembership : un admin révoqué a status:'revoked' dans le sto
   assert.equal(ownerEngine.getProjection().consultants?.cPostRevocation, undefined, "jamais appliqué");
 });
 
-test("buildTrustedMembership : invitation émise par l'émetteur AVANT sa révocation reste valide ; émise APRÈS => rejetée (chaîne cassée)", async () => {
+test("buildTrustedMembership : §2bis — TOUTE invitation d'un émetteur révoqué est invalide, quelle que soit sa date déclarée (createdAt AVANT ou APRÈS revokedAt)", async () => {
   const { org, ownerIdentity, ownerSigner, adminIdentity, adminRecord, adminSigner } = await makeOrgWithAdmin();
   const workspaceId = org.workspace.workspaceId;
 
@@ -289,7 +289,7 @@ test("buildTrustedMembership : invitation émise par l'émetteur AVANT sa révoc
   const before = new Date(t0.getTime() - 60_000);
   const after = new Date(t0.getTime() + 60_000);
 
-  // Invitation émise par l'admin AVANT sa révocation.
+  // Invitation émise par l'admin avec un `createdAt` ANTÉRIEUR à sa révocation.
   const invitationBefore = await createInvitation({
     workspaceId, role: "user", signer: adminSigner, issuerId: adminIdentity.memberId, now: before,
   });
@@ -304,7 +304,7 @@ test("buildTrustedMembership : invitation émise par l'émetteur AVANT sa révoc
     revokedRole: "admin", signer: ownerSigner, now: t0,
   });
 
-  // Invitation émise par l'admin APRÈS sa révocation.
+  // Invitation émise par l'admin avec un `createdAt` POSTÉRIEUR à sa révocation.
   const invitationAfter = await createInvitation({
     workspaceId, role: "user", signer: adminSigner, issuerId: adminIdentity.memberId, now: after,
   });
@@ -320,13 +320,177 @@ test("buildTrustedMembership : invitation émise par l'émetteur AVANT sa révoc
   });
 
   const trustedIds = trusted.map((r) => r.memberId);
-  assert.ok(trustedIds.includes(adminIdentity.memberId), "l'admin lui-même reste admis (révoqué, mais chaîne intacte)");
-  assert.ok(trustedIds.includes(beforeIdentity.memberId), "invitation émise AVANT la révocation reste valide");
-  assert.ok(!trustedIds.includes(afterIdentity.memberId), "invitation émise APRÈS la révocation est rejetée");
+  assert.ok(trustedIds.includes(adminIdentity.memberId), "l'admin lui-même reste admis (révoqué, mais SA propre chaîne est intacte)");
+  // §2bis (remplace l'ancienne sémantique horodatée) : l'autorité d'un
+  // émetteur révoqué est NULLE, quelle que soit la date qu'il déclare —
+  // AUCUNE exception "invitation émise avant la révocation".
+  assert.ok(!trustedIds.includes(beforeIdentity.memberId), "faille 1 close : une invitation 'avant' n'est PAS une exception — l'émetteur révoqué n'a aucune autorité");
+  assert.ok(!trustedIds.includes(afterIdentity.memberId), "invitation émise après la révocation est rejetée");
 
+  const beforeRejection = rejected.find((r) => r.record === beforeRecord);
   const afterRejection = rejected.find((r) => r.record === afterRecord);
+  assert.ok(beforeRejection, "la fiche 'avant révocation' est journalisée dans rejected");
   assert.ok(afterRejection, "la fiche 'après révocation' est journalisée dans rejected");
-  assert.match(afterRejection.reason, /chaîne cassée/);
+  assert.match(beforeRejection.reason, /révoqué/);
+  assert.match(afterRejection.reason, /révoqué/);
+});
+
+test("buildTrustedMembership : faille 1 close — un émetteur révoqué qui forge une invitation BACKDATÉE (createdAt antérieur à sa révocation, qu'il contrôle et signe lui-même) ne fait PAS admettre son complice", async () => {
+  const { org, ownerIdentity, ownerSigner, adminIdentity, adminRecord, adminSigner } = await makeOrgWithAdmin();
+  const workspaceId = org.workspace.workspaceId;
+
+  const revocation = await createRevocation({
+    workspaceId, revokedMemberId: adminIdentity.memberId,
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership,
+    revokedRole: "admin", signer: ownerSigner,
+  });
+
+  // L'admin, déjà révoqué, forge (avec SA PROPRE clé — il la détient toujours,
+  // rien ne l'empêche techniquement de signer) une invitation dont il choisit
+  // délibérément `now` ANTÉRIEUR à l'instant de sa révocation, pour tenter de
+  // faire passer un complice comme "invité avant révocation".
+  const backdatedNow = new Date(Date.now() - 3600_000);
+  const backdatedInvitation = await createInvitation({
+    workspaceId, role: "user", signer: adminSigner, issuerId: adminIdentity.memberId, now: backdatedNow,
+  });
+  const compliceIdentity = await newMemberIdentity();
+  const { memberRecord: compliceRecord } = await acceptInvitation({
+    invitation: backdatedInvitation, identity: compliceIdentity, consultantId: "c-complice",
+  });
+
+  const { trusted, rejected } = await buildTrustedMembership({
+    manifest: org.manifest,
+    memberRecords: [org.memberRecord, adminRecord, compliceRecord],
+    revocations: [revocation],
+  });
+
+  const trustedIds = trusted.map((r) => r.memberId);
+  assert.ok(
+    !trustedIds.includes(compliceIdentity.memberId),
+    "faille 1 close : le complice n'est PAS admis malgré le backdating de createdAt — aucune comparaison de date n'est faite"
+  );
+  const rejection = rejected.find((r) => r.record === compliceRecord);
+  assert.ok(rejection, "la fiche du complice est journalisée dans rejected");
+  assert.match(rejection.reason, /révoqué/);
+});
+
+test("buildTrustedMembership : faille 5c close — un membre révoqué qui émet une NOUVELLE révocation (timestamp honnête, postérieur à sa propre révocation) ne révoque PERSONNE", async () => {
+  const { org, ownerIdentity, ownerSigner, adminIdentity, adminMembership, adminRecord, adminSigner } =
+    await makeOrgWithAdmin();
+  const workspaceId = org.workspace.workspaceId;
+
+  // Une victime, 'user', admise normalement (invitée par l'owner, autorité
+  // jamais mise en cause).
+  const invitationUser = await inviteMember({
+    workspaceId, role: "user",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const userIdentity = await newMemberIdentity();
+  const { memberRecord: userRecord } = await acceptInvitation({
+    invitation: invitationUser, identity: userIdentity, consultantId: "c-user",
+  });
+
+  // L'owner révoque l'admin.
+  const revocationOfAdmin = await createRevocation({
+    workspaceId, revokedMemberId: adminIdentity.memberId,
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership,
+    revokedRole: "admin", signer: ownerSigner,
+  });
+
+  // L'admin, déjà révoqué, émet malgré tout une NOUVELLE fiche de révocation
+  // visant le user — avec un timestamp HONNÊTE et POSTÉRIEUR à sa propre
+  // révocation (il ne triche même pas sur la date : faille 5c porte sur le
+  // contrôle d'autorité au moment de l'ÉMISSION, pas sur une comparaison de
+  // date qui n'existe plus).
+  const revocationByRevokedAdmin = await createRevocation({
+    workspaceId, revokedMemberId: userIdentity.memberId,
+    issuer: { memberId: adminIdentity.memberId }, issuerMembership: adminMembership,
+    revokedRole: "user", signer: adminSigner, now: new Date(Date.now() + 3600_000),
+  });
+
+  const { trusted, revoked, rejected, membershipStore } = await buildTrustedMembership({
+    manifest: org.manifest,
+    memberRecords: [org.memberRecord, adminRecord, userRecord],
+    revocations: [revocationOfAdmin, revocationByRevokedAdmin],
+  });
+
+  const trustedIds = trusted.map((r) => r.memberId);
+  assert.ok(trustedIds.includes(userIdentity.memberId), "le user reste admis");
+  assert.equal(
+    membershipStore.get(workspaceId, userIdentity.memberId).status,
+    "active",
+    "faille 5c close : le user n'est PAS révoqué par l'admin déjà révoqué"
+  );
+
+  assert.equal(revoked.length, 1, "seule la révocation légitime (owner -> admin) est appliquée");
+  assert.equal(revoked[0].memberId, adminIdentity.memberId);
+  assert.equal(revoked[0].revokedBy, ownerIdentity.memberId);
+
+  const forgedRejection = rejected.find((r) => r.record === revocationByRevokedAdmin);
+  assert.ok(forgedRejection, "la révocation émise par l'admin déjà révoqué est journalisée dans rejected");
+  assert.match(forgedRejection.reason, /révoqué/);
+});
+
+test("buildTrustedMembership : révocation mutuelle (A révoque B, B révoque A) — résultat déterministe et reproductible", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const workspaceId = org.workspace.workspaceId;
+
+  // Deux pairs 'owner', tous deux invités directement par le owner de genèse
+  // (dont l'autorité n'est jamais mise en cause) — seule leur révocation
+  // MUTUELLE est en jeu ici, ce qui isole le cas du vrai cycle.
+  async function inviteOwnerPeer(consultantId) {
+    const invitation = await inviteMember({
+      workspaceId, role: "owner",
+      issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+    });
+    const identity = await newMemberIdentity();
+    const { membership, memberRecord } = await acceptInvitation({ invitation, identity, consultantId });
+    const signer = (bytes) => cryptoService.sign(identity.privateKeyRef, bytes);
+    return { identity, membership, memberRecord, signer };
+  }
+
+  const peerA = await inviteOwnerPeer("c-peer-a");
+  const peerB = await inviteOwnerPeer("c-peer-b");
+
+  const revocationAtoB = await createRevocation({
+    workspaceId, revokedMemberId: peerB.identity.memberId,
+    issuer: { memberId: peerA.identity.memberId }, issuerMembership: peerA.membership,
+    revokedRole: "owner", signer: peerA.signer,
+  });
+  const revocationBtoA = await createRevocation({
+    workspaceId, revokedMemberId: peerA.identity.memberId,
+    issuer: { memberId: peerB.identity.memberId }, issuerMembership: peerB.membership,
+    revokedRole: "owner", signer: peerB.signer,
+  });
+
+  const { trusted, revoked, rejected, membershipStore } = await buildTrustedMembership({
+    manifest: org.manifest,
+    memberRecords: [org.memberRecord, peerA.memberRecord, peerB.memberRecord],
+    revocations: [revocationAtoB, revocationBtoA],
+  });
+
+  // Les DEUX pairs restent admis dans l'ensemble de confiance (leur propre
+  // chaîne, ancrée sur le owner de genèse jamais révoqué, est intacte) —
+  // seul leur statut diverge selon qui "gagne" le duel de révocation.
+  const trustedIds = trusted.map((r) => r.memberId);
+  assert.ok(trustedIds.includes(peerA.identity.memberId));
+  assert.ok(trustedIds.includes(peerB.identity.memberId));
+
+  // Ordre de résolution DOCUMENTÉ (buildTrustedMembership, passe 2) : en
+  // l'absence d'horloge de confiance, les révocations mutuelles sont
+  // tranchées par un ordre total déterministe et reproductible — tri
+  // `[revokedMemberId, issuerId]` croissant. La cible dont le `memberId` est
+  // lexicographiquement le plus PETIT est révoquée : elle est traitée en
+  // premier (avec un `revokedSet` encore vide), ce qui rend ensuite la
+  // révocation adverse invalide (son émetteur vient d'être révoqué).
+  const [revokedId, survivorId] = [peerA.identity.memberId, peerB.identity.memberId].sort();
+  const losingRevocation = revokedId === peerA.identity.memberId ? revocationAtoB : revocationBtoA;
+
+  assert.equal(revoked.length, 1, "un seul côté du duel l'emporte");
+  assert.equal(revoked[0].memberId, revokedId);
+  assert.equal(membershipStore.get(workspaceId, revokedId).status, "revoked");
+  assert.equal(membershipStore.get(workspaceId, survivorId).status, "active");
+  assert.ok(rejected.some((r) => r.record === losingRevocation), "la révocation émise par le membre entretemps révoqué est rejetée");
 });
 
 test("buildTrustedMembership : cascade — admin A (révoqué) invite B (admin) après sa révocation, B invite C ; ni B ni C ne sont admis", async () => {
