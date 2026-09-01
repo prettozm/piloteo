@@ -1,0 +1,420 @@
+// piloteo-org-bridge.mjs — pont navigateur du mode Organisation (point 2c-C2,
+// docs/next/ORG_UI_CONTRACT.md §1), symétrique à piloteo-solo-bridge.mjs
+// (mode Dossier, point 1b) mais au-dessus du moteur multi-membre (2c-C1).
+//
+// Décisions/hypothèses :
+// - AUCUNE primitive canonique n'est réécrite : ce module importe uniquement
+//   `src/workspace/org-engine.js` (openOrgEngine), `src/workspace/org-runtime.js`
+//   (identité, création d'organisation, invitation, révocation),
+//   `src/workspace/org-folder-store.js` (écriture manifeste/fiches/révocations),
+//   `src/storage/fsaccess-port.js`/`fsaccess-handle-store.js` (port navigateur
+//   File System Access + persistance du handle) et `src/storage/
+//   folder-storage-adapter.js` (StorageAdapter au-dessus du port). Rien n'est
+//   dupliqué.
+// - `local-backend.js` est un script CLASSIQUE (pas de modules) : le seul
+//   point de contact entre les deux mondes est `window.PiloteoOrg`, posé ici.
+//   Ce module est chargé en `<script type="module">` (différé de fait) :
+//   `local-backend.js` NE DOIT PAS supposer `window.PiloteoOrg` présent à son
+//   propre chargement — il le teste à l'usage (comme pour `window.PiloteoNext`,
+//   cf. piloteo-solo-bridge.mjs).
+// - Le handle de dossier ET le drapeau de mode (`piloteo_storage_mode`) sont
+//   mémorisés dans le MÊME store que le mode Dossier
+//   (`src/storage/fsaccess-handle-store.js`, une IndexedDB à un seul handle
+//   « courant ») : les deux modes sont mutuellement exclusifs (un seul
+//   `piloteo_storage_mode` actif à la fois), donc un seul « dossier courant »
+//   à mémoriser a du sens, exactement comme le mode Dossier le fait déjà.
+// - IDENTITÉ DE MEMBRE : générée une seule fois via
+//   `org-runtime.js#newMemberIdentity()` (qui appelle
+//   `crypto-service.js#generateMemberIdentity()`) puis PERSISTÉE dans sa
+//   propre IndexedDB (`piloteo-org-identity`). `privateKeyRef` est
+//   `{keyType:'ed25519', cryptoKey}` où `cryptoKey` est un `CryptoKey` Ed25519
+//   NON EXTRACTIBLE — structured-cloneable, donc stockable tel quel (même
+//   principe que `fsaccess-handle-store.js` pour les `FileSystemDirectoryHandle`).
+//   Une même personne/appareil garde ainsi son identité entre sessions, dans
+//   CE navigateur (elle n'est jamais synchronisée : c'est la clé PUBLIQUE,
+//   publiée dans les fiches membres du dossier, qui permet aux autres membres
+//   de la reconnaître).
+// - `createOrg`/`joinOrg`/`openOrg` acceptent tous un `identity` optionnel
+//   (déviation additive au contrat, documentée ici) qui, si fourni, est
+//   utilisé À LA PLACE de l'identité persistée par défaut
+//   (`getOrCreateIdentity()`). Ceci n'a AUCUN effet sur l'usage normal (l'UI
+//   de `local-backend.js` ne le passe jamais) ; c'est un point d'injection
+//   pour les tests e2e qui doivent simuler PLUSIEURS membres (donc plusieurs
+//   identités) dans le MÊME onglet/navigateur, où il n'existe par construction
+//   qu'une seule identité "courante" persistée — cf. `__identityStore.create()`
+//   ci-dessous, qui fabrique une identité fraîche SANS la persister comme
+//   identité courante.
+// - `invite` ne publie RIEN sur le dossier (docs/next/ORG_UI_CONTRACT.md §1 :
+//   "l'invitation est un CODE transmis hors bande... pas un fichier du
+//   dossier") : le `code` retourné est le JSON de l'invitation signée, encodé
+//   en base64url (symétrique de `decodeInvitationCode` côté `joinOrg`). Le
+//   paramètre `adapter` de `invite`/`revoke` suit la forme du contrat (les
+//   deux opérations de gouvernance prennent `{engine, adapter, ...}|`) même si
+//   `invite` elle-même n'en a pas besoin (elle ne fait aucune E/S) — gardé
+//   pour la symétrie d'appel avec `revoke` (qui, elle, publie une fiche de
+//   révocation via `org-folder-store.js#writeRevocation`).
+// - `pickDirectory` (fsaccess-port.js) est RÉ-EXPORTÉ tel quel sur
+//   `window.PiloteoOrg` (déviation additive, non listée par le contrat mais
+//   nécessaire) : l'onboarding UI de `local-backend.js` doit ouvrir le
+//   sélecteur natif de dossier (geste utilisateur requis) AVANT d'appeler
+//   `createOrg`/`joinOrg` (qui prennent un `handle` déjà choisi, comme le
+//   contrat le précise : "pick déjà fait"). Il n'existe aucune autre primitive
+//   déjà committée pour cela dans ce module ; la dupliquer aurait été pire que
+//   de ré-exporter celle de `fsaccess-port.js`.
+// - `resumeOrg()` (reprise au boot, symétrique de
+//   `piloteo-solo-bridge.mjs#resumeFolder`) : mêmes trois issues —
+//   `null` (aucun dossier mémorisé), `{needsPermission:true}` (permission à
+//   ré-accorder par un geste utilisateur), `{engine, adapter, manifest,
+//   membership, folderName}` sinon. `consultantId` n'est pas requis pour
+//   rouvrir un engine sur un membership déjà publié (org-sync.js décision 1 :
+//   il ne sert qu'à la construction, pas à la vérification).
+// - `engine.folderName` (comme pour le mode Dossier) est ajouté en PLUS de la
+//   forme retournée par `openOrgEngine` (qui ne le porte pas) — champ EXTRA
+//   pour l'affichage dans Réglages, jamais lu par `org-engine.js` lui-même.
+// - `adapter` est retourné EN PLUS de `{engine, manifest}` par
+//   `createOrg`/`joinOrg`/`openOrg`/`resumeOrg` (déviation additive) :
+//   `invite`/`revoke` en ont besoin (revoke écrit sur le dossier) et il
+//   n'existe aucun autre moyen pour l'appelant (`local-backend.js`) de le
+//   récupérer sans le reconstruire lui-même depuis le handle — ce que ce
+//   module ferait de toute façon en interne, donc autant le renvoyer.
+
+import { createFsAccessPort, pickDirectory, ensureHandlePermission } from "./src/storage/fsaccess-port.js";
+import { saveDirectoryHandle, loadDirectoryHandle } from "./src/storage/fsaccess-handle-store.js";
+import { FolderStorageAdapter } from "./src/storage/folder-storage-adapter.js";
+import { openOrgEngine } from "./src/workspace/org-engine.js";
+import {
+  newMemberIdentity,
+  createOrganization,
+  inviteMember,
+  acceptInvitation,
+  createRevocation,
+} from "./src/workspace/org-runtime.js";
+import { writeManifest, writeMemberRecord, writeRevocation } from "./src/workspace/org-folder-store.js";
+import * as cryptoService from "./src/crypto/crypto-service.js";
+
+// ---------------------------------------------------------------------------
+// Identité de membre — persistée en IndexedDB (une base dédiée, séparée de
+// `fsaccess-handle-store.js` : deux objets distincts, même principe).
+// ---------------------------------------------------------------------------
+
+const IDB_NAME = "piloteo-org-identity";
+const IDB_VERSION = 1;
+const STORE = "identity";
+const CURRENT_KEY = "current";
+
+function idbFactory() {
+  const f = globalThis.indexedDB;
+  if (!f) throw new Error("piloteo-org-bridge: IndexedDB indisponible dans cet environnement.");
+  return f;
+}
+function openIdentityDb() {
+  return new Promise((resolve, reject) => {
+    const req = idbFactory().open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function idbTx(db, mode, fn) {
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(STORE, mode);
+    const store = t.objectStore(STORE);
+    let result;
+    Promise.resolve(fn(store)).then((r) => { result = r; }).catch(reject);
+    t.oncomplete = () => resolve(result);
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
+  });
+}
+function reqToPromise(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/** Restaure l'identité de membre persistée, ou `null` s'il n'y en a pas. */
+async function loadIdentity() {
+  const db = await openIdentityDb();
+  try {
+    const value = await idbTx(db, "readonly", (store) => reqToPromise(store.get(CURRENT_KEY)));
+    return value ?? null;
+  } finally {
+    db.close();
+  }
+}
+/** Enregistre l'identité de membre courante (écrase la précédente). */
+async function saveIdentity(identity) {
+  const db = await openIdentityDb();
+  try {
+    await idbTx(db, "readwrite", (store) => reqToPromise(store.put(identity, CURRENT_KEY)));
+  } finally {
+    db.close();
+  }
+}
+
+// Mémoïsé : un seul appel de création par chargement de page (comme
+// `ensureFolderReady` côté piloteo-solo-bridge.mjs) — évite deux identités
+// générées en parallèle par deux appels concurrents.
+let _identityPromise = null;
+/**
+ * Identité de membre PERSISTÉE (IndexedDB) de cet appareil/navigateur : la
+ * restaure si elle existe déjà, sinon en génère une nouvelle et la persiste.
+ * @returns {Promise<{memberId:string, publicKeyJwk:object, privateKeyRef:object}>}
+ */
+async function getOrCreateIdentity() {
+  if (!_identityPromise) {
+    _identityPromise = (async () => {
+      const existing = await loadIdentity();
+      if (existing && existing.memberId && existing.publicKeyJwk && existing.privateKeyRef) return existing;
+      const created = await newMemberIdentity();
+      await saveIdentity(created);
+      return created;
+    })();
+  }
+  return _identityPromise;
+}
+
+function makeSigner(identity) {
+  return (bytes) => cryptoService.sign(identity.privateKeyRef, bytes);
+}
+
+// ---------------------------------------------------------------------------
+// Encodage du code d'invitation (base64url d'un JSON) — hors bande, jamais un
+// fichier du dossier (voir en-tête).
+// ---------------------------------------------------------------------------
+
+function encodeBase64Url(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function decodeBase64Url(str) {
+  let b64 = String(str).replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4;
+  if (pad === 2) b64 += "==";
+  else if (pad === 3) b64 += "=";
+  else if (pad !== 0) throw new Error("code d'invitation invalide (longueur incorrecte)");
+  let bin;
+  try { bin = atob(b64); } catch { throw new Error("code d'invitation invalide (décodage échoué)"); }
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+function encodeInvitationCode(invitation) {
+  return encodeBase64Url(JSON.stringify(invitation));
+}
+function decodeInvitationCode(code) {
+  let json;
+  try { json = decodeBase64Url(code); } catch (e) { throw new Error("Code d'invitation illisible : " + e.message); }
+  try { return JSON.parse(json); } catch { throw new Error("Code d'invitation illisible (JSON invalide)."); }
+}
+
+// ---------------------------------------------------------------------------
+// Construction de l'adapter au-dessus d'un FileSystemDirectoryHandle.
+// ---------------------------------------------------------------------------
+
+function buildAdapter(handle) {
+  const fsPort = createFsAccessPort(handle);
+  return new FolderStorageAdapter({ fsPort, label: "org" });
+}
+
+const STORAGE_MODE_KEY = "piloteo_storage_mode"; // partagé avec piloteo-solo-bridge.mjs (mutuellement exclusif)
+
+async function persistOrgMode(handle) {
+  await saveDirectoryHandle(handle);
+  try { localStorage.setItem(STORAGE_MODE_KEY, "org"); } catch (e) { /* localStorage indisponible : dégradé, pas bloquant */ }
+}
+
+function withFolderName(engine, handle) {
+  engine.folderName = (handle && handle.name) || null;
+  return engine;
+}
+
+// ---------------------------------------------------------------------------
+// API publique
+// ---------------------------------------------------------------------------
+
+/**
+ * Crée une organisation sur `handle` (dossier déjà choisi par l'utilisateur) :
+ * publie le manifeste de genèse + la fiche membre du créateur (OWNER), active
+ * le mode org pour ce navigateur. Renvoie `{engine, adapter, manifest}`.
+ */
+async function createOrg({ handle, name, consultantId, identity } = {}) {
+  if (!handle) throw new Error("createOrg: 'handle' requis (sélecteur de dossier déjà effectué).");
+  const adapter = buildAdapter(handle);
+  await adapter.connect();
+  const id = identity || (await getOrCreateIdentity());
+  const org = createOrganization({ name, identity: id, consultantId });
+  await writeManifest(adapter, org.manifest);
+  await writeMemberRecord(adapter, org.memberRecord);
+  await persistOrgMode(handle);
+  const engine = await openOrgEngine({ adapter, identity: id, consultantId });
+  return { engine: withFolderName(engine, handle), adapter, manifest: engine.manifest };
+}
+
+/**
+ * Rejoint une organisation sur `handle` via un code d'invitation (produit par
+ * `invite`) : consomme l'invitation, publie la fiche membre du nouvel
+ * arrivant, active le mode org pour ce navigateur. Renvoie
+ * `{engine, adapter, manifest}`. Lève si le code/l'invitation est
+ * invalide/expirée/révoquée/déjà consommée.
+ */
+async function joinOrg({ handle, invitation, consultantId, identity } = {}) {
+  if (!handle) throw new Error("joinOrg: 'handle' requis (sélecteur de dossier déjà effectué).");
+  const adapter = buildAdapter(handle);
+  await adapter.connect();
+  const id = identity || (await getOrCreateIdentity());
+  const decoded = typeof invitation === "string" ? decodeInvitationCode(invitation) : invitation;
+  const { memberRecord } = await acceptInvitation({ invitation: decoded, identity: id, consultantId });
+  await writeMemberRecord(adapter, memberRecord);
+  await persistOrgMode(handle);
+  const engine = await openOrgEngine({ adapter, identity: id, consultantId });
+  return { engine: withFolderName(engine, handle), adapter, manifest: engine.manifest };
+}
+
+/**
+ * Ouvre (sans rien publier) une organisation déjà existante sur `handle`,
+ * pour un membre déjà connu de ce dossier. Renvoie
+ * `{engine, adapter, manifest, membership}`. Lève si l'identité locale n'est
+ * pas (ou plus) membre.
+ */
+async function openOrg({ handle, consultantId, identity } = {}) {
+  if (!handle) throw new Error("openOrg: 'handle' requis (sélecteur de dossier déjà effectué).");
+  const adapter = buildAdapter(handle);
+  await adapter.connect();
+  const id = identity || (await getOrCreateIdentity());
+  const engine = await openOrgEngine({ adapter, identity: id, consultantId });
+  return { engine: withFolderName(engine, handle), adapter, manifest: engine.manifest, membership: engine.membership };
+}
+
+/**
+ * Reprise au boot (symétrique de `piloteo-solo-bridge.mjs#resumeFolder`) :
+ * restaure le dossier mémorisé et rouvre l'organisation pour l'identité
+ * locale persistée. `null` si aucun dossier mémorisé ;
+ * `{needsPermission:true}` si la permission doit être ré-accordée par un
+ * geste utilisateur ; `{engine, adapter, manifest, membership, folderName}`
+ * sinon.
+ */
+async function resumeOrg() {
+  const handle = await loadDirectoryHandle();
+  if (!handle) return null;
+  const granted = await ensureHandlePermission(handle, "readwrite");
+  if (!granted) return { needsPermission: true };
+  const identity = await getOrCreateIdentity();
+  const adapter = buildAdapter(handle);
+  await adapter.connect();
+  const engine = await openOrgEngine({ adapter, identity });
+  return {
+    engine: withFolderName(engine, handle),
+    adapter,
+    manifest: engine.manifest,
+    membership: engine.membership,
+    folderName: (handle && handle.name) || null,
+  };
+}
+
+/**
+ * Invite un futur membre (owner/admin uniquement — `inviteMember` lève sinon).
+ * Ne publie RIEN sur le dossier (voir en-tête) : renvoie `{invitation, code}`,
+ * `code` étant le JSON base64url à transmettre hors bande (copier-coller/lien).
+ */
+async function invite({ engine, adapter, role, ttlDays, identity } = {}) {
+  if (!engine || !engine.manifest || !engine.membership) {
+    throw new Error("invite: 'engine' invalide (openOrgEngine attendu).");
+  }
+  const id = identity || (await getOrCreateIdentity());
+  const invitation = await inviteMember({
+    workspaceId: engine.manifest.workspaceId,
+    role: role || "user",
+    issuer: { memberId: id.memberId },
+    issuerMembership: engine.membership,
+    signer: makeSigner(id),
+    ttlMs: ttlDays ? ttlDays * 24 * 60 * 60 * 1000 : undefined,
+  });
+  return { invitation, code: encodeInvitationCode(invitation) };
+}
+
+/**
+ * Révoque un membre (`memberId`) — écrit une fiche de révocation signée sur
+ * le dossier (`org-folder-store.js#writeRevocation`). L'autorité de révocation
+ * (owner révoque owner/admin/user ; admin révoque user seulement) est vérifiée
+ * par `org-runtime.js#createRevocation`, qui lève si insuffisante — AUCUNE
+ * fiche n'est publiée dans ce cas.
+ */
+async function revoke({ engine, adapter, memberId, identity } = {}) {
+  if (!engine || !engine.manifest || !engine.membership) {
+    throw new Error("revoke: 'engine' invalide (openOrgEngine attendu).");
+  }
+  if (!adapter) throw new Error("revoke: 'adapter' requis (pour publier la fiche de révocation).");
+  const id = identity || (await getOrCreateIdentity());
+  const members = await engine.members();
+  const target = members.find((m) => m.memberId === memberId);
+  if (!target) throw new Error(`revoke: membre '${memberId}' introuvable.`);
+  const revocation = await createRevocation({
+    workspaceId: engine.manifest.workspaceId,
+    revokedMemberId: memberId,
+    issuer: { memberId: id.memberId },
+    issuerMembership: engine.membership,
+    revokedRole: target.role,
+    signer: makeSigner(id),
+  });
+  await writeRevocation(adapter, revocation);
+  return revocation;
+}
+
+/** Liste les membres d'une organisation ouverte (`engine.members()`). */
+async function listMembers(engine) {
+  if (!engine || typeof engine.members !== "function") {
+    throw new Error("listMembers: 'engine' invalide (openOrgEngine attendu).");
+  }
+  return engine.members();
+}
+
+// ---------------------------------------------------------------------------
+// Hooks de TEST (docs/next/ORG_UI_CONTRACT.md §1) : permettent à un smoke e2e
+// d'injecter un `FileSystemDirectoryHandle` factice en mémoire (comme
+// `__engineFromHandle` de piloteo-solo-bridge.mjs) et de simuler plusieurs
+// identités de membre dans le MÊME onglet, sans passer par le sélecteur natif
+// (indisponible en pilotage automatisé) ni par l'identité persistée unique.
+// ---------------------------------------------------------------------------
+
+/** Ouvre directement un org engine sur `handle` (sans publier de fiche),
+ *  comme `openOrg`, mais nommé explicitement comme hook de test pour matcher
+ *  le contrat. `identity`/`consultantId` optionnels (défaut : identité
+ *  persistée de ce navigateur). */
+async function __openOrgEngineFromHandle(handle, { identity, consultantId } = {}) {
+  const adapter = buildAdapter(handle);
+  await adapter.connect();
+  const id = identity || (await getOrCreateIdentity());
+  const engine = await openOrgEngine({ adapter, identity: id, consultantId });
+  return { engine: withFolderName(engine, handle), adapter, identity: id, manifest: engine.manifest, membership: engine.membership };
+}
+
+const __identityStore = {
+  load: loadIdentity,
+  save: saveIdentity,
+  // Fabrique une identité FRAÎCHE sans la persister comme identité "courante"
+  // de ce navigateur — pour simuler un second membre dans le même onglet
+  // (chaque appel produit une identité distincte, cf. newMemberIdentity).
+  create: newMemberIdentity,
+};
+
+window.PiloteoOrg = {
+  hasFileSystemAccess: typeof globalThis.showDirectoryPicker === "function",
+  pickDirectory,
+  getOrCreateIdentity,
+  createOrg,
+  joinOrg,
+  openOrg,
+  resumeOrg,
+  invite,
+  revoke,
+  listMembers,
+  __identityStore,
+  __openOrgEngineFromHandle,
+};

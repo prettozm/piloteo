@@ -82,6 +82,17 @@ try {
   const hasHook = await page.evaluate(() => typeof window.PiloteoNext?.__engineFromHandle === "function");
   ok(hasHook, "__engineFromHandle exposé (hook de test)");
 
+  // --- point 2c-C2 (additif) : l'écran de premier lancement (ORG_UI_CONTRACT
+  //     §3) apparaît sur cet état vierge (premier accès, aucun mode mémorisé) —
+  //     le fermer (« Continuer », 1re carte = mode classique) comme le ferait
+  //     un utilisateur réel, avant de poursuivre ce smoke (non-régression : le
+  //     mode classique lui-même a déjà démarré en dessous, cf. assertion ci-dessus).
+  const welcome = page.locator("#piloteo-welcome");
+  if (await welcome.isVisible().catch(() => false)) {
+    await page.click("#piloteo-welcome button");
+    await page.waitForFunction(() => !document.getElementById("piloteo-welcome"), { timeout: 3000 }).catch(() => {});
+  }
+
   // --- non-régression : le panneau Réglages s'ouvre -------------------------
   await page.click("#piloteo-gear");
   const panelVisible = await page.locator("#piloteo-reglages").isVisible().catch(() => false);

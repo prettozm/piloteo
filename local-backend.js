@@ -119,9 +119,12 @@
   // boot) bascule `/api/state` sur le store event-first du dossier choisi
   // (`window.PiloteoNext`, voir piloteo-solo-bridge.mjs) : un « engine »
   // `{load, commit}` qui rend directement la forme attendue par `handle()`.
-  var STORAGE_MODE_KEY = "piloteo_storage_mode"; // localStorage : "folder" | absent (= cet appareil)
-  var activeEngine = null;           // engine {load,commit} du dossier actif, ou null (mode classique)
+  var STORAGE_MODE_KEY = "piloteo_storage_mode"; // localStorage : "folder" | "org" | absent (= cet appareil)
+  var ORG_NAME_KEY = "piloteo_org_name";          // localStorage : nom d'affichage de l'org (best-effort, cf. §Organisation)
+  var activeEngine = null;           // engine {load,commit,...} du dossier/org actif, ou null (mode classique)
   var folderNeedsPermission = false; // dossier mémorisé mais permission à ré-accorder (geste utilisateur requis)
+  var orgNeedsPermission = false;    // organisation mémorisée mais permission à ré-accorder (idem, mode org)
+  var activeOrgAdapter = null;       // StorageAdapter de l'organisation active (requis par invite/revoke)
   var storageMode = null;
   try { storageMode = localStorage.getItem(STORAGE_MODE_KEY); } catch (e) { storageMode = null; }
 
@@ -181,6 +184,142 @@
     return _folderReady;
   }
 
+  // --- Point 2c-C2 (docs/next/ORG_UI_CONTRACT.md) : mode Organisation ------
+  // SYMÉTRIQUE au mode Dossier ci-dessus : `storageMode==="org"` bascule
+  // `/api/state` sur un org engine (`window.PiloteoOrg`, voir
+  // piloteo-org-bridge.mjs) au lieu du dossier event-first solo. Même
+  // garde-fou (module non chargé -> mode indisponible, bannière visible),
+  // même logique de reprise au boot (permission à renouveler -> geste
+  // utilisateur requis).
+  function waitForPiloteoOrg(timeoutMs) {
+    return new Promise(function (resolve) {
+      var waited = 0, step = 50;
+      (function poll() {
+        if (window.PiloteoOrg) { resolve(window.PiloteoOrg); return; }
+        waited += step;
+        if (waited >= timeoutMs) { resolve(null); return; }
+        setTimeout(poll, step);
+      })();
+    });
+  }
+
+  var _orgReady = null;
+  function ensureOrgReady() {
+    if (_orgReady) return _orgReady;
+    _orgReady = waitForPiloteoOrg(4000).then(function (PO) {
+      if (!PO) {
+        showFolderBanner("Mode Organisation indisponible (hors ligne ou chargement incomplet). " +
+          "Les données affichées sont celles de cet appareil, pas de votre organisation. Rechargez une fois en ligne.");
+        return;
+      }
+      return PO.resumeOrg().then(function (result) {
+        if (result && result.engine) {
+          activeEngine = result.engine;
+          activeOrgAdapter = result.adapter || null;
+          orgNeedsPermission = false;
+          console.info("[Pilotéo] mode Organisation repris" + (result.engine.folderName ? " (" + result.engine.folderName + ")" : "") + ".");
+        } else if (result && result.needsPermission) {
+          orgNeedsPermission = true;
+          showFolderBanner("Votre organisation nécessite de renouveler l'autorisation d'accès au dossier partagé.",
+            "Redonner l'accès", function () {
+              retryOrgPermission().then(function () { location.reload(); })
+                .catch(function (e) { alert("Accès au dossier refusé : " + ((e && e.message) || e)); });
+            });
+        }
+        // `result === null` : jamais activé malgré le drapeau (improbable) — on reste sur cet appareil.
+      }).catch(function (e) {
+        showFolderBanner("Reprise de l'organisation impossible : " + ((e && e.message) || e) +
+          " Les données affichées sont celles de cet appareil.");
+      });
+    });
+    return _orgReady;
+  }
+
+  // Ouvre le sélecteur natif puis crée l'organisation (writeManifest +
+  // writeMemberRecord côté pont) et active le mode org. `name` : nom
+  // d'affichage de l'organisation — le manifeste (racine de confiance, lot
+  // 2c-B/2c-C1, non modifié ici) ne le porte pas ; on le mémorise donc
+  // localement (best-effort, `ORG_NAME_KEY`) pour l'affichage Réglages sur
+  // CET appareil (un membre qui rejoint via `joinOrg` n'a pas ce nom : repli
+  // générique "Organisation", cf. buildReglages ci-dessous).
+  function activateCreateOrg(name) {
+    if (!window.PiloteoOrg) return Promise.reject(new Error("Le pont Organisation n'a pas chargé (rechargez la page)."));
+    if (!window.PiloteoOrg.hasFileSystemAccess) return Promise.reject(new Error("Navigateur non compatible (Chrome/Edge/Opera sur ordinateur requis)."));
+    return window.PiloteoOrg.pickDirectory().then(function (handle) {
+      return stateRecord().then(function (rec) {
+        var cs = (rec.state && rec.state.consultants) || [];
+        var i = adminConsultantIndex(cs);
+        var consultantId = i >= 0 ? cs[i].id : null;
+        return window.PiloteoOrg.createOrg({ handle: handle, name: name, consultantId: consultantId });
+      });
+    }).then(function (result) {
+      activeEngine = result.engine;
+      activeOrgAdapter = result.adapter || null;
+      orgNeedsPermission = false;
+      storageMode = "org";
+      try { localStorage.setItem(STORAGE_MODE_KEY, "org"); } catch (e) {}
+      try { if (name) localStorage.setItem(ORG_NAME_KEY, name); } catch (e) {}
+      _orgReady = Promise.resolve();
+      return result;
+    });
+  }
+
+  // Ouvre le sélecteur natif (dossier partagé de l'organisation à rejoindre)
+  // puis rejoint via le code d'invitation collé (`codeText`) et active le
+  // mode org.
+  function activateJoinOrg(codeText) {
+    if (!window.PiloteoOrg) return Promise.reject(new Error("Le pont Organisation n'a pas chargé (rechargez la page)."));
+    if (!window.PiloteoOrg.hasFileSystemAccess) return Promise.reject(new Error("Navigateur non compatible (Chrome/Edge/Opera sur ordinateur requis)."));
+    return window.PiloteoOrg.pickDirectory().then(function (handle) {
+      return stateRecord().then(function (rec) {
+        var cs = (rec.state && rec.state.consultants) || [];
+        var i = adminConsultantIndex(cs);
+        var consultantId = i >= 0 ? cs[i].id : null;
+        return window.PiloteoOrg.joinOrg({ handle: handle, invitation: codeText, consultantId: consultantId });
+      });
+    }).then(function (result) {
+      activeEngine = result.engine;
+      activeOrgAdapter = result.adapter || null;
+      orgNeedsPermission = false;
+      storageMode = "org";
+      try { localStorage.setItem(STORAGE_MODE_KEY, "org"); } catch (e) {}
+      _orgReady = Promise.resolve();
+      return result;
+    });
+  }
+
+  // Revient au stockage « cet appareil » : les données DE L'ORGANISATION
+  // restent intactes sur le dossier partagé (rien n'est supprimé) ;
+  // `/api/state` repasse sur IndexedDB.
+  function deactivateOrg() {
+    activeEngine = null;
+    activeOrgAdapter = null;
+    orgNeedsPermission = false;
+    storageMode = null;
+    try { localStorage.removeItem(STORAGE_MODE_KEY); } catch (e) {}
+    _orgReady = Promise.resolve();
+  }
+
+  // Re-demande la permission sur le dossier de l'organisation mémorisée.
+  // À appeler depuis un VRAI geste utilisateur (clic), comme
+  // `retryFolderPermission`.
+  function retryOrgPermission() {
+    if (!window.PiloteoOrg) return Promise.reject(new Error("Le pont Organisation n'a pas chargé (rechargez la page)."));
+    return window.PiloteoOrg.resumeOrg().then(function (result) {
+      if (result && result.engine) {
+        activeEngine = result.engine;
+        activeOrgAdapter = result.adapter || null;
+        orgNeedsPermission = false;
+        storageMode = "org";
+        try { localStorage.setItem(STORAGE_MODE_KEY, "org"); } catch (e) {}
+        _orgReady = Promise.resolve();
+        return result;
+      }
+      if (result && result.needsPermission) { orgNeedsPermission = true; throw new Error("Autorisation refusée pour ce dossier."); }
+      throw new Error("Aucune organisation mémorisée.");
+    });
+  }
+
   // Bannière VISIBLE (haut de page) pour les incidents du mode Dossier (au boot :
   // pont non chargé, permission à renouveler…). Contrairement à un console.warn,
   // l'utilisateur la voit. Optionnellement un bouton d'action. Idempotente.
@@ -216,12 +355,119 @@
     else document.addEventListener("DOMContentLoaded", build, { once: true });
   }
 
+  // --- Écran de premier lancement (point 2c-C2, ORG_UI_CONTRACT §3) --------
+  // Overlay plein écran (comme `lockSpace` plus bas), affiché UNE SEULE FOIS
+  // (idempotent via `_firstLaunchShown`) au tout premier démarrage constaté
+  // par `getRecord()` (voir ci-dessus). N'empêche jamais app.js de démarrer
+  // en dessous (mode classique inchangé) : c'est un choix, pas un blocage —
+  // fermer l'écran (« Continuer ») équivaut à ne rien faire (le mode
+  // classique était déjà actif).
+  var _firstLaunchShown = false;
+  function maybeShowFirstLaunch() {
+    if (_firstLaunchShown) return;
+    _firstLaunchShown = true;
+    if (document.body) renderWelcomeScreen();
+    else document.addEventListener("DOMContentLoaded", renderWelcomeScreen, { once: true });
+  }
+
+  function renderWelcomeScreen() {
+    if (document.getElementById("piloteo-welcome")) return;
+    var ov = el("div", "position:fixed;inset:0;z-index:2147483004;background:#0d1a22;color:#eaf1f4;" +
+      "display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto;" +
+      "font:400 15px/1.45 system-ui,-apple-system,sans-serif;");
+    ov.id = "piloteo-welcome";
+
+    var wrap = el("div", "width:100%;max-width:920px;");
+    wrap.appendChild(el("div", "font-size:1.6rem;font-weight:700;margin-bottom:6px;text-align:center;", "Bienvenue sur Pilotéo"));
+    wrap.appendChild(el("div", "opacity:.72;text-align:center;margin-bottom:26px;", "Comment voulez-vous commencer ?"));
+    var grid = el("div", "display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;");
+    wrap.appendChild(grid);
+    ov.appendChild(wrap);
+    document.body.appendChild(ov);
+
+    function card(title, desc) {
+      var c = el("div", "background:#152530;border:1px solid rgba(255,255,255,.14);border-radius:14px;" +
+        "padding:20px;display:flex;flex-direction:column;gap:10px;");
+      c.appendChild(el("div", "font-size:1.02rem;font-weight:700;", title));
+      c.appendChild(el("div", "font-size:.85rem;opacity:.75;", desc));
+      return c;
+    }
+    function darkInput(input) {
+      input.setAttribute("style", input.getAttribute("style") + "background:#0d1a22;color:#eaf1f4;border-color:rgba(255,255,255,.22);");
+      return input;
+    }
+
+    // Carte 1 — compte indépendant (mode classique actuel).
+    var c1 = card("Utiliser seul (cet appareil)", "Vos données restent dans ce navigateur, hors ligne. Vous pourrez créer ou rejoindre une organisation plus tard, depuis Réglages.");
+    c1.appendChild(mkBtn("Continuer", function () { ov.remove(); }, true));
+    grid.appendChild(c1);
+
+    // Carte 2 — créer une organisation.
+    var c2 = card("Créer une organisation", "Choisissez un dossier (local, OneDrive, SharePoint, Drive…) qui deviendra le dossier partagé de votre organisation.");
+    var nameIn = fieldInput("Nom de l'organisation", "text");
+    darkInput(nameIn.input);
+    c2.appendChild(nameIn.wrap);
+    var msg2 = el("div", "font-size:12.5px;color:#f6d685;min-height:16px;");
+    var b2 = mkBtn("Choisir un dossier et créer", function () {
+      var name = nameIn.input.value.trim();
+      if (!name) { msg2.textContent = "Indiquez un nom d'organisation."; return; }
+      msg2.textContent = "Sélection du dossier…";
+      activateCreateOrg(name).then(function () {
+        alert("Organisation créée. L'application va se recharger.");
+        location.reload();
+      }).catch(function (e) { msg2.textContent = "Échec : " + ((e && e.message) || e); });
+    }, true);
+    c2.appendChild(b2); c2.appendChild(msg2);
+    grid.appendChild(c2);
+
+    // Carte 3 — rejoindre une organisation.
+    var c3 = card("Rejoindre une organisation", "Choisissez le dossier partagé de l'organisation, puis collez le code d'invitation reçu.");
+    var codeIn = document.createElement("textarea");
+    codeIn.placeholder = "Coller le code d'invitation ici";
+    codeIn.setAttribute("style", "width:100%;box-sizing:border-box;min-height:64px;padding:8px 10px;border-radius:8px;" +
+      "border:1px solid rgba(255,255,255,.22);background:#0d1a22;color:#eaf1f4;font:inherit;font-size:12px;resize:vertical;");
+    c3.appendChild(codeIn);
+    var msg3 = el("div", "font-size:12.5px;color:#f6d685;min-height:16px;");
+    var b3 = mkBtn("Choisir le dossier et rejoindre", function () {
+      var code = codeIn.value.trim();
+      if (!code) { msg3.textContent = "Collez le code d'invitation reçu."; return; }
+      msg3.textContent = "Sélection du dossier…";
+      activateJoinOrg(code).then(function () {
+        alert("Vous avez rejoint l'organisation. L'application va se recharger.");
+        location.reload();
+      }).catch(function (e) { msg3.textContent = "Échec : " + ((e && e.message) || e); });
+    }, true);
+    c3.appendChild(b3); c3.appendChild(msg3);
+    grid.appendChild(c3);
+
+    // Sur navigateur sans File System Access, options 2/3 désactivées + explication
+    // (contrat §3). `window.PiloteoOrg` peut ne pas être chargé ENCORE (module
+    // différé) : on attend un court instant avant de trancher, jamais un blocage
+    // définitif de l'écran (garde-fou déjà appliqué ailleurs, cf. ensureOrgReady).
+    waitForPiloteoOrg(4000).then(function (PO) {
+      var available = !!(PO && PO.hasFileSystemAccess);
+      if (!available) {
+        [b2, b3].forEach(function (b) { b.disabled = true; b.style.opacity = ".45"; b.style.cursor = "not-allowed"; });
+        var note = "Nécessite Chrome/Edge/Opera sur ordinateur (File System Access).";
+        c2.appendChild(el("div", "font-size:12px;color:#f6d685;", note));
+        c3.appendChild(el("div", "font-size:12px;color:#f6d685;", note));
+      }
+    });
+  }
+
   // Exécute `fn` (qui produit la réponse `/api/state`) après une éventuelle
-  // reprise du dossier. Mode par défaut (`storageMode !== "folder"`) : appelle
-  // `fn()` immédiatement, sans détour — comportement STRICTEMENT inchangé.
+  // reprise du dossier OU de l'organisation. Mode par défaut
+  // (`storageMode` ni "folder" ni "org") : appelle `fn()` immédiatement, sans
+  // détour — comportement STRICTEMENT inchangé pour le chemin classique.
+  // Point 2c-C2 : généralisée pour router aussi vers `ensureOrgReady()` —
+  // c'est CETTE fonction que le contrat désigne comme routant `/api/me`,
+  // `/api/state` GET/PUT et `putStateUnified` vers l'org engine "exactement
+  // comme le mode folder" ; aucun des points d'appel existants n'a besoin
+  // d'être touché.
   function withFolderReady(fn) {
-    if (storageMode !== "folder") return fn();
-    return ensureFolderReady().then(fn);
+    if (storageMode === "folder") return ensureFolderReady().then(fn);
+    if (storageMode === "org") return ensureOrgReady().then(fn);
+    return fn();
   }
 
   // `{revision, state}` courant, depuis le dossier actif si posé, sinon IndexedDB.
@@ -329,6 +575,14 @@
   function getRecord() {
     return idbGet(STATE_KEY).then(function (rec) {
       if (rec && rec.state) return rec;
+      // Point 2c-C2 (ORG_UI_CONTRACT §3) : « aucune donnée » se détecte
+      // EXACTEMENT ici — le seul moment où l'on constate qu'aucun état n'a
+      // encore été créé pour cet appareil. En mode par défaut (aucun mode de
+      // stockage mémorisé), c'est le tout premier démarrage : afficher
+      // l'écran d'accueil (best-effort, jamais bloquant pour la suite —
+      // l'état seedé ci-dessous est rendu à app.js dans tous les cas, l'écran
+      // n'est qu'un overlay visuel).
+      if (!storageMode) maybeShowFirstLaunch();
       return loadSeed().then(function (state) {
         var fresh = { revision: 1, state: state };
         return idbPut(STATE_KEY, fresh).then(function () {
@@ -365,10 +619,28 @@
     // Identité locale technique : rattachée au premier consultant existant pour
     // satisfaire le contrôle « compte rattaché à un consultant » de app.js.
     var consultantId = consultants.length ? consultants[0].id : "SOLO";
+    var role = "admin";
+    var name = "Mon espace (mode solo)";
+    // Point 2c-C2 (ORG_UI_CONTRACT §2) : en mode org, `consultant_id` vient de
+    // l'état du dossier org (déjà lu via `stateRecord()` par l'appelant — ce
+    // `state` EST celui du dossier org quand `storageMode==="org"`, cf.
+    // `stateRecord()`) et `role` du membership de l'identité locale
+    // (owner/admin -> "admin", pour qu'app.js applique ses permissions
+    // d'affichage ; user -> "user").
+    if (storageMode === "org" && activeEngine && activeEngine.membership) {
+      var m = activeEngine.membership;
+      role = (m.role === "owner" || m.role === "admin") ? "admin" : "user";
+      if (m.consultantId && consultants.some(function (c) { return c && c.id === m.consultantId; })) {
+        consultantId = m.consultantId;
+      }
+      name = "Organisation" + (function () {
+        try { var n = localStorage.getItem(ORG_NAME_KEY); return n ? " — " + n : ""; } catch (e) { return ""; }
+      })();
+    }
     return {
       username: "solo",
-      name: "Mon espace (mode solo)",
-      role: "admin",
+      name: name,
+      role: role,
       consultant_id: consultantId,
       csrf_token: "solo"
     };
@@ -750,6 +1022,94 @@
       body.appendChild(modeRow("Google Drive", "Bientôt", "#8a6d1f", "Adaptateur prêt ; activation par identifiant OAuth (GOOGLE_CLIENT_ID), après le câblage dossier."));
       body.appendChild(modeRow("Serveur hébergé", "Disponible séparément", "#5b6b76", "Déploiement Docker (voir docs/deployment). Mode centralisé, hors application solo."));
 
+      // Section 3bis — Organisation (point 2c-C2, ORG_UI_CONTRACT §3).
+      body.appendChild(sectionTitle("Organisation"));
+      if (storageMode === "org" && activeEngine && activeEngine.manifest && activeEngine.membership) {
+        var orgEngineRef = activeEngine;      // capturé : évite un décalage si l'utilisateur revient à cet appareil pendant que ce panneau est ouvert
+        var orgAdapterRef = activeOrgAdapter;
+        var myRole = orgEngineRef.membership.role || "user";
+        var roleLabel = myRole === "owner" ? "Propriétaire" : myRole === "admin" ? "Administrateur" : "Membre";
+        var orgDisplayName = (function () { try { return localStorage.getItem(ORG_NAME_KEY); } catch (e) { return null; } })() || "Organisation";
+        body.appendChild(el("p", "margin:2px 0 10px;font-size:.9rem;",
+          "« " + orgDisplayName + " » — vous êtes " + roleLabel + "."));
+
+        var membersBox = el("div", "margin-bottom:10px;");
+        body.appendChild(membersBox);
+        membersBox.appendChild(el("div", "font-size:12.5px;color:#5b6b76;", "Chargement des membres…"));
+
+        function renderMembers(myMemberId) {
+          orgEngineRef.members().then(function (members) {
+            membersBox.innerHTML = "";
+            members.forEach(function (m) {
+              var row = el("div", "display:flex;align-items:center;gap:8px;font-size:.85rem;padding:7px 9px;" +
+                "border:1px solid #eef1f3;border-radius:8px;margin-bottom:6px;flex-wrap:wrap;");
+              row.appendChild(el("span", "flex:1;min-width:120px;", (m.consultantId || m.memberId) + (m.memberId === myMemberId ? " (vous)" : "")));
+              row.appendChild(el("span", "font-size:.72rem;color:#5b6b76;text-transform:uppercase;letter-spacing:.03em;",
+                m.role === "owner" ? "Propriétaire" : m.role === "admin" ? "Administrateur" : "Membre"));
+              row.appendChild(el("span", "font-size:.7rem;font-weight:700;color:" + (m.status === "revoked" ? "#8a3b2f" : "#137a3f") + ";",
+                m.status === "revoked" ? "Révoqué" : "Actif"));
+              var canRevoke = (myRole === "owner" || myRole === "admin") && m.status === "active" && m.memberId !== myMemberId;
+              if (canRevoke) {
+                row.appendChild(mkBtn("Révoquer", function () {
+                  var warn = "Révoquer ce membre lui retire immédiatement tout accès à l'organisation.";
+                  if (m.role === "owner") {
+                    warn = "⚠️ ATTENTION : révoquer un PROPRIÉTAIRE (surtout le propriétaire d'origine) a un " +
+                      "RAYON D'EXPLOSION TOTAL sur l'organisation — toute la chaîne de confiance en dépend, " +
+                      "cette action peut détruire la confiance de tout l'arbre de membres.";
+                  } else if (m.role === "admin") {
+                    warn = "⚠️ Révoquer un ADMINISTRATEUR retire aussi l'accès à tous les membres qu'il a " +
+                      "invités (ils perdent leur ancre de confiance et devront être ré-invités par une autorité encore valide).";
+                  }
+                  if (!window.confirm(warn + "\n\nConfirmer la révocation de " + (m.consultantId || m.memberId) + " ?")) return;
+                  window.PiloteoOrg.revoke({ engine: orgEngineRef, adapter: orgAdapterRef, memberId: m.memberId }).then(function () {
+                    alert("Membre révoqué.");
+                    renderMembers(myMemberId);
+                  }).catch(function (e) { alert("Révocation impossible : " + ((e && e.message) || e)); });
+                }));
+              }
+              membersBox.appendChild(row);
+            });
+          }).catch(function (e) { membersBox.innerHTML = ""; membersBox.appendChild(el("div", "font-size:12.5px;color:#8a3b2f;", "Membres indisponibles : " + ((e && e.message) || e))); });
+        }
+        if (window.PiloteoOrg) {
+          window.PiloteoOrg.getOrCreateIdentity().then(function (id) { renderMembers(id.memberId); });
+        }
+
+        if (myRole === "owner" || myRole === "admin") {
+          var inviteRow = el("div", "display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0;");
+          var roleSel = document.createElement("select");
+          roleSel.setAttribute("style", "padding:8px 10px;border:1px solid #d5dde2;border-radius:8px;font:inherit;background:#fff;color:#14212b;");
+          [["user", "Membre"], ["admin", "Administrateur"]].forEach(function (pair) {
+            var o = document.createElement("option"); o.value = pair[0]; o.textContent = pair[1]; roleSel.appendChild(o);
+          });
+          inviteRow.appendChild(roleSel);
+          var inviteMsg = el("div", "font-size:12.5px;color:#5b6b76;flex-basis:100%;min-height:16px;");
+          inviteRow.appendChild(mkBtn("Inviter", function () {
+            inviteMsg.textContent = "Génération du code…";
+            window.PiloteoOrg.invite({ engine: orgEngineRef, adapter: orgAdapterRef, role: roleSel.value, ttlDays: 14 }).then(function (r) {
+              inviteMsg.textContent = "Code généré (valable 14 jours) — à transmettre au futur membre :";
+              var ta = document.createElement("textarea");
+              ta.readOnly = true; ta.value = r.code;
+              ta.setAttribute("style", "width:100%;box-sizing:border-box;min-height:70px;margin-top:6px;font-family:ui-monospace,monospace;" +
+                "font-size:11px;padding:8px;border:1px solid #d5dde2;border-radius:8px;");
+              inviteRow.appendChild(ta);
+              ta.addEventListener("click", function () { ta.select(); });
+            }).catch(function (e) { inviteMsg.textContent = "Échec : " + ((e && e.message) || e); });
+          }, true));
+          body.appendChild(inviteRow);
+        }
+
+        body.appendChild(mkBtn("Revenir à cet appareil", function () {
+          deactivateOrg();
+          alert("Retour à cet appareil. L'application va se recharger.");
+          location.reload();
+        }));
+      } else {
+        body.appendChild(el("p", "margin:2px 0 8px;font-size:.86rem;color:#5b6b76;",
+          "Travaillez à plusieurs sur les mêmes données, dans un dossier partagé (OneDrive, SharePoint, Drive…)."));
+        body.appendChild(mkBtn("Créer / rejoindre une organisation", function () { close(); renderWelcomeScreen(); }));
+      }
+
       // Section 4 — Session
       body.appendChild(sectionTitle("Session"));
       var lockRow = el("div", "display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;");
@@ -836,6 +1196,18 @@
     _useEngineForTest: function (engine) {
       activeEngine = engine; storageMode = "folder"; _folderReady = Promise.resolve();
     },
+    // Point 2c-C2 : hook de TEST symétrique pour le mode Organisation — pose
+    // un org engine RÉEL (construit via `window.PiloteoOrg.__openOrgEngineFromHandle`
+    // sur un faux dossier) comme moteur actif, avec son `adapter` (requis par
+    // `invite`/`revoke`), SANS passer par le sélecteur natif. Permet aux e2e
+    // de prouver que `/api/me` (role admin/user selon membership) et
+    // `/api/state` (409 sur commit refusé par la policy) ciblent bien
+    // l'organisation active.
+    _useOrgEngineForTest: function (engine, adapter) {
+      activeEngine = engine; activeOrgAdapter = adapter || null; storageMode = "org"; _orgReady = Promise.resolve();
+    },
+    _deactivateOrg: deactivateOrg,
+    _orgStorageMode: function () { return storageMode === "org"; },
     _getJournal: function () { return idbGet(JOURNAL_KEY).then(function (j) { return Array.isArray(j) ? j : []; }); },
     // Invariant Phase 3 : l'état reconstruit en rejouant le journal doit être
     // identique (ensembliste) au snapshot courant.
