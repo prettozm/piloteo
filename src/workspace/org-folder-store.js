@@ -63,10 +63,15 @@ export async function writeManifest(adapter, manifest) {
   try {
     await adapter.putImmutable("workspace", "manifest", manifest);
   } catch (err) {
-    // write-once violé (déjà présent) OU toute autre panne d'E/S : on ne peut
-    // distinguer les deux qu'en relisant — mais dans les deux cas, la règle
-    // métier est la même : un manifeste existe déjà, le premier gagne.
-    throw new Error(`writeManifest: un manifeste existe déjà (première écriture gagne) — ${(err && err.message) || err}`);
+    // Ne réemballer en « manifeste existe déjà » QUE si c'est vraiment une
+    // violation de write-once (FolderStorageAdapter signale cela explicitement) ;
+    // toute autre panne (disque plein, permission, réseau) doit remonter TELLE
+    // QUELLE pour ne pas masquer un incident d'E/S en « organisation déjà créée ».
+    const msg = String((err && err.message) || err);
+    if (/write-once/i.test(msg) || (err && err.code === "EEXIST")) {
+      throw new Error(`writeManifest: un manifeste existe déjà (première écriture gagne) — ${msg}`);
+    }
+    throw err;
   }
   return manifest;
 }

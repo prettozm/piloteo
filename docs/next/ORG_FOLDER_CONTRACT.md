@@ -89,3 +89,16 @@ Toute la suite `npm run test:next` reste verte.
   permissions ; ne rien réécrire. Ne pas ajouter de `kind` de stockage.
 - ESM, node ≥20, style `src/*`. app.js/server.py intacts. Mode chiffré inchangé.
 - Ne PAS toucher l'UI (2c-C). Ne PAS câbler dans local-backend.js (2c-C).
+
+## 6. Limite « Dossier de confiance » — étendue aux fiches membres/révocations
+
+Revue 2c-B (SÛR) : le dépôt brut d'un fichier dans le dossier n'accorde JAMAIS de
+droit par lui-même — `buildTrustedMembership` est le seul arbitre, et le
+`registry` de vérification des signatures reste ancré sur `manifest.ownerPublicKeyJwk`
+(jamais sur une fiche relue). Prolongement de la limite déjà notée pour le
+manifeste (ORG_CONTRACT §5bis.1) : la **suppression physique hors-adaptateur**
+d'une fiche `member`/`revocation` (aucune API `delete` n'existe côté StorageAdapter,
+mais l'OS/le fournisseur de synchro le permettent) relève des **permissions du SI
+du client** (OneDrive/SharePoint). Le pire effet démontré d'une telle suppression
+est un déni de service sur le compte concerné (le membre disparaît du store), jamais
+une usurpation de clé (la racine owner est pinnée par le manifeste immuable).
