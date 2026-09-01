@@ -24,7 +24,30 @@ Nouveau type de fiche publiable (kind `"revocation"`) :
   que l'émetteur est de confiance ET a le rang suffisant pour révoquer ce membre.
 - Rejet explicite sinon (émetteur inconnu/non autorisé, proof invalide).
 
-## 2. `buildTrustedMembership` étendu (révocation) — algorithme en 3 passes
+## 2bis. CORRECTIF SÉCURITÉ (re-revue) — l'autorité d'un révoqué tombe à ZÉRO
+
+La re-revue a démontré deux failles critiques dans l'approche « horodatée » du §2 :
+un membre révoqué contrôle et signe lui-même `createdAt`/`revokedAt`, donc la
+fenêtre « avant révocation » est **forgeable par la personne qu'elle contraint**
+(backdating d'invitation), et un membre révoqué pouvait encore émettre de
+**nouvelles révocations** (contrôle de statut lu sur le registre pré-révocation
+= code mort). Dans un dossier SANS horloge de confiance, aucune comparaison de
+timestamp auto-déclaré n'est saine.
+
+**Règle qui REMPLACE toute logique de timestamp du §2 :**
+- Un membre révoqué a une autorité **NULLE** dès l'instant de sa révocation :
+  AUCUNE fiche (invitation OU révocation) dont il est l'émetteur n'est admise —
+  quelle que soit la date qu'il déclare. On NE compare JAMAIS `createdAt` à
+  `revokedAt`.
+- Conséquence assumée (à surfacer dans l'UI 2c-C) : révoquer un admin invalide
+  aussi les membres que cet admin avait invités (ils perdent leur ancre de
+  confiance). Pour les conserver, un owner/admin encore valide doit les
+  **ré-inviter** (ré-ancrage). C'est le prix d'un modèle sûr sans horloge fiable.
+- La distribution/synchro effective des fiches de révocation reste une garantie
+  du lot 2c (comme le manifeste) : org-runtime ne peut agir que sur les fiches
+  qu'on lui fournit.
+
+## 2. `buildTrustedMembership` étendu (révocation) — algorithme (RÉVISÉ §2bis)
 
 Signature : `buildTrustedMembership({ manifest, memberRecords, revocations = [] })`
 -> `{ registry, membershipStore, trusted, revoked:[{memberId, revokedAt, revokedBy}], rejected }`.
