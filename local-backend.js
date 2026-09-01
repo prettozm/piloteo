@@ -571,7 +571,9 @@
   // `retryFolderPermission`.
   function retryOrgPermission() {
     if (!window.PiloteoOrg) return Promise.reject(new Error("Le pont Organisation n'a pas chargé (rechargez la page)."));
-    return window.PiloteoOrg.resumeOrg().then(function (result) {
+    // Appelé DEPUIS le clic « Redonner l'accès » -> activation utilisateur
+    // présente -> on autorise `requestPermission` (interactive:true).
+    return window.PiloteoOrg.resumeOrg({ interactive: true }).then(function (result) {
       if (result && result.engine) {
         activeEngine = result.engine;
         activeOrgAdapter = result.adapter || null;
@@ -1122,7 +1124,9 @@
   // hors interaction, ce que le boot silencieux ne peut pas fournir.
   function retryFolderPermission() {
     if (!window.PiloteoNext) return Promise.reject(new Error("Le pont de stockage dossier n'a pas chargé (rechargez la page)."));
-    return window.PiloteoNext.resumeFolder().then(function (result) {
+    // Appelé DEPUIS le clic « Redonner l'accès » -> activation utilisateur
+    // présente -> on autorise `requestPermission` (interactive:true).
+    return window.PiloteoNext.resumeFolder({ interactive: true }).then(function (result) {
       if (result && result.engine) {
         activeEngine = result.engine;
         folderNeedsPermission = false;

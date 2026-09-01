@@ -134,9 +134,27 @@ test("fsaccess-handle-store : persistance IndexedDB (save/load/clear)", async ()
   assert.equal(await loadDirectoryHandle(), null);
 });
 
-test("ensureHandlePermission : granted direct, et prompt -> request", async () => {
+test("ensureHandlePermission : query-only au boot, request seulement en interactif", async () => {
+  // 'granted' : accordé sans rien demander (les deux modes).
   assert.equal(await ensureHandlePermission(new FakeDirHandle("d", "granted")), true);
-  assert.equal(await ensureHandlePermission(new FakeDirHandle("d", "prompt")), true); // request accorde
+  assert.equal(await ensureHandlePermission(new FakeDirHandle("d", "granted"), "readwrite", true), true);
+  // 'prompt' au BOOT (interactive absent/false) : NE PAS demander -> false
+  // (l'UI affichera « Redonner l'accès »). C'est le correctif du bug
+  // « User activation is required » : plus aucun requestPermission hors geste.
+  const bootHandle = new FakeDirHandle("d", "prompt");
+  assert.equal(await ensureHandlePermission(bootHandle, "readwrite"), false);
+  assert.equal(bootHandle._perm, "prompt", "requestPermission NE doit PAS avoir été appelé au boot");
+  // 'prompt' en INTERACTIF (geste) : demande et accorde -> true.
+  assert.equal(await ensureHandlePermission(new FakeDirHandle("d", "prompt"), "readwrite", true), true);
+  // requestPermission qui LÈVE (activation manquante, cas réel navigateur) :
+  // même en interactif, on ne propage jamais l'exception -> false.
+  const throwing = new FakeDirHandle("d", "prompt");
+  throwing.requestPermission = async () => { throw new Error("User activation is required to request permissions."); };
+  assert.equal(await ensureHandlePermission(throwing, "readwrite", true), false);
+  // query qui lève : traité comme non accordé, sans propager.
+  const qthrow = new FakeDirHandle("d", "prompt");
+  qthrow.queryPermission = async () => { throw new Error("boom"); };
+  assert.equal(await ensureHandlePermission(qthrow, "readwrite"), false);
   assert.equal(await ensureHandlePermission(null), false);
 });
 

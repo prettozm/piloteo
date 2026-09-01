@@ -72,7 +72,10 @@ function buildEngine(handle) {
  */
 async function activateFolderFromPicker() {
   const handle = await window.PiloteoNext.pickDirectory();
-  await ensureHandlePermission(handle, "readwrite");
+  // Dans le geste du picker : `interactive:true` (le picker accorde déjà
+  // readwrite en général, mais si le navigateur renvoie 'prompt', on peut
+  // demander la permission ICI, dans l'activation utilisateur).
+  await ensureHandlePermission(handle, "readwrite", true);
   await saveDirectoryHandle(handle);
   return buildEngine(handle);
 }
@@ -83,10 +86,14 @@ async function activateFolderFromPicker() {
  * pu être re-accordée SANS geste utilisateur (le cas normal au chargement) ;
  * `{engine}` sinon.
  */
-async function resumeFolder() {
+async function resumeFolder(opts) {
   const handle = await loadDirectoryHandle();
   if (!handle) return null;
-  const granted = await ensureHandlePermission(handle, "readwrite");
+  // `interactive:true` UNIQUEMENT quand l'appel vient d'un geste utilisateur
+  // (bouton « Redonner l'accès ») ; au boot on ne fait que QUERY (jamais
+  // request, qui exigerait une activation utilisateur et lèverait).
+  const interactive = !!(opts && opts.interactive);
+  const granted = await ensureHandlePermission(handle, "readwrite", interactive);
   if (!granted) return { needsPermission: true };
   return { engine: buildEngine(handle) };
 }

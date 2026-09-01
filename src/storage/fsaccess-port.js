@@ -145,12 +145,24 @@ export function createFsAccessPort(rootHandle) {
  * @param {FileSystemHandle} handle
  * @param {"read"|"readwrite"} [mode]
  */
-export async function ensureHandlePermission(handle, mode = "readwrite") {
+export async function ensureHandlePermission(handle, mode = "readwrite", interactive = false) {
   if (!handle || typeof handle.queryPermission !== "function") return false;
   const opts = { mode };
-  if ((await handle.queryPermission(opts)) === "granted") return true;
-  if (typeof handle.requestPermission === "function") {
-    return (await handle.requestPermission(opts)) === "granted";
+  // Toujours SANS effet de bord d'abord : `queryPermission` ne requiert jamais
+  // d'activation utilisateur, il est donc sûr au boot (reprise).
+  try {
+    if ((await handle.queryPermission(opts)) === "granted") return true;
+  } catch (e) { /* certains navigateurs lèvent aussi sur query : traiter comme non accordé */ }
+  // La DEMANDE de permission (`requestPermission`) exige une ACTIVATION
+  // UTILISATEUR (un clic) : l'appeler hors geste lève « User activation is
+  // required to request permissions ». On ne la tente donc QUE si l'appelant
+  // déclare être dans un geste (`interactive === true`), et on l'enveloppe pour
+  // ne JAMAIS propager cette exception — un boot renvoie proprement `false`
+  // (=> l'UI affiche « Redonner l'accès », le clic rappelle avec interactive).
+  if (interactive && typeof handle.requestPermission === "function") {
+    try {
+      return (await handle.requestPermission(opts)) === "granted";
+    } catch (e) { return false; }
   }
   return false;
 }
