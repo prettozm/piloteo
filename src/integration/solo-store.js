@@ -150,6 +150,20 @@ export function snapshotToEventsDiff(oldState, newState, { workspaceId, actorId,
 
     // newMap validé : une entité sans identité (red team #3) ou portant une clé
     // réservée (#5) est REJETÉE explicitement, jamais perdue en silence.
+    // IDENTITÉ DUPLIQUÉE (durcissement contrariant Point 5, MIGRATION_MODE_CONTRACT.md) :
+    // si `raw` (après coercion `String()`, cf. `mapByIdentity`/comparaison plus
+    // bas — deux entités dont l'identité ne diffère QUE par son TYPE, ex. id
+    // numérique `1` vs chaîne `"1"`, collisent aussi) est DÉJÀ dans `newMap`,
+    // deux entités DISTINCTES du `newState` prétendent à la même identité.
+    // Un `Map.set` écraserait la première SILENCIEUSEMENT ("dernier gagne",
+    // jamais signalé) — repro prouvé : une entité entière du snapshot source
+    // disparaît sans qu'aucune garde (`rejected`, `verifyRoundTrip`,
+    // `diffSnapshots`) ne le voie, y compris à l'écriture RÉELLE sur un
+    // dossier d'organisation via `org-engine.js#commit` (même fonction,
+    // réutilisée telle quelle). La PREMIÈRE entité rencontrée reste seule
+    // candidate (comportement stable, déterministe à l'ordre du tableau
+    // source près) ; toute entité SUIVANTE portant la même identité est
+    // REJETÉE explicitement — jamais un commit partiel silencieux (contrat §1).
     const newMap = new Map();
     const rawList = Array.isArray(newState && newState[entityType]) ? newState[entityType] : [];
     for (const item of rawList) {
@@ -162,7 +176,12 @@ export function snapshotToEventsDiff(oldState, newState, { workspaceId, actorId,
         reject(entityType, String(raw), `payload interdit : contient une clé réservée (${RESERVED_KEYS.join(", ")})`);
         continue;
       }
-      newMap.set(String(raw), item);
+      const idKey = String(raw);
+      if (newMap.has(idKey)) {
+        reject(entityType, idKey, `identité dupliquée (${key}=${idKey}) : plusieurs entités distinctes du snapshot partagent cette identité`);
+        continue;
+      }
+      newMap.set(idKey, item);
     }
 
     for (const [id, entity] of newMap) {

@@ -260,8 +260,22 @@ function withFolderName(engine, handle) {
 
 /**
  * Crée une organisation sur `handle` (dossier déjà choisi par l'utilisateur) :
- * publie le manifeste de genèse + la fiche membre du créateur (OWNER), active
- * le mode org pour ce navigateur. Renvoie `{engine, adapter, manifest}`.
+ * publie le manifeste de genèse + la fiche membre du créateur (OWNER).
+ * Renvoie `{engine, adapter, manifest}`.
+ *
+ * Point 5 (docs/next/MIGRATION_MODE_CONTRACT.md) : NE bascule PLUS
+ * `piloteo_storage_mode` elle-même (déviation par rapport au comportement
+ * antérieur au lot 2c-C2, documentée ici) — cette activation est différée à
+ * `activateOrgStorageMode()` ci-dessous, appelée par `local-backend.js`
+ * UNIQUEMENT après avoir migré (si nécessaire) l'état solo existant vers
+ * cette organisation fraîchement créée ET vérifié le round-trip
+ * (`verifyRoundTrip`). Sans ce report, un rechargement de page survenant
+ * entre CETTE fonction et la vérification de la migration verrait déjà
+ * `piloteo_storage_mode==="org"` en localStorage au prochain démarrage, alors
+ * que rien n'aurait encore été garanti — violation directe de l'invariant
+ * « jamais de bascule de mode sans verifyRoundTrip OK » (contrat §1/§2).
+ * `joinOrg` ci-dessous n'est PAS concernée (rejoindre ne migre jamais de
+ * données solo, l'activation immédiate y reste correcte).
  */
 async function createOrg({ handle, name, consultantId, identity } = {}) {
   if (!handle) throw new Error("createOrg: 'handle' requis (sélecteur de dossier déjà effectué).");
@@ -271,9 +285,18 @@ async function createOrg({ handle, name, consultantId, identity } = {}) {
   const org = createOrganization({ name, identity: id, consultantId });
   await writeManifest(adapter, org.manifest);
   await writeMemberRecord(adapter, org.memberRecord);
-  await persistOrgMode(handle);
   const engine = await openOrgEngine({ adapter, identity: id, consultantId });
   return { engine: withFolderName(engine, handle), adapter, manifest: engine.manifest };
+}
+
+/**
+ * Active RÉELLEMENT le mode org pour ce navigateur (persiste le handle +
+ * `piloteo_storage_mode="org"`). À appeler par `local-backend.js` UNIQUEMENT
+ * après vérification (Point 5) — jamais automatiquement par `createOrg()`
+ * (voir sa décision ci-dessus).
+ */
+async function activateOrgStorageMode(handle) {
+  await persistOrgMode(handle);
 }
 
 /**
@@ -428,6 +451,7 @@ window.PiloteoOrg = {
   pickDirectory,
   getOrCreateIdentity,
   createOrg,
+  activateOrgStorageMode,
   joinOrg,
   openOrg,
   resumeOrg,

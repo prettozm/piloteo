@@ -59,9 +59,19 @@ function buildEngine(handle) {
   };
 }
 
-/** Ouvre le sélecteur natif, mémorise le handle choisi, renvoie l'engine prêt. */
+/**
+ * Ouvre le sélecteur natif, mémorise le handle choisi, renvoie l'engine prêt.
+ * Appelle `window.PiloteoNext.pickDirectory()` (late-bound, PAS l'import
+ * fermé sur ce module) plutôt que `pickDirectory()` directement : un e2e (le
+ * sélecteur natif n'est pas automatisable) peut ainsi substituer
+ * `window.PiloteoNext.pickDirectory` par une fabrique de faux handle AVANT
+ * d'appeler `window.PiloteoLocal._activateFolder()`, pour exercer le VRAI
+ * chemin d'activation (§4 du contrat migration) de bout en bout — symétrique
+ * de `window.PiloteoOrg.pickDirectory`, déjà appelé ainsi par
+ * `local-backend.js` (jamais l'import direct).
+ */
 async function activateFolderFromPicker() {
-  const handle = await pickDirectory();
+  const handle = await window.PiloteoNext.pickDirectory();
   await ensureHandlePermission(handle, "readwrite");
   await saveDirectoryHandle(handle);
   return buildEngine(handle);
@@ -83,6 +93,7 @@ async function resumeFolder() {
 
 window.PiloteoNext = {
   hasFileSystemAccess: typeof globalThis.showDirectoryPicker === "function",
+  pickDirectory,
   activateFolderFromPicker,
   resumeFolder,
   // Hook de test (docs/next/CONVERGENCE_CONTRACT.md §6bis point 5) : construit

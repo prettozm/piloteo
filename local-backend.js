@@ -113,6 +113,44 @@
   function emptyState() {
     var s = {}; COLLECTIONS.forEach(function (k) { s[k] = []; }); return s;
   }
+  // Clé d'identité par collection (durcissement contrariant Point 5,
+  // MIGRATION_MODE_CONTRACT.md) : même convention que
+  // `src/events/event-schema.js#ENTITY_TYPES` (`bordereauxFrais` s'identifie
+  // par `numero`, toutes les autres par `id`). Dupliquée ICI en connaissance
+  // de cause : `local-backend.js` est un script classique (aucun import ES) ;
+  // ce mapping est un FAIT STABLE du domaine (server.py COLLECTION_KEYS), pas
+  // une logique métier susceptible de diverger de `event-schema.js`.
+  var COLLECTION_IDENTITY_KEY = {
+    consultants: "id", organisations: "id", affaires: "id", methodes: "id",
+    typesTerritoire: "id", domainesIntervention: "id", categoriesFrais: "id",
+    missions: "id", factures: "id", saisies: "id", bordereauxFrais: "numero",
+    notesFrais: "id"
+  };
+  // Détecte les identités DUPLIQUÉES (après coercion `String()`, comme
+  // `snapshotToEventsDiff`) au sein d'une même collection d'un état — repro
+  // contrariant : un `.piloteobackup` importé peut porter deux entités
+  // DISTINCTES avec la même identité (fichier forgé/corrompu, ou fusion
+  // manuelle malheureuse) ; sans ce garde-fou, la collision s'installe
+  // silencieusement dans IndexedDB et n'est démasquée QUE plus tard, au
+  // premier diff événementiel (activation Dossier/Organisation) — trop tard,
+  // une entité a déjà disparu de l'écran sans aucun message. Renvoie la liste
+  // des collisions `[{entityType, id, count}]` (vide si aucune).
+  function findDuplicateIdentities(state) {
+    var dups = [];
+    COLLECTIONS.forEach(function (entityType) {
+      var key = COLLECTION_IDENTITY_KEY[entityType];
+      var seen = {};
+      (Array.isArray(state[entityType]) ? state[entityType] : []).forEach(function (item) {
+        if (!item || item[key] === undefined || item[key] === null || item[key] === "") return;
+        var id = String(item[key]);
+        seen[id] = (seen[id] || 0) + 1;
+      });
+      Object.keys(seen).forEach(function (id) {
+        if (seen[id] > 1) dups.push({ entityType: entityType, id: id, count: seen[id] });
+      });
+    });
+    return dups;
+  }
   // Utilisateur générique par défaut : aucune donnée personnelle. Sert d'identité
   // du membre solo quand le seed ne fournit aucun consultant (démarrage vierge).
   function defaultConsultant() {
@@ -432,31 +470,63 @@
   }
 
   // Ouvre le sélecteur natif puis crée l'organisation (writeManifest +
-  // writeMemberRecord côté pont) et active le mode org. `name` : nom
-  // d'affichage de l'organisation — le manifeste (racine de confiance, lot
-  // 2c-B/2c-C1, non modifié ici) ne le porte pas ; on le mémorise donc
-  // localement (best-effort, `ORG_NAME_KEY`) pour l'affichage Réglages sur
-  // CET appareil (un membre qui rejoint via `joinOrg` n'a pas ce nom : repli
-  // générique "Organisation", cf. buildReglages ci-dessous).
+  // writeMemberRecord côté pont). `name` : nom d'affichage de l'organisation —
+  // le manifeste (racine de confiance, lot 2c-B/2c-C1, non modifié ici) ne le
+  // porte pas ; on le mémorise donc localement (best-effort, `ORG_NAME_KEY`)
+  // pour l'affichage Réglages sur CET appareil (un membre qui rejoint via
+  // `joinOrg` n'a pas ce nom : repli générique "Organisation", cf.
+  // buildReglages ci-dessous).
+  //
+  // Point 5 (docs/next/MIGRATION_MODE_CONTRACT.md) : SI l'état solo de cet
+  // appareil est non vide, migre-le vers l'organisation fraîchement créée
+  // (sauvegarde -> seed -> vérification, `runGuardedMigration`) AVANT
+  // d'activer le mode org (`window.PiloteoOrg.activateOrgStorageMode`,
+  // `piloteo_storage_mode`). Un échec (cible improbablement non vide, ou
+  // vérification finale en échec) ne bascule RIEN : le mode org reste
+  // inactif, cet appareil (solo) reste actif, ses données sont intactes.
   function activateCreateOrg(name) {
     if (!window.PiloteoOrg) return Promise.reject(new Error("Le pont Organisation n'a pas chargé (rechargez la page)."));
     if (!window.PiloteoOrg.hasFileSystemAccess) return Promise.reject(new Error("Navigateur non compatible (Chrome/Edge/Opera sur ordinateur requis)."));
+    var pickedHandle = null;
     return window.PiloteoOrg.pickDirectory().then(function (handle) {
+      pickedHandle = handle;
       return stateRecord().then(function (rec) {
-        var cs = (rec.state && rec.state.consultants) || [];
+        var solo = ensureUsable(rec.state);
+        var cs = solo.consultants || [];
         var i = adminConsultantIndex(cs);
         var consultantId = i >= 0 ? cs[i].id : null;
-        return window.PiloteoOrg.createOrg({ handle: handle, name: name, consultantId: consultantId });
+        var targetLabel = "l'organisation" + (name ? " « " + name + " »" : " créée");
+        return window.PiloteoOrg.createOrg({ handle: handle, name: name, consultantId: consultantId }).then(function (result) {
+          // Point 5 §3 : pas UI explicite complet (message+compteur+sauvegarde
+          // -> progression -> résultat). Cas `target-not-empty` (défensif :
+          // ne devrait jamais arriver pour une org fraîchement créée, la
+          // genèse étant write-once) -> message DÉDIÉ (pas de « ouvrir tel
+          // quel » pour une organisation, contrairement au Dossier) puis refus.
+          return decideAndRunMigration(result.engine, solo, targetLabel).then(function (migration) {
+            return { result: result, migration: migration };
+          }).catch(function (e) {
+            // Jamais de mode org actif si la migration n'a pas été
+            // vérifiée (contrat §1/§2 point 4) : l'organisation vient
+            // d'être créée (genèse write-once) mais n'est PAS activée sur
+            // cet appareil ; les données de cet appareil restent intactes.
+            throw new Error(((e && e.message) || "Migration impossible.") +
+              " Retour à cet appareil : vos données ne sont pas perdues.");
+          });
+        });
       });
-    }).then(function (result) {
-      activeEngine = result.engine;
-      activeOrgAdapter = result.adapter || null;
-      orgNeedsPermission = false;
-      storageMode = "org";
-      try { localStorage.setItem(STORAGE_MODE_KEY, "org"); } catch (e) {}
-      try { if (name) localStorage.setItem(ORG_NAME_KEY, name); } catch (e) {}
-      _orgReady = Promise.resolve();
-      return result;
+    }).then(function (r) {
+      var result = r.result, migration = r.migration;
+      return window.PiloteoOrg.activateOrgStorageMode(pickedHandle).then(function () {
+        activeEngine = result.engine;
+        activeOrgAdapter = result.adapter || null;
+        orgNeedsPermission = false;
+        storageMode = "org";
+        try { localStorage.setItem(STORAGE_MODE_KEY, "org"); } catch (e) {}
+        try { if (name) localStorage.setItem(ORG_NAME_KEY, name); } catch (e) {}
+        _orgReady = Promise.resolve();
+        _lastMigrationResult = migration;
+        return Object.assign({}, result, { migration: migration });
+      });
     });
   }
 
@@ -513,6 +583,303 @@
       }
       if (result && result.needsPermission) { orgNeedsPermission = true; throw new Error("Autorisation refusée pour ce dossier."); }
       throw new Error("Aucune organisation mémorisée.");
+    });
+  }
+
+  // --- Point 5 (docs/next/MIGRATION_MODE_CONTRACT.md) : migration à la bascule
+  // de mode -------------------------------------------------------------------
+  //
+  // Attend `window.PiloteoMigration` (posé par `piloteo-migration-bridge.mjs`,
+  // module ES différé de fait), même garde-fou que les autres ponts : jamais
+  // supposé présent au chargement.
+  function waitForPiloteoMigration(timeoutMs) {
+    return new Promise(function (resolve) {
+      var waited = 0, step = 50;
+      (function poll() {
+        if (window.PiloteoMigration) { resolve(window.PiloteoMigration); return; }
+        waited += step;
+        if (waited >= timeoutMs) { resolve(null); return; }
+        setTimeout(poll, step);
+      })();
+    });
+  }
+
+  // Compteur de sauvegardes déclenchées AVANT une écriture dans une cible
+  // (contrat §2 point 1) — hook de TEST (§4 scénario 7 : « une sauvegarde a
+  // été produite »), jamais réinitialisé (cumulatif sur la durée de la page).
+  var _preMigrationBackupCount = 0;
+  // Compteur d'AVERTISSEMENTS d'échec de sauvegarde (contrat §2 point 1 :
+  // « tracer que l'utilisateur a vu l'avertissement ») — incrémenté CHAQUE
+  // fois que la confirmation « sauvegarde échouée, continuer quand même ? »
+  // est réellement affichée à l'utilisateur (que sa réponse soit oui ou non).
+  var _backupWarningShownCount = 0;
+  // Dernier résultat de migration (§2), pour introspection e2e — jamais lu par
+  // la logique métier elle-même (uniquement un hook `window.PiloteoLocal`).
+  var _lastMigrationResult = null;
+
+  var TARGET_NOT_EMPTY_MESSAGE = "Cet emplacement contient déjà un espace Pilotéo (données d'une autre " +
+    "organisation ou d'un autre dossier). Choisissez un dossier vide, ou ouvrez l'existant sans migrer.";
+
+  // --- Pas UI explicite de migration (contrat §3) : overlay modal minimal,
+  // réutilisé pour les TROIS phases (message initial + compteur, progression,
+  // résultat) — un seul élément DOM (`#piloteo-migration-step`), construit une
+  // fois puis réutilisé/retexté à chaque étape (jamais recréé en cours de
+  // route, pour rester une transition fluide côté utilisateur). Déclenché
+  // depuis les DEUX chemins d'activation (écran d'accueil ET Réglages), qui
+  // appellent tous deux `decideAndRunMigration` ci-dessous — aucune UI dupliquée.
+  var _migrationStepEl = null;
+  function ensureMigrationStepEl() {
+    if (_migrationStepEl && document.body && document.body.contains(_migrationStepEl)) return _migrationStepEl;
+    var ov = el("div", "position:fixed;inset:0;z-index:2147483005;background:rgba(8,14,18,.65);" +
+      "display:flex;align-items:center;justify-content:center;padding:20px;" +
+      "font:400 14px/1.45 system-ui,-apple-system,sans-serif;");
+    ov.id = "piloteo-migration-step";
+    var card = el("div", "width:min(480px,94vw);background:#fff;color:#14212b;border-radius:14px;" +
+      "box-shadow:0 20px 60px rgba(0,0,0,.35);padding:22px;");
+    ov.appendChild(card);
+    card.appendChild(el("div", "font-size:15px;font-weight:700;margin-bottom:10px;", "Migration de vos données"));
+    var msg = el("div", "font-size:13.5px;line-height:1.5;margin-bottom:12px;");
+    msg.id = "piloteo-migration-message";
+    card.appendChild(msg);
+    var progress = el("div", "font-size:13px;color:#5b6b76;margin-bottom:10px;display:flex;align-items:center;gap:8px;");
+    progress.id = "piloteo-migration-progress";
+    progress.hidden = true;
+    progress.setAttribute("role", "status");
+    card.appendChild(progress);
+    var result = el("div", "font-size:13.5px;line-height:1.5;margin-bottom:14px;font-weight:600;");
+    result.id = "piloteo-migration-result";
+    result.hidden = true;
+    result.setAttribute("role", "status");
+    card.appendChild(result);
+    var actions = el("div", "display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;");
+    actions.id = "piloteo-migration-actions";
+    card.appendChild(actions);
+    document.body.appendChild(ov);
+    _migrationStepEl = ov;
+    return ov;
+  }
+  function migrationStepParts() {
+    var ov = ensureMigrationStepEl();
+    return {
+      msg: ov.querySelector("#piloteo-migration-message"),
+      progress: ov.querySelector("#piloteo-migration-progress"),
+      result: ov.querySelector("#piloteo-migration-result"),
+      actions: ov.querySelector("#piloteo-migration-actions"),
+    };
+  }
+  function closeMigrationStep() {
+    if (_migrationStepEl) { _migrationStepEl.remove(); _migrationStepEl = null; }
+  }
+
+  // Étape 1 (contrat §3) : message explicite AVANT tout appel à
+  // `runGuardedMigration`, avec le compte d'éléments et la cible, ET
+  // l'annonce de la sauvegarde préalable. Résout `true` (Continuer) ou
+  // `false` (Annuler — la migration n'a alors JAMAIS commencé).
+  function showMigrationIntroStep(counts, targetLabel) {
+    return new Promise(function (resolve) {
+      var p = migrationStepParts();
+      var n = (counts && counts.total) || 0;
+      p.msg.textContent = "Vos données de cet appareil (" + n + " élément" + (n > 1 ? "s" : "") +
+        ") vont être copiées dans " + targetLabel + " sous forme de journal. " +
+        "Une sauvegarde de sécurité (.piloteobackup) va d'abord être créée.";
+      p.progress.hidden = true;
+      p.result.hidden = true;
+      p.actions.innerHTML = "";
+      p.actions.appendChild(mkBtn("Annuler", function () { resolve(false); }));
+      p.actions.appendChild(mkBtn("Continuer", function () { p.actions.innerHTML = ""; resolve(true); }, true));
+    });
+  }
+
+  // Étape 2 : indicateur de progression textuel (pendant sauvegarde puis
+  // seed+vérification) — pas de barre graphique, juste un texte mis à jour,
+  // suffisant pour l'exigence du contrat (« barre/état de progression »).
+  function updateMigrationProgress(text) {
+    var p = migrationStepParts();
+    p.progress.hidden = false;
+    p.progress.textContent = text;
+  }
+
+  // Sauvegarde préalable ÉCHOUÉE réellement (contrat §2 point 1) : jamais
+  // silencieux — demande une confirmation EXPLICITE avant de continuer SANS
+  // sauvegarde, tracée dans `_backupWarningShownCount` (vue, quelle que soit
+  // la réponse). Résout `true` (continuer quand même) ou `false` (annuler).
+  function confirmBackupFailure() {
+    _backupWarningShownCount += 1;
+    return new Promise(function (resolve) {
+      var p = migrationStepParts();
+      p.progress.hidden = true;
+      p.result.hidden = false;
+      p.result.style.color = "#8a6d1f";
+      p.result.textContent = "La sauvegarde automatique (.piloteobackup) a échoué. Continuer SANS sauvegarde préalable ?";
+      p.actions.innerHTML = "";
+      p.actions.appendChild(mkBtn("Annuler la migration", function () { resolve(false); }));
+      p.actions.appendChild(mkBtn("Continuer sans sauvegarde", function () { p.result.hidden = true; resolve(true); }, true));
+    });
+  }
+
+  // Étape 3 : résultat dédié — succès (bascule confirmée) ou échec (« rien
+  // n'a changé »/raison). Résout une fois l'utilisateur a cliqué « Fermer »
+  // (déterministe pour les e2e, jamais un auto-dismiss silencieux qu'un test
+  // pourrait manquer).
+  function renderMigrationResultAndWait(migration, targetLabel) {
+    return new Promise(function (resolve) {
+      var p = migrationStepParts();
+      p.progress.hidden = true;
+      p.result.hidden = false;
+      p.actions.innerHTML = "";
+      if (migration.failed || migration.blocked) {
+        p.result.style.color = "#8a3b2f";
+        p.result.textContent = "Rien n'a changé, vos données locales sont intactes. " + (migration.error || "Migration impossible.");
+      } else {
+        p.result.style.color = "#137a3f";
+        p.result.textContent = "Migration réussie : vos données sont maintenant dans " + targetLabel + ".";
+      }
+      p.actions.appendChild(mkBtn("Fermer", function () { closeMigrationStep(); resolve(); }, true));
+    });
+  }
+
+  // Seed + vérification (contrat §2 points 1/3/4), AVEC hooks optionnels de
+  // progression/confirmation de sauvegarde échouée. `plan` déjà connu (évite
+  // un second `engine.load()`/`planMigration` redondant à l'appelant).
+  // Sauvegarde préalable OBLIGATOIRE : un échec RÉEL de `exportBackup()` sans
+  // confirmation explicite de continuer (`opts.onBackupFailure` absent, ou
+  // renvoyant `false`) fait ÉCHOUER la migration (jamais un « best-effort »
+  // silencieux — contrat §2 point 1 : « ne pas continuer sans que la
+  // sauvegarde soit faite, au minimum la proposer »).
+  function performSeedMigration(engine, soloSnapshot, plan, opts) {
+    opts = opts || {};
+    var onProgress = typeof opts.onProgress === "function" ? opts.onProgress : function () {};
+    var onBackupFailure = typeof opts.onBackupFailure === "function" ? opts.onBackupFailure : function () { return Promise.resolve(false); };
+    return waitForPiloteoMigration(4000).then(function (PM) {
+      onProgress("Sauvegarde de sécurité en cours…");
+      return Promise.resolve()
+        .then(function () { return exportBackup(); })
+        .then(function () { _preMigrationBackupCount += 1; return true; })
+        .catch(function () {
+          return Promise.resolve(onBackupFailure()).then(function (proceedAnyway) {
+            if (!proceedAnyway) {
+              var e = new Error("La sauvegarde de sécurité a échoué et la migration a été annulée avant toute écriture (aucune sauvegarde, aucune migration).");
+              e._backupAborted = true;
+              throw e;
+            }
+            return false; // l'utilisateur a explicitement choisi de continuer sans sauvegarde.
+          });
+        })
+        .then(function (backedUp) {
+          onProgress("Copie de vos données et vérification en cours…");
+          return PM.migrateSoloIntoEngine({ soloSnapshot: soloSnapshot, engine: engine }).then(function (result) {
+            return {
+              failed: !result.ok,
+              blocked: false,
+              migrated: result.ok,
+              kind: result.kind,
+              counts: result.counts,
+              error: result.error,
+              diff: result.diff,
+              rejected: result.rejected,
+              conflicts: result.conflicts,
+              backedUp: backedUp,
+            };
+          });
+        })
+        .catch(function (err) {
+          if (err && err._backupAborted) {
+            return { failed: true, blocked: false, migrated: false, kind: "seed", counts: plan.counts, error: err.message, backedUp: false };
+          }
+          throw err;
+        });
+    });
+  }
+
+  // Orchestration COMPLÈTE et engine-agnostique (folder/org/drive : n'importe
+  // quel `{load, commit}`) d'une migration solo -> cible, contrat §2 points
+  // 1-4 — SANS UI (hook de TEST bas niveau, cf. `window.PiloteoLocal._runGuardedMigration`,
+  // et utilisée telle quelle par `decideAndRunMigration` pour le cas
+  // "nothing-to-migrate"/"target-not-empty"). Renvoie `{failed, blocked,
+  // migrated, kind, counts, error?, backedUp}` — ne bascule JAMAIS
+  // `piloteo_storage_mode` (responsabilité de l'appelant, UNIQUEMENT si
+  // `!failed && !blocked`). Sans confirmation utilisateur possible ici (pas
+  // d'UI), un échec de sauvegarde fait échouer la migration par défaut
+  // (`performSeedMigration` sans `onBackupFailure` => jamais un
+  // best-effort silencieux qui migrerait sans filet de sécurité).
+  function runGuardedMigration(engine, soloSnapshot) {
+    return waitForPiloteoMigration(4000).then(function (PM) {
+      if (!PM) {
+        return { failed: true, blocked: false, migrated: false, kind: null,
+          error: "Module de migration indisponible (rechargez la page). Aucune écriture n'a eu lieu, vos données de cet appareil sont intactes." };
+      }
+      return engine.load().then(function (loaded) {
+        var plan = PM.planMigration({ soloSnapshot: soloSnapshot, targetExisting: loaded.state });
+        if (plan.kind === "nothing-to-migrate") {
+          return { failed: false, blocked: false, migrated: false, kind: plan.kind, counts: plan.counts };
+        }
+        if (plan.kind === "target-not-empty") {
+          return { failed: false, blocked: true, migrated: false, kind: plan.kind, counts: plan.counts, error: TARGET_NOT_EMPTY_MESSAGE };
+        }
+        return performSeedMigration(engine, soloSnapshot, plan);
+      });
+    });
+  }
+
+  // Orchestrateur UI (contrat §3) : point d'entrée UNIQUE pour les DEUX
+  // chemins d'activation (écran d'accueil « Créer une organisation »/
+  // « Choisir un dossier » ET Réglages) qui migrent l'état solo. Décide
+  // (`planMigration`) puis :
+  //  - "nothing-to-migrate" : aucune UI, `hooks.onNothingToMigrate` (ou
+  //    résout directement) ;
+  //  - "target-not-empty" : `hooks.onTargetNotEmpty(blockedResult)` — permet à
+  //    chaque appelant sa propre UX (Dossier : confirmer l'ouverture TELLE
+  //    QUELLE, comme avant ; Organisation : message dédié + refus, cf.
+  //    `renderMigrationResultAndWait`) ;
+  //  - "seed" : pas UI explicite complet (intro+compteur+cible+sauvegarde
+  //    annoncée -> Continuer/Annuler -> progression -> résultat dédié
+  //    Fermer) via `showMigrationIntroStep`/`performSeedMigration`/
+  //    `renderMigrationResultAndWait`.
+  // Renvoie le `migration` résultant si `!failed`, sinon LÈVE (avec
+  // `migration.error`) — l'appelant n'a plus qu'à `.then(activer)`/`.catch(afficher)`.
+  function decideAndRunMigration(engine, soloSnapshot, targetLabel, hooks) {
+    hooks = hooks || {};
+    return waitForPiloteoMigration(4000).then(function (PM) {
+      if (!PM) {
+        var offlineResult = { failed: true, blocked: false, migrated: false, kind: null,
+          error: "Module de migration indisponible (rechargez la page). Aucune écriture n'a eu lieu, vos données de cet appareil sont intactes." };
+        throw new Error(offlineResult.error);
+      }
+      return engine.load().then(function (loaded) {
+        var plan = PM.planMigration({ soloSnapshot: soloSnapshot, targetExisting: loaded.state });
+
+        if (plan.kind === "nothing-to-migrate") {
+          var nothingResult = { failed: false, blocked: false, migrated: false, kind: plan.kind, counts: plan.counts };
+          return nothingResult;
+        }
+
+        if (plan.kind === "target-not-empty") {
+          var blockedResult = { failed: false, blocked: true, migrated: false, kind: plan.kind, counts: plan.counts, error: TARGET_NOT_EMPTY_MESSAGE };
+          if (typeof hooks.onTargetNotEmpty === "function") {
+            return hooks.onTargetNotEmpty(blockedResult);
+          }
+          return renderMigrationResultAndWait(blockedResult, targetLabel).then(function () {
+            throw new Error(blockedResult.error);
+          });
+        }
+
+        // "seed" : pas UI explicite complet.
+        return showMigrationIntroStep(plan.counts, targetLabel).then(function (proceed) {
+          if (!proceed) {
+            closeMigrationStep();
+            throw new Error("Migration annulée : vos données de cet appareil restent actives, rien n'a changé.");
+          }
+          return performSeedMigration(engine, soloSnapshot, plan, {
+            onProgress: updateMigrationProgress,
+            onBackupFailure: confirmBackupFailure,
+          }).then(function (migration) {
+            return renderMigrationResultAndWait(migration, targetLabel).then(function () {
+              if (migration.failed) throw new Error(migration.error || "Migration impossible.");
+              return migration;
+            });
+          });
+        });
+      });
     });
   }
 
@@ -689,40 +1056,51 @@
     });
   }
 
-  // Active le mode Dossier : ouvre le sélecteur natif, puis :
-  //  - dossier VIDE (aucun event) -> y recopie l'état courant de l'appareil (un
-  //    commit) pour la continuité (mini-migration ; le point 5 la raffinera) ;
-  //  - dossier déjà peuplé -> on charge simplement ce qu'il contient, sans y
-  //    toucher.
+  // Active le mode Dossier : ouvre le sélecteur natif, puis (Point 5,
+  // MIGRATION_MODE_CONTRACT.md, remplace l'ancienne « mini-migration » non
+  // vérifiée du point 1b) :
+  //  - dossier déjà peuplé -> `runGuardedMigration` détecte `"target-not-empty"` :
+  //    on demande confirmation (comme avant) puis on l'affiche TEL QUEL, sans
+  //    fusion ni écriture — les données de cet appareil restent sauvegardées
+  //    localement, jamais affichées ni fusionnées ;
+  //  - dossier vide + solo non vide -> sauvegarde `.piloteobackup` OBLIGATOIRE,
+  //    seed vérifié (`verifyRoundTrip` + rechargement réel de la cible) ; la
+  //    bascule de `piloteo_storage_mode` n'a lieu QUE si la vérification
+  //    réussit — sinon on reste sur cet appareil, données intactes ;
+  //  - dossier vide + solo vide -> rien à migrer (`"nothing-to-migrate"`),
+  //    activation directe.
   function activateFolder() {
     if (!window.PiloteoNext) return Promise.reject(new Error("Le pont de stockage dossier n'a pas chargé (rechargez la page)."));
     if (!window.PiloteoNext.hasFileSystemAccess) return Promise.reject(new Error("Navigateur non compatible (Chrome/Edge/Opera sur ordinateur requis)."));
     return window.PiloteoNext.activateFolderFromPicker().then(function (engine) {
-      return engine.load().then(function (loaded) {
-        var isEmpty = COLLECTIONS.every(function (c) { return !((loaded.state && loaded.state[c]) || []).length; });
-        if (!isEmpty) {
-          // Correctif revue 1b (#2) : dossier déjà peuplé -> on l'affiche TEL QUEL,
-          // sans fusion. Avertir explicitement que les données de cet appareil ne
-          // seront pas affichées ni fusionnées (elles restent sauvegardées en local).
-          var msg = "Ce dossier contient déjà des données Pilotéo.\n\n" +
-            "En l'activant, ce sont CES données qui s'affichent. Les données de cet " +
-            "appareil restent sauvegardées localement mais ne seront ni affichées ni " +
-            "fusionnées.\n\nActiver ce dossier ?";
-          if (typeof window.confirm === "function" && !window.confirm(msg)) {
-            throw new Error("Activation annulée.");
-          }
-          return null; // charger le dossier tel quel
-        }
-        // Correctif revue 1b (#3/#4) : recopier le stockage ACTIF (stateRecord) en
-        // garantissant >=1 consultant (ensureUsable) pour qu'app.js démarre.
-        return stateRecord().then(function (rec) { return engine.commit(ensureUsable(rec.state)); });
-      }).then(function () {
+      return stateRecord().then(function (rec) {
+        var solo = ensureUsable(rec.state);
+        var targetLabel = "le dossier" + (engine.folderName ? " « " + engine.folderName + " »" : " choisi");
+        return decideAndRunMigration(engine, solo, targetLabel, {
+          // Correctif revue 1b (#2), conservé TEL QUEL (comportement propre au
+          // Dossier, différent de l'Organisation) : dossier déjà peuplé -> on
+          // l'affiche TEL QUEL, sans fusion, sur confirmation explicite —
+          // jamais le pas UI générique de refus (pas de sauvegarde/seed dans
+          // ce cas : rien n'est écrit dans le dossier).
+          onTargetNotEmpty: function (blockedResult) {
+            var msg = "Ce dossier contient déjà des données Pilotéo.\n\n" +
+              "En l'activant, ce sont CES données qui s'affichent. Les données de cet " +
+              "appareil restent sauvegardées localement mais ne seront ni affichées ni " +
+              "fusionnées.\n\nActiver ce dossier ?";
+            if (typeof window.confirm === "function" && !window.confirm(msg)) {
+              throw new Error("Activation annulée.");
+            }
+            return blockedResult; // charger le dossier tel quel
+          },
+        });
+      }).then(function (migration) {
         activeEngine = engine;
         folderNeedsPermission = false;
         storageMode = "folder";
         try { localStorage.setItem(STORAGE_MODE_KEY, "folder"); } catch (e) {}
         _folderReady = Promise.resolve(); // reprise déjà faite : court-circuite un ensureFolderReady() ultérieur
-        return { folderName: engine.folderName };
+        _lastMigrationResult = migration;
+        return { folderName: engine.folderName, migration: migration };
       });
     });
   }
@@ -1043,6 +1421,28 @@
     }
     var state = {};
     COLLECTIONS.forEach(function (k) { state[k] = Array.isArray(data.state[k]) ? data.state[k] : []; });
+
+    // Durcissement (contrariant Point 5) : REFUSE explicitement un backup
+    // portant des identités dupliquées au sein d'une même collection — sans ce
+    // refus, la seconde entité écraserait silencieusement la première dès
+    // qu'un diff événementiel serait calculé (Dossier/Organisation, ou une
+    // migration ultérieure), une PERTE DE DONNÉES invisible pour l'utilisateur
+    // (repro : `snapshotToEventsDiff` "dernier gagne" sur une `Map` par id).
+    // Refus plutôt que déduplication silencieuse : aucune règle "qui gagne"
+    // n'est fiable sans arbitrage humain (contrat §1 : jamais migrer un état
+    // ambigu en silence).
+    var dups = findDuplicateIdentities(state);
+    if (dups.length > 0) {
+      var details = dups.map(function (d) {
+        return d.entityType + " (" + COLLECTION_IDENTITY_KEY[d.entityType] + "=" + d.id + ", " + d.count + " entrées)";
+      }).join(" ; ");
+      throw new Error(
+        "Import refusé : ce fichier contient des entités en double (même identité, contenus potentiellement " +
+        "différents) — " + details + ". Corrigez le fichier (chaque élément doit avoir une identité unique) " +
+        "avant de réimporter : aucune donnée n'a été modifiée."
+      );
+    }
+
     // Correctif revue 1b (#4) : garantir >=1 consultant, sinon app.js refuse de
     // démarrer (« Compte non rattaché ») et affiche un écran de connexion trompeur.
     state = ensureUsable(state);
@@ -1687,6 +2087,11 @@
     _installed: false,
     // Utilitaires exposés pour l'export/import de sauvegarde (Phase 2C).
     _getRecord: getRecord,
+    // Hook de TEST (contrariant Point 5) : accès direct à l'import d'une
+    // sauvegarde (texte JSON), sans passer par le `<input type=file>` du
+    // panneau Réglages — permet de prouver le refus explicite d'un backup à
+    // identités dupliquées.
+    _importBackupText: importBackupText,
     // Route vers le stockage ACTIF (dossier si actif), cf. correctifs revue 1b.
     _putState: putStateUnified,
     _stateKey: STATE_KEY,
@@ -1698,6 +2103,34 @@
     _activateFolder: activateFolder,
     _deactivateFolder: deactivateFolder,
     _retryFolderPermission: retryFolderPermission,
+    // --- Point 5 (MIGRATION_MODE_CONTRACT.md) : hooks de TEST ---------------
+    // `_createOrg` : symétrique de `_activateFolder`, pour exercer le chemin
+    // « Créer une organisation » (migration comprise) sans passer par l'écran
+    // d'accueil/Réglages.
+    _createOrg: activateCreateOrg,
+    // `_runGuardedMigration(engine, soloSnapshot)` : accès DIRECT à
+    // l'orchestration de migration (sauvegarde -> plan -> seed -> vérification),
+    // sans passer par le sélecteur natif ni par `activateFolder`/`_createOrg`.
+    // Permet à un e2e d'injecter un `engine` {load,commit} quelconque (réel ou
+    // délibérément cassé, cf. `piloteo-migration-bridge.mjs#__forceNextVerificationFailure`)
+    // pour prouver, dans un vrai navigateur, qu'un échec de vérification
+    // n'entraîne JAMAIS de bascule (contrat §4 scénario 9).
+    _runGuardedMigration: runGuardedMigration,
+    // Dernier résultat de migration (activateFolder/activateCreateOrg RÉELS,
+    // ou _runGuardedMigration) — pour assertions e2e (contrat §4 scénarios 7-9).
+    _lastMigrationResult: function () { return _lastMigrationResult; },
+    // Nombre de sauvegardes `.piloteobackup` déclenchées AVANT une écriture de
+    // migration (contrat §2 point 1) — preuve qu'« une sauvegarde a été
+    // produite » sans dépendre de l'interception du téléchargement lui-même.
+    _preMigrationBackupCount: function () { return _preMigrationBackupCount; },
+    // Nombre de fois où l'avertissement « sauvegarde échouée, continuer quand
+    // même ? » a été RÉELLEMENT affiché (contrat §2 point 1 : « tracer que
+    // l'utilisateur a vu l'avertissement »), quelle que soit sa réponse.
+    _backupWarningShownCount: function () { return _backupWarningShownCount; },
+    // `decideAndRunMigration(engine, soloSnapshot, targetLabel, hooks)` :
+    // orchestrateur UI complet (pas explicite §3) — accès direct pour les e2e
+    // qui veulent exercer le pas UI sans passer par le sélecteur natif.
+    _decideAndRunMigration: decideAndRunMigration,
     // Hook de TEST : pose un engine (ex: construit via PiloteoNext.__engineFromHandle
     // sur un faux dossier) comme moteur actif, SANS passer par le sélecteur natif
     // (non automatisable). Permet aux e2e de prouver que /api/me, la sauvegarde et
