@@ -140,7 +140,9 @@ try {
   //    manifeste écrit, /api/me role=admin, /api/state fonctionne.
   // ==========================================================================
   consoleErrors.length = 0;
-  await page.addScriptTag({ content: `(${fakeDirHandleFactorySource.toString()})();` });
+  // CSP (script-src sans 'unsafe-inline') bloque addScriptTag inline : on passe
+  // par page.evaluate (CDP Runtime.evaluate, non soumis à la CSP de la page).
+  await page.evaluate(fakeDirHandleFactorySource);
 
   const createResult = await page.evaluate(async () => {
     const handle = new window.__FakeDirHandle("PiloteoOrgE2E");

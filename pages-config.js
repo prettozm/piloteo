@@ -1,0 +1,1 @@
+window.PILOTEO_FORCE_SOLO=true; window.PILOTEO_GOOGLE_CLIENT_ID="940162140944-llbfni295begfk20egmvnuqd9sc37cj8.apps.googleusercontent.com";

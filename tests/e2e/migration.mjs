@@ -134,7 +134,9 @@ try {
     { timeout: 5000 }
   );
   ok(true, "ponts chargés (PiloteoOrg, PiloteoMigration, PiloteoLocal)");
-  await page.addScriptTag({ content: `(${fakeDirHandleFactorySource.toString()})();` });
+  // CSP (script-src sans 'unsafe-inline') bloque addScriptTag inline : on passe
+  // par page.evaluate (CDP Runtime.evaluate, non soumis à la CSP de la page).
+  await page.evaluate(fakeDirHandleFactorySource);
 
   // Ferme l'écran d'accueil s'il est là (non bloquant pour la suite).
   await page.evaluate(() => document.getElementById("piloteo-welcome")?.querySelector("button")?.click());

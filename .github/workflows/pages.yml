@@ -17,6 +17,7 @@ on:
       - "index.html"
       - "app.js"
       - "local-backend.js"
+      - "pages-config.js"
       - "piloteo-solo-bridge.mjs"
       - "piloteo-org-bridge.mjs"
       - "piloteo-drive-bridge.mjs"
@@ -46,6 +47,15 @@ jobs:
           set -eu
           mkdir -p _site/assets
           cp index.html app.js piloteo-events.js local-backend.js sw-solo.js manifest.webmanifest _site/
+          # Durcissement mode statique (Point 2, docs/next/STATIC_HARDENING_CONTRACT.md
+          # §2) : la config runtime (PILOTEO_FORCE_SOLO + client id Google PUBLIC) est
+          # désormais un fichier statique VERSIONNÉ (pages-config.js, plus de script
+          # inline injecté par ce workflow — la CSP d'index.html interdit script-src
+          # 'unsafe-inline'). index.html le charge déjà lui-même : on le copie tel
+          # quel, comme n'importe quel autre asset. La republication `/app/` (worktree
+          # main, hors CI) doit embarquer exactement ces deux fichiers ensemble :
+          # pages-config.js + l'index.html porteur de la balise CSP.
+          cp pages-config.js _site/
           # Point 1b : le pont mode Dossier est un module ES qui importe src/*
           # (event-log, reducer, storage...) — les deux doivent être servis en
           # statique pour que le mode Dossier soit utilisable sur le site déployé.
@@ -65,19 +75,10 @@ jobs:
           # Seed PUBLIC neutre : aucune donnée personnelle sur le site déployé.
           cp deploy/seed.public.json _site/seed.json
           cp assets/logo-default.svg _site/assets/ 2>/dev/null || true
-          # Forcer le mode solo par défaut (pas besoin de ?solo=1 sur le site déployé).
-          # On insère le drapeau juste avant le chargement de local-backend.js.
-          python3 - <<'PY'
-          import io, pathlib
-          p = pathlib.Path("_site/index.html")
-          html = p.read_text(encoding="utf-8")
-          needle = '<script src="local-backend.js"></script>'
-          inject = '<script>window.PILOTEO_FORCE_SOLO=true;</script>\n' + needle
-          if needle in html and 'PILOTEO_FORCE_SOLO' not in html:
-              html = html.replace(needle, inject, 1)
-          p.write_text(html, encoding="utf-8")
-          print("force-solo injecté")
-          PY
+          # Mode solo forcé par défaut (pas besoin de ?solo=1 sur le site déployé) :
+          # window.PILOTEO_FORCE_SOLO=true est désormais posé par pages-config.js
+          # (copié ci-dessus, chargé par index.html AVANT tout le reste) — plus
+          # d'injection au build ici (CSP script-src sans 'unsafe-inline').
       - name: Garde-fou — chaque asset local d'index.html existe dans _site
         run: |
           set -eu

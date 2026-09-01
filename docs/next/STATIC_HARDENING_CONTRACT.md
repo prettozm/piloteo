@@ -66,6 +66,12 @@ contient plus de `<script>…</script>` inline non vide (hors `src=`) ; `pages-c
 pose bien les deux globals. e2e : l'app solo démarre toujours (CSP ne casse pas les
 modules ES ni le SW) ; le mode Drive reste chargeable (GSI autorisé par la CSP).
 
+> Note d'implémentation (maker) : la republication `/app/` (worktree main) doit
+> embarquer EXACTEMENT `pages-config.js` (config runtime versionnée, plus
+> d'injection au build) + `index.html` porteur de la balise CSP — les deux
+> fichiers vont ensemble, `index.html` charge `pages-config.js` en premier
+> script de la page.
+
 ## 3. Contraintes
 - `app.js`/`server.py` intacts. Client id PUBLIC uniquement. Aucun secret.
 - `npm run test:next` reste vert. Non-régression solo/dossier/org/drive/auth.
