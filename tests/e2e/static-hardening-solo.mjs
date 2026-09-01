@@ -120,6 +120,22 @@ try {
   const supportLinks = await page.evaluate(() => document.querySelectorAll('a[href="/support"]').length);
   ok(supportLinks === 0, `aucun lien href="/support" présent (trouvé ${supportLinks})`);
 
+  // --- Point 1 (round contrariant) : un lien nu href="/support" réinséré APRÈS
+  //     la fenêtre du MutationObserver borné (5s) doit RESTER inaccessible,
+  //     grâce à la règle CSS permanente a[href="/support"]{display:none}. -------
+  const lateLink = await page.evaluate(async () => {
+    await new Promise((r) => setTimeout(r, 5300)); // au-delà des 5000ms de l'observer
+    const a = document.createElement("a");
+    a.href = "/support"; a.textContent = "Support";
+    document.body.appendChild(a);
+    return { present: !!document.querySelector('a[href="/support"]'), offsetParent: a.offsetParent };
+  });
+  ok(
+    lateLink.offsetParent === null,
+    `lien nu href="/support" injecté après la fenêtre de 5s reste non-cliquable (offsetParent=${lateLink.offsetParent === null ? "null" : "VISIBLE"})`
+  );
+  await page.evaluate(() => document.querySelectorAll('a[href="/support"]').forEach((a) => a.remove()));
+
   // --- non-régression : navigation vers la vue Administration (qui contenait
   //     le panneau) — le reste de la vue doit toujours fonctionner. -----------
   await page.click('[data-view="admin"]');

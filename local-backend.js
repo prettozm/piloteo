@@ -2488,11 +2488,13 @@
   // sans risque pour lui. Trois couches (idempotentes, sans effet en mode
   // Serveur V1 puisque tout ceci est sous la garde `isSolo()`) :
   //   1. retrait DOM immédiat (le panneau + tout lien href="/support") ;
-  //   2. masquage CSS `display:none !important` injecté en <head>, en
-  //      défense en profondeur si jamais réinjecté plus tard ;
+  //   2. masquage CSS `display:none !important` PERMANENT injecté en <head>,
+  //      sur l'ID du panneau ET sur tout lien href="/support" — défense en
+  //      profondeur indépendante du timing, même réinjecté bien plus tard ;
   //   3. un MutationObserver BORNÉ (se déconnecte après 5s, largement au-delà
   //      du boot d'app.js) qui répète le retrait DOM si un code futur
-  //      réinsérait ces nœuds — jamais un observeur qui tourne indéfiniment.
+  //      réinsérait ces nœuds — jamais un observeur qui tourne indéfiniment
+  //      (la couche 2 couvre déjà, sans borne, la réinsertion tardive).
   var SUPPORT_PANEL_ID = "support-admin-panel";
   var SUPPORT_HREF = "/support";
   function hideSupportPanelCss() {
@@ -2500,7 +2502,14 @@
       if (document.getElementById("piloteo-support-hide-style")) return;
       var style = document.createElement("style");
       style.id = "piloteo-support-hide-style";
-      style.textContent = "#" + SUPPORT_PANEL_ID + "{display:none !important;}";
+      // Deux règles PERMANENTES (indépendantes du MutationObserver borné) :
+      // l'ID du panneau ET tout lien href="/support" — pour qu'un lien nu
+      // (futur bouton d'aide ailleurs dans l'UI) réinséré APRÈS l'expiration de
+      // l'observer reste inaccessible. Le contrat §1 exige « tout lien
+      // href="/support" » absent/inaccessible SANS borne temporelle.
+      style.textContent =
+        "#" + SUPPORT_PANEL_ID + "{display:none !important;}" +
+        'a[href="' + SUPPORT_HREF + '"]{display:none !important;pointer-events:none !important;}';
       (document.head || document.documentElement).appendChild(style);
     } catch (e) {}
   }
