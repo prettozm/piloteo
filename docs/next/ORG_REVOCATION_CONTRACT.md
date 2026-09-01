@@ -115,3 +115,15 @@ Invariants :
 - Réutiliser crypto-service, memberships, invitations ; ne pas réécrire.
 - `npm run test:next` vert (aucune régression). app.js/server.py intacts. Mode
   chiffré SyncEngine inchangé.
+
+## 6. Note opérationnelle pour l'UI (2c-C)
+
+Re-revue sécurité round 2 : révocation VALIDÉE (2 failles critiques closes, 10
+vecteurs confirmés sûrs). Point à surfacer dans l'UI :
+- **Révoquer l'owner de genèse a un rayon d'explosion TOTAL** sur l'organisation
+  (toute la chaîne de confiance en dépend). Une révocation mutuelle entre deux
+  owners peut, selon le tie-break, désigner l'owner racine comme perdant et
+  détruire la confiance de tout l'arbre. L'UI 2c-C DOIT avertir explicitement
+  avant de révoquer un owner (surtout l'owner racine), et avant de révoquer un
+  admin ayant invité des membres (ceux-ci perdent leur ancre et devront être
+  ré-invités).
