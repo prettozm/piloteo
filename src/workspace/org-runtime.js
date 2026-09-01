@@ -429,8 +429,18 @@ export async function createRevocation({
   });
   const proof = await signer(new TextEncoder().encode(canonical));
 
+  // DÉVIATION (lot 2c-B, docs/next/ORG_FOLDER_CONTRACT.md §2) : `revocationId`
+  // (UUID) est ajouté ICI, APRÈS le calcul de `proof` — donc explicitement HORS
+  // des octets signés (`revocationCanonicalPayload` ne le contient pas et n'est
+  // pas modifiée). Il ne sert qu'à l'ADRESSAGE FICHIER côté dossier
+  // (`org-folder-store.js#writeRevocation` : id de blob
+  // `"revocation-"+revocationId`) — jamais à la vérification de confiance
+  // (`verifyRevocation`/`buildTrustedMembership` ne le lisent jamais). Comme il
+  // n'entre pas dans le proof, l'ajouter ne change ni la valeur de `proof`, ni
+  // aucun test existant sur la révocation (§1/§2bis).
   return {
     kind: "revocation",
+    revocationId: globalThis.crypto.randomUUID(),
     workspaceId,
     revokedMemberId,
     revokedAt,
