@@ -648,3 +648,41 @@ test("cas 13 (round 4, non-régression) — nominal : l'owner signe consultantId
   assert.equal(membership.role, "admin");
   assert.equal(membership.consultantId, "c-cible-precise", "le membre est admis avec EXACTEMENT le consultantId choisi par l'émetteur à l'invitation");
 });
+
+test("cas 14 (round 5, repro contrariant) — genèse SANS consultant cible (ownerConsultantId=null, cas par défaut) : une fiche genèse FORGÉE portant un consultantId arbitraire ne l'injecte JAMAIS dans le membershipStore du owner (le trou du fallback `?? record.membership.consultantId` est fermé)", async () => {
+  // L'org est créée SANS `consultantId` -> `manifest.ownerConsultantId === null`.
+  // C'est précisément le cas que le cas 12 ne couvrait pas (il ancrait "c-owner"),
+  // laissant l'ancien fallback `?? record.membership.consultantId` atteignable.
+  const ownerIdentity = await newMemberIdentity();
+  const org = createOrganization({ name: "Sans consultant", identity: ownerIdentity, consultantId: null });
+  assert.equal(org.manifest.ownerConsultantId ?? null, null, "manifeste sans consultant cible (défaut)");
+
+  // Fiche genèse LÉGITIME : consultantId du owner = null (du manifeste).
+  const legit = await buildTrustedMembership({ manifest: org.manifest, memberRecords: [org.memberRecord] });
+  assert.equal(legit.membershipStore.get(org.workspace.workspaceId, ownerIdentity.memberId).consultantId, null);
+
+  // Fiche genèse FORGÉE par un écrivain du dossier : reproduit ownerMemberId +
+  // ownerPublicKeyJwk (PUBLICS dans le manifeste, AUCUNE clé privée requise) et
+  // injecte un consultantId arbitraire. Examinée AVANT la vraie fiche (ordre du
+  // tableau) pour maximiser la chance d'empoisonnement.
+  const forgedGenesis = {
+    memberId: org.manifest.ownerMemberId,
+    publicKeyJwk: org.manifest.ownerPublicKeyJwk,
+    membership: {
+      workspaceId: org.workspace.workspaceId,
+      memberId: org.manifest.ownerMemberId,
+      role: "owner",
+      status: "active",
+      consultantId: "c-VICTIME-FORGE",
+    },
+    authorization: { genesis: true },
+  };
+  for (const order of [[forgedGenesis, org.memberRecord], [org.memberRecord, forgedGenesis]]) {
+    const { membershipStore } = await buildTrustedMembership({ manifest: org.manifest, memberRecords: order });
+    const owner = membershipStore.get(org.workspace.workspaceId, ownerIdentity.memberId);
+    assert.ok(owner, "l'owner reste présent (manifeste)");
+    assert.equal(owner.consultantId, null, "le consultantId du owner reste null (manifeste) — la valeur forgée n'est JAMAIS admise, quel que soit l'ordre");
+    assert.notEqual(owner.consultantId, "c-VICTIME-FORGE");
+    assert.equal(owner.role, "owner", "le rôle owner du manifeste est intact");
+  }
+});

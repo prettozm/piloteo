@@ -1209,8 +1209,25 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
     // décision de sécurité (contrairement à `consultantId`, dont l'exclusion
     // de cette liste ci-dessus est justement le correctif de ce round).
     const verifiedRole = isGenesis ? record.membership.role : record.authorization.invitation.role;
+    // ROUND CONTRARIANT 5 (final) — le fallback `?? record.membership.consultantId`
+    // de la branche genèse CONTREDISAIT le commentaire ci-dessus ("JAMAIS
+    // `record.membership.consultantId`") : quand l'org a été créée SANS consultant
+    // cible (`manifest.ownerConsultantId === null`, cas par défaut documenté), une
+    // fiche genèse FORGÉE — un écrivain du dossier reproduit `ownerMemberId` +
+    // `ownerPublicKeyJwk` (tous deux PUBLICS dans le manifeste ; aucune clé privée
+    // requise) et injecte un `consultantId` arbitraire — pouvait empoisonner le
+    // `consultantId` du OWNER dans `membershipStore` avec une valeur JAMAIS signée.
+    // Impact réel mesuré : nul aujourd'hui (`core/permissions.js#isAdmin` court-
+    // circuite sur `role==="owner"` AVANT toute lecture de `consultantId`) — mais
+    // c'est exactement la classe de faille "champ non vérifié copié depuis
+    // `record.membership`" que cette liste blanche interdit. La genèse n'a PAS
+    // besoin d'une pré-passe de contestation (§1.2/§1.3) : `genesisMismatchReason`
+    // pinne DÉJÀ `memberId`/`publicKeyJwk`/`role`/`workspaceId` au manifeste, et
+    // désormais `consultantId` vient EXCLUSIVEMENT du manifeste — tout champ de
+    // sécurité de la fiche genèse est donc manifeste-dérivé, une fiche genèse
+    // divergente ne peut plus poisonner quoi que ce soit (au pire un doublon inerte).
     const verifiedConsultantId = isGenesis
-      ? (manifest.ownerConsultantId ?? record.membership.consultantId ?? null)
+      ? (manifest.ownerConsultantId ?? null)
       : (record.authorization.invitation.consultantId ?? null);
     const status = revokedSet.has(record.memberId) ? "revoked" : "active";
     registry._add(record.memberId, record.publicKeyJwk, verifiedRole, status);

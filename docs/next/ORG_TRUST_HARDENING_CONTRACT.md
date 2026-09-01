@@ -79,8 +79,11 @@ l'`InMemoryStorageAdapter`/FolderStorageAdapter ET via les candidats Drive) :
    (même clé, même contenu) → admis une fois, pas un conflit.
 5. **Révocation** : une fiche de révocation hostile divergente ne fait pas
    disparaître une vraie révocation ni n'en injecte une admise par createdTime.
-Le repro `attack-driveorg2-escalation.mjs` doit passer de « CASSÉ » à « TENU »
-(clé d'Eve jamais admise sous le memberId de Bob). `npm run test:next` reste vert,
+La régression durable de tous ces scénarios (usurpation d'invitation, DoS memberId,
+empoisonnement membership, usurpation `consultantId`, genèse forgée) vit dans
+`tests/next/org-trust-hardening.test.mjs` (cas 1–14, « vert = sécurisé ») ; les
+scripts de repro scratch à la racine ne sont pas versionnés (`.gitignore`).
+`npm run test:next` reste vert,
 non-régression Point 2 (org-runtime, org-revocation, org-engine, org-folder),
 Point 4 (drive-*), onboarding Drive (drive-onboarding, org-onboarding-drive).
 
