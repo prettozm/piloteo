@@ -1029,7 +1029,12 @@
         var orgAdapterRef = activeOrgAdapter;
         var myRole = orgEngineRef.membership.role || "user";
         var roleLabel = myRole === "owner" ? "Propriétaire" : myRole === "admin" ? "Administrateur" : "Membre";
-        var orgDisplayName = (function () { try { return localStorage.getItem(ORG_NAME_KEY); } catch (e) { return null; } })() || "Organisation";
+        // Nom d'affichage : priorité au manifeste (racine write-once, visible par
+        // TOUS les membres, y compris ceux qui ont rejoint), repli sur le nom
+        // mémorisé localement (créateur) puis un libellé générique.
+        var orgDisplayName = (orgEngineRef.manifest && orgEngineRef.manifest.name)
+          || (function () { try { return localStorage.getItem(ORG_NAME_KEY); } catch (e) { return null; } })()
+          || "Organisation";
         body.appendChild(el("p", "margin:2px 0 10px;font-size:.9rem;",
           "« " + orgDisplayName + " » — vous êtes " + roleLabel + "."));
 

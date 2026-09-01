@@ -147,6 +147,11 @@ export function createOrganization({ name, identity, consultantId } = {}) {
 
   const manifest = {
     workspaceId: ws.id,
+    // Nom d'affichage de l'organisation, publié dans le manifeste (racine
+    // write-once) pour qu'un membre qui REJOINT le voie (sinon il n'aurait qu'un
+    // libellé générique). Non sécuritaire (le manifeste n'est pas signé : sa
+    // confiance vient de son immuabilité write-once, comme le reste de ses champs).
+    name: ws.name || name || null,
     ownerMemberId: identity.memberId,
     ownerPublicKeyJwk: identity.publicKeyJwk,
     createdAt: nowIso(),
