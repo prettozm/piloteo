@@ -9,7 +9,7 @@
  * Enregistré uniquement en mode solo (par local-backend.js). Politique de MAJ
  * contrôlée : pas de skipWaiting automatique ; un nouveau SW attend.
  */
-var CACHE_VERSION = "piloteo-solo-v3";
+var CACHE_VERSION = "piloteo-solo-v4";
 // Chemins RELATIFS à l'emplacement du service worker (résolus contre son scope) :
 // fonctionne à la racine d'un domaine comme dans un sous-dossier (GitHub Pages).
 var PRECACHE = [

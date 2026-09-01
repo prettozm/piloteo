@@ -342,10 +342,14 @@ async function openOrg({ handle, consultantId, identity } = {}) {
  * geste utilisateur ; `{engine, adapter, manifest, membership, folderName}`
  * sinon.
  */
-async function resumeOrg() {
+async function resumeOrg(opts) {
   const handle = await loadDirectoryHandle();
   if (!handle) return null;
-  const granted = await ensureHandlePermission(handle, "readwrite");
+  // `interactive:true` UNIQUEMENT depuis un geste utilisateur (bouton « Redonner
+  // l'accès ») ; au boot on ne fait que QUERY — `requestPermission` hors geste
+  // lève « User activation is required » (corrigé : plus d'exception au boot).
+  const interactive = !!(opts && opts.interactive);
+  const granted = await ensureHandlePermission(handle, "readwrite", interactive);
   if (!granted) return { needsPermission: true };
   const identity = await getOrCreateIdentity();
   const adapter = buildAdapter(handle);
