@@ -56,6 +56,10 @@ jobs:
           # Point 4 : idem pour le pont mode Google Drive (écriture vive) — même
           # raison (module ES important src/*, déjà copié ci-dessous).
           cp piloteo-drive-bridge.mjs _site/
+          # Point 5 (migration à la bascule) + Point 3 (session/auth) : ces deux
+          # ponts ES sont AUSSI chargés par index.html -> sans eux, 404 au boot.
+          cp piloteo-migration-bridge.mjs _site/
+          cp piloteo-auth-bridge.mjs _site/
           mkdir -p _site/src
           cp -r src/. _site/src/
           # Seed PUBLIC neutre : aucune donnée personnelle sur le site déployé.
@@ -73,6 +77,28 @@ jobs:
               html = html.replace(needle, inject, 1)
           p.write_text(html, encoding="utf-8")
           print("force-solo injecté")
+          PY
+      - name: Garde-fou — chaque asset local d'index.html existe dans _site
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import re, pathlib, sys
+          site = pathlib.Path("_site")
+          html = (site / "index.html").read_text(encoding="utf-8")
+          # src="..." et import ... from "..." locaux (hors http(s)://, data:, #, //)
+          refs = set(re.findall(r'src=["\']([^"\']+)["\']', html))
+          refs |= set(re.findall(r'from\s+["\']([^"\']+)["\']', html))
+          missing = []
+          for r in refs:
+              if r.startswith(("http://", "https://", "data:", "//", "#", "mailto:")):
+                  continue
+              if r.startswith("/"):   # chemins absolus type /brand-logo : routes app, pas des fichiers
+                  continue
+              if not (site / r).exists():
+                  missing.append(r)
+          if missing:
+              print("ASSETS MANQUANTS dans _site :", missing); sys.exit(1)
+          print("Garde-fou OK — tous les assets locaux d'index.html sont présents.")
           PY
       - uses: actions/upload-pages-artifact@v3
         with:
