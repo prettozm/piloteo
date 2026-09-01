@@ -21,3 +21,7 @@ tests/e2e/csvexport.baseline.json
 # Sorties générées par le déployeur (tools/deploy) — spécifiques au déploiement, non versionnées
 deploy/piloteo.config.js
 deploy/piloteo.runtime.json
+
+# Repros d’attaque (scratch, la régression durable est dans tests/next/org-trust-hardening.test.mjs)
+# Relocalisés dans tests/attacks/ à la clôture du lot.
+/attack-*.mjs
