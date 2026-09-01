@@ -90,6 +90,26 @@
 //     que l'appelant peut ajouter en construisant sa propre policy/refs ; ce
 //     moteur ne les calcule pas lui-même (nécessiterait de connaître le
 //     schéma complet du domaine, hors périmètre strict de SyncEngine).
+//
+// 11. Option `trusted` (défaut `false`, docs/next/ORG_CONTRACT.md §2) : modèle
+//     « Dossier de confiance » — événements SIGNÉS (Ed25519) mais NON
+//     chiffrés (payload en clair dans le blob publié ; la confidentialité
+//     repose sur les permissions du SI du client, pas sur ce moteur). Seule la
+//     CONFIDENTIALITÉ disparaît : `push()` ne chiffre pas (le blob publié EST
+//     l'enveloppe, `payload` en clair, jamais de `ciphertext`, signée via
+//     `canonicalize(blob)` qui couvre déjà `payload`) ; `_processIncoming()`
+//     saute l'étape « decrypt » (`payload = blob.payload`, déjà en clair) et
+//     n'exige pas de `keyring`/epoch connue localement ; `createLocalEvent()`
+//     utilise une `epoch` constante à `1` (buildEvent exige `epoch>=1`) sans
+//     dépendre d'un `keyring` non vide — le `keyring` devient OPTIONNEL au
+//     constructeur en mode `trusted`. TOUTES les autres étapes du pipeline
+//     (envelope, verify signature, validate schema, verify membership, verify
+//     policy, concurrence via EventLog#replay()) restent EXACTEMENT les mêmes,
+//     dans le même ordre : un événement non signé, mal signé, d'un membre
+//     inconnu/révoqué, ou refusé par la policy est rejeté à l'identique.
+//     Le mode par défaut (`trusted:false`) est un no-op de cette option :
+//     chaque branche `trusted` a un `else` qui reproduit le code historique à
+//     l'identique, donc aucune régression du comportement chiffré existant.
 
 import { canonicalize, isWellFormedEnvelope, buildEvent } from "../events/event-schema.js";
 import { validateEnvelope, validatePayload } from "../events/validation.js";
@@ -112,6 +132,7 @@ export class SyncEngine {
    * @param {{getPublicKey:(actorId:string)=>*}} deps.memberRegistry voir décision 1
    * @param {import("../workspace/memberships.js").MembershipStore} deps.membershipStore
    * @param {{workspaceId:string, memberId:string, privateKeyRef:*}} deps.actor identité locale de ce client
+   * @param {boolean} [deps.trusted=false] mode « Dossier de confiance » (signé, non chiffré) — voir décision 11
    */
   constructor({
     adapter,
@@ -123,11 +144,14 @@ export class SyncEngine {
     memberRegistry,
     membershipStore,
     actor,
+    trusted = false,
   } = {}) {
     if (!adapter) throw new TypeError("SyncEngine: 'adapter' requis.");
     if (!eventLog) throw new TypeError("SyncEngine: 'eventLog' requis.");
     if (!crypto) throw new TypeError("SyncEngine: 'crypto' requis.");
-    if (!keyring) throw new TypeError("SyncEngine: 'keyring' requis.");
+    // En mode trusted, aucun chiffrement n'a lieu : le keyring devient
+    // optionnel (décision 11). En mode par défaut, comportement inchangé.
+    if (!trusted && !keyring) throw new TypeError("SyncEngine: 'keyring' requis.");
     if (!policy || typeof policy.evaluate !== "function") {
       throw new TypeError("SyncEngine: 'policy' (avec .evaluate) requis.");
     }
@@ -144,12 +168,13 @@ export class SyncEngine {
     this.adapter = adapter;
     this.eventLog = eventLog;
     this.crypto = crypto;
-    this.keyring = keyring;
+    this.keyring = keyring ?? null;
     this.policy = policy;
     this.localStore = localStore;
     this.memberRegistry = memberRegistry;
     this.membershipStore = membershipStore;
     this.actor = actor;
+    this.trusted = !!trusted;
 
     this._cursorKey = `${actor.workspaceId}:${actor.memberId}`;
     this._cursor = undefined;
@@ -213,9 +238,17 @@ export class SyncEngine {
     // P0.1 — ancrage causal : l'événement descend explicitement du dernier
     // événement ayant amené l'entité à son état courant (null si création).
     const parentEventId = currentEntity?.lastEventId ?? null;
-    const epoch = this.keyring.currentEpochNumber();
-    if (epoch === null) {
-      throw new Error("SyncEngine.createLocalEvent: keyring vide, aucune epoch courante disponible.");
+    // En mode trusted (décision 11), pas de rotation d'epoch/chiffrement :
+    // epoch constante à 1 (buildEvent exige epoch>=1), sans dépendre du
+    // keyring (optionnel dans ce mode). Comportement par défaut inchangé.
+    let epoch;
+    if (this.trusted) {
+      epoch = 1;
+    } else {
+      epoch = this.keyring.currentEpochNumber();
+      if (epoch === null) {
+        throw new Error("SyncEngine.createLocalEvent: keyring vide, aucune epoch courante disponible.");
+      }
     }
     const event = buildEvent({
       workspaceId: this.actor.workspaceId,
@@ -266,13 +299,20 @@ export class SyncEngine {
       if (status !== "pending") continue;
       const event = this._pendingEvents.get(eventId);
       try {
-        const epochKey = this.keyring.get(event.epoch);
-        if (!epochKey) {
-          throw new Error(`clé de l'epoch ${event.epoch} introuvable localement — publication impossible.`);
+        let blob;
+        if (this.trusted) {
+          // Décision 11 : pas de chiffrement — le blob publié EST l'enveloppe
+          // avec son `payload` en clair (jamais de `ciphertext`).
+          blob = { ...event };
+        } else {
+          const epochKey = this.keyring.get(event.epoch);
+          if (!epochKey) {
+            throw new Error(`clé de l'epoch ${event.epoch} introuvable localement — publication impossible.`);
+          }
+          const ciphertext = await this.crypto.encryptPayload(epochKey, event.payload);
+          const { payload, ...envelopeWithoutPayload } = event;
+          blob = { ...envelopeWithoutPayload, ciphertext };
         }
-        const ciphertext = await this.crypto.encryptPayload(epochKey, event.payload);
-        const { payload, ...envelopeWithoutPayload } = event;
-        const blob = { ...envelopeWithoutPayload, ciphertext };
         const bytes = canonicalize(blob);
         const signature = await this.crypto.sign(this.actor.privateKeyRef, bytes);
         blob.signature = signature;
@@ -385,16 +425,20 @@ export class SyncEngine {
       return this._reject(blob.eventId, "signature", "signature invalide — événement rejeté (client hostile)");
     }
 
-    // 3. decrypt
-    const epochKey = this.keyring.get(blob.epoch);
-    if (!epochKey) {
-      return this._reject(blob.eventId, "decrypt", `epoch ${blob.epoch} inconnue localement`);
-    }
+    // 3. decrypt (sautée en mode trusted — décision 11 : le payload voyage déjà en clair)
     let payload;
-    try {
-      payload = await this.crypto.decryptPayload(epochKey, blob.ciphertext);
-    } catch (err) {
-      return this._reject(blob.eventId, "decrypt", `déchiffrement refusé: ${(err && err.message) || err}`);
+    if (this.trusted) {
+      payload = blob.payload;
+    } else {
+      const epochKey = this.keyring.get(blob.epoch);
+      if (!epochKey) {
+        return this._reject(blob.eventId, "decrypt", `epoch ${blob.epoch} inconnue localement`);
+      }
+      try {
+        payload = await this.crypto.decryptPayload(epochKey, blob.ciphertext);
+      } catch (err) {
+        return this._reject(blob.eventId, "decrypt", `déchiffrement refusé: ${(err && err.message) || err}`);
+      }
     }
 
     // 4. validate schema
