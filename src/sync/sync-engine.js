@@ -110,6 +110,14 @@
 //     Le mode par défaut (`trusted:false`) est un no-op de cette option :
 //     chaque branche `trusted` a un `else` qui reproduit le code historique à
 //     l'identique, donc aucune régression du comportement chiffré existant.
+//
+// 12. §5.5 (ORG_CONTRACT, durcissement défense en profondeur) : `_processIncoming`
+//     rejette explicitement (`stage:"mode"`) tout blob dont le mode ne
+//     correspond pas à `this.trusted` — un `ciphertext` présent en mode
+//     trusted, ou absent en mode chiffré — AVANT l'étape decrypt/skip. Inséré
+//     juste après « verify signature » (donc un blob doit déjà être
+//     correctement signé pour atteindre cette étape) et avant « decrypt » ;
+//     toutes les autres étapes, dans le même ordre, sont inchangées.
 
 import { canonicalize, isWellFormedEnvelope, buildEvent } from "../events/event-schema.js";
 import { validateEnvelope, validatePayload } from "../events/validation.js";
@@ -423,6 +431,20 @@ export class SyncEngine {
     }
     if (!sigOk) {
       return this._reject(blob.eventId, "signature", "signature invalide — événement rejeté (client hostile)");
+    }
+
+    // 2bis. mode (§5.5 ORG_CONTRACT — défense en profondeur) : le mode du blob
+    // DOIT correspondre à `this.trusted`. Un blob AVEC `ciphertext` en mode
+    // trusted, ou SANS `ciphertext` en mode chiffré, est une incohérence de
+    // mode (mélange d'un dossier confidentiel et d'un dossier de confiance, ou
+    // tentative de forcer ce moteur à traiter un payload comme s'il était de
+    // l'autre mode) — rejetée explicitement, avant même de tenter decrypt/skip.
+    const hasCiphertext = Object.prototype.hasOwnProperty.call(blob, "ciphertext");
+    if (this.trusted && hasCiphertext) {
+      return this._reject(blob.eventId, "mode", "blob chiffré (ciphertext) reçu par un moteur en mode trusted — incohérence de mode");
+    }
+    if (!this.trusted && !hasCiphertext) {
+      return this._reject(blob.eventId, "mode", "blob en clair (sans ciphertext) reçu par un moteur en mode chiffré — incohérence de mode");
     }
 
     // 3. decrypt (sautée en mode trusted — décision 11 : le payload voyage déjà en clair)

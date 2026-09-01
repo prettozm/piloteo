@@ -61,7 +61,13 @@ function toBase64Url(bytes) {
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce }) {
+// EXPORTÉE (déviation additive, docs/next/ORG_CONTRACT.md §5.2) : org-runtime.js
+// doit recomposer EXACTEMENT les mêmes octets canoniques pour vérifier
+// `proof` via `crypto-service.verify` (elle n'a pas accès à la clé privée de
+// l'émetteur, seulement à sa clé publique + l'invitation reçue) — plutôt que
+// de dupliquer cette sérialisation (source de bug si les deux divergent un
+// jour), on l'exporte telle quelle. Signalé au contrat comme acceptable.
+export function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce }) {
   // Sérialisation déterministe (ordre de clés fixe) — pas de JSON.stringify
   // direct sur un objet dont l'ordre des clés serait accidentel.
   return JSON.stringify([workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce]);

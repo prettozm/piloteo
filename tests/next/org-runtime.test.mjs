@@ -2,8 +2,12 @@
 //
 // Couvre docs/next/ORG_CONTRACT.md §3 : `src/workspace/org-runtime.js`
 // (fonctions pures composant crypto-service/memberships/invitations/workspace)
-// + une intégration légère avec `sync/sync-engine.js` en mode `trusted`
-// (docs/next/ORG_CONTRACT.md §3 dernier point).
+// + §5 (correctifs sécurité « chaîne de confiance », suite revue red team) :
+// manifeste de genèse, invitations avec autorité vérifiée, fiche membre
+// adossée à une preuve de détention de clé, et `buildTrustedMembership`
+// (construction VÉRIFIÉE du registre/store, qui remplace les anciens
+// `buildMemberRegistry`/`buildMembershipStore` naïfs — SUPPRIMÉS)
+// + une intégration légère avec `sync/sync-engine.js` en mode `trusted`.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -13,8 +17,8 @@ import {
   createOrganization,
   inviteMember,
   acceptInvitation,
-  buildMemberRegistry,
-  buildMembershipStore,
+  verifyInvitation,
+  buildTrustedMembership,
 } from "../../src/workspace/org-runtime.js";
 import * as cryptoService from "../../src/crypto/crypto-service.js";
 import { canonicalize } from "../../src/events/event-schema.js";
@@ -22,6 +26,16 @@ import { EventLog } from "../../src/events/event-log.js";
 import * as policy from "../../src/core/permissions.js";
 import { InMemoryStorageAdapter } from "../../src/storage/in-memory-adapter.js";
 import { SyncEngine } from "../../src/sync/sync-engine.js";
+import { createMembership } from "../../src/workspace/memberships.js";
+import { createInvitation, revoke } from "../../src/workspace/invitations.js";
+
+/** Construit une organisation fraîche : owner + son signer Ed25519. */
+async function makeOrg(name = "Org") {
+  const ownerIdentity = await newMemberIdentity();
+  const org = createOrganization({ name, identity: ownerIdentity, consultantId: "c-owner" });
+  const ownerSigner = (bytes) => cryptoService.sign(ownerIdentity.privateKeyRef, bytes);
+  return { ownerIdentity, org, ownerSigner };
+}
 
 // ---------------------------------------------------------------------------
 // newMemberIdentity
@@ -41,10 +55,10 @@ test("newMemberIdentity : produit un memberId UUID + une paire Ed25519 (publicKe
 });
 
 // ---------------------------------------------------------------------------
-// createOrganization
+// createOrganization — §5.1 : manifeste de genèse
 // ---------------------------------------------------------------------------
 
-test("createOrganization : le créateur a role:owner, la fiche membre porte sa clé publique et son membership", async () => {
+test("createOrganization : le créateur a role:owner, la fiche membre porte sa clé publique, son membership, et authorization:{genesis:true}", async () => {
   const identity = await newMemberIdentity();
   const org = createOrganization({ name: "Le Clat d'Théia", identity, consultantId: "c-alice" });
 
@@ -63,6 +77,13 @@ test("createOrganization : le créateur a role:owner, la fiche membre porte sa c
   assert.equal(org.memberRecord.memberId, identity.memberId);
   assert.deepEqual(org.memberRecord.publicKeyJwk, identity.publicKeyJwk);
   assert.deepEqual(org.memberRecord.membership, org.ownerMembership);
+  assert.deepEqual(org.memberRecord.authorization, { genesis: true });
+
+  // Manifeste de genèse (§5.1) — racine de confiance immuable.
+  assert.equal(org.manifest.workspaceId, org.workspace.workspaceId);
+  assert.equal(org.manifest.ownerMemberId, identity.memberId);
+  assert.deepEqual(org.manifest.ownerPublicKeyJwk, identity.publicKeyJwk);
+  assert.ok(org.manifest.createdAt);
 });
 
 test("createOrganization : deux organisations créées par la même identité ont des workspaceId distincts", async () => {
@@ -73,16 +94,176 @@ test("createOrganization : deux organisations créées par la même identité on
 });
 
 // ---------------------------------------------------------------------------
-// inviteMember + acceptInvitation
+// inviteMember — §5.2 : signer réel exigé, autorité de l'émetteur vérifiée
 // ---------------------------------------------------------------------------
 
-test("inviteMember + acceptInvitation : le nouvel arrivant reçoit le rôle porté par l'invitation", async () => {
-  const aliceIdentity = await newMemberIdentity();
-  const org = createOrganization({ name: "Org", identity: aliceIdentity, consultantId: "c-alice" });
+test("inviteMember : lève si aucun 'signer' réel n'est fourni (jamais le repli hash non-authentifiant)", async () => {
+  const { org, ownerIdentity } = await makeOrg();
+  await assert.rejects(
+    () =>
+      inviteMember({
+        workspaceId: org.workspace.workspaceId,
+        role: "user",
+        issuer: { memberId: ownerIdentity.memberId },
+        issuerMembership: org.ownerMembership,
+        // signer absent
+      }),
+    /signer/
+  );
+});
 
-  const signer = (bytes) => cryptoService.sign(aliceIdentity.privateKeyRef, bytes);
+test("inviteMember : lève si 'issuer'/'issuerMembership' est absent ou incohérent", async () => {
+  const { org, ownerSigner } = await makeOrg();
+  await assert.rejects(
+    () => inviteMember({ workspaceId: org.workspace.workspaceId, role: "user", signer: ownerSigner }),
+    /issuer/
+  );
+  const stranger = await newMemberIdentity();
+  await assert.rejects(
+    () =>
+      inviteMember({
+        workspaceId: org.workspace.workspaceId,
+        role: "user",
+        issuer: { memberId: stranger.memberId }, // ne correspond pas à issuerMembership
+        issuerMembership: org.ownerMembership,
+        signer: ownerSigner,
+      }),
+    /issuerMembership/
+  );
+});
+
+test("inviteMember : lève si l'émetteur n'a pas l'autorité (rôle 'user', ou membership révoqué)", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+
+  const userInvitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "user",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const userIdentity = await newMemberIdentity();
+  const { membership: userMembership } = await acceptInvitation({
+    invitation: userInvitation, identity: userIdentity, consultantId: "c-user",
+  });
+  const userSigner = (bytes) => cryptoService.sign(userIdentity.privateKeyRef, bytes);
+
+  // Un simple 'user' n'a aucune autorité pour inviter.
+  await assert.rejects(
+    () =>
+      inviteMember({
+        workspaceId: org.workspace.workspaceId, role: "user",
+        issuer: { memberId: userIdentity.memberId }, issuerMembership: userMembership, signer: userSigner,
+      }),
+    /autorité/
+  );
+
+  // Un owner révoqué n'a plus d'autorité non plus.
+  const revokedOwnerMembership = { ...org.ownerMembership, status: "revoked" };
+  await assert.rejects(
+    () =>
+      inviteMember({
+        workspaceId: org.workspace.workspaceId, role: "user",
+        issuer: { memberId: ownerIdentity.memberId }, issuerMembership: revokedOwnerMembership, signer: ownerSigner,
+      }),
+    /actif|révoqué/
+  );
+});
+
+test("inviteMember : le rôle 'owner' ne peut être délégué que par un émetteur 'owner' (un admin ne peut pas)", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+
+  const adminInvitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "admin",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const adminIdentity = await newMemberIdentity();
+  const { membership: adminMembership } = await acceptInvitation({
+    invitation: adminInvitation, identity: adminIdentity, consultantId: "c-admin",
+  });
+  const adminSigner = (bytes) => cryptoService.sign(adminIdentity.privateKeyRef, bytes);
+
+  await assert.rejects(
+    () =>
+      inviteMember({
+        workspaceId: org.workspace.workspaceId, role: "owner",
+        issuer: { memberId: adminIdentity.memberId }, issuerMembership: adminMembership, signer: adminSigner,
+      }),
+    /owner/
+  );
+
+  // Un owner, lui, peut déléguer le rôle owner.
   const invitation = await inviteMember({
-    workspaceId: org.workspace.workspaceId, role: "admin", signer,
+    workspaceId: org.workspace.workspaceId, role: "owner",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  assert.equal(invitation.role, "owner");
+  assert.equal(invitation.issuerId, ownerIdentity.memberId);
+});
+
+test("inviteMember : rôle par défaut 'user' quand non précisé, invitation porte issuerId", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId,
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  assert.equal(invitation.role, "user");
+  assert.equal(invitation.issuerId, ownerIdentity.memberId);
+});
+
+// ---------------------------------------------------------------------------
+// verifyInvitation — §5.2
+// ---------------------------------------------------------------------------
+
+test("verifyInvitation : accepte une invitation légitime émise par un owner de confiance", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "admin",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const registry = {
+    getPublicKey: (id) => (id === ownerIdentity.memberId ? ownerIdentity.publicKeyJwk : null),
+    getMembership: (id) => (id === ownerIdentity.memberId ? { role: "owner", status: "active" } : null),
+  };
+  const result = await verifyInvitation(invitation, { registry });
+  assert.equal(result.ok, true);
+});
+
+test("verifyInvitation : rejette un émetteur inconnu du registre de confiance", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "user",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const emptyRegistry = { getPublicKey: () => null, getMembership: () => null };
+  const result = await verifyInvitation(invitation, { registry: emptyRegistry });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /inconnu/);
+});
+
+test("verifyInvitation : rejette une invitation dont le proof a été altéré (bidon)", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "user",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const tampered = { ...invitation, proof: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" };
+  const registry = {
+    getPublicKey: (id) => (id === ownerIdentity.memberId ? ownerIdentity.publicKeyJwk : null),
+    getMembership: (id) => (id === ownerIdentity.memberId ? { role: "owner", status: "active" } : null),
+  };
+  const result = await verifyInvitation(tampered, { registry });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /proof/);
+});
+
+// ---------------------------------------------------------------------------
+// acceptInvitation
+// ---------------------------------------------------------------------------
+
+test("inviteMember + acceptInvitation : le nouvel arrivant reçoit le rôle porté par l'invitation, avec joinProof", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "admin",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
   });
   assert.equal(invitation.role, "admin");
   assert.equal(invitation.status, "pending");
@@ -102,17 +283,18 @@ test("inviteMember + acceptInvitation : le nouvel arrivant reçoit le rôle port
   assert.equal(memberRecord.kind, "member");
   assert.equal(memberRecord.memberId, bobIdentity.memberId);
   assert.deepEqual(memberRecord.publicKeyJwk, bobIdentity.publicKeyJwk);
-});
-
-test("inviteMember : rôle par défaut 'user' quand non précisé", async () => {
-  const workspaceId = globalThis.crypto.randomUUID();
-  const invitation = await inviteMember({ workspaceId });
-  assert.equal(invitation.role, "user");
+  assert.equal(memberRecord.authorization.invitation.status, "consumed");
+  assert.equal(typeof memberRecord.authorization.joinProof, "string");
+  assert.ok(memberRecord.authorization.joinProof.length > 0);
 });
 
 test("acceptInvitation : invitation expirée => rejet", async () => {
-  const workspaceId = globalThis.crypto.randomUUID();
-  const invitation = await inviteMember({ workspaceId, ttlMs: 1 });
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId,
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+    ttlMs: 1,
+  });
   // Laisse le temps à l'expiration de passer (ttlMs=1ms, largement dépassé par le temps d'exécution du test).
   await new Promise((resolve) => setTimeout(resolve, 10));
   const identity = await newMemberIdentity();
@@ -123,21 +305,28 @@ test("acceptInvitation : invitation expirée => rejet", async () => {
 });
 
 test("acceptInvitation : invitation révoquée => rejet", async () => {
-  const { revoke } = await import("../../src/workspace/invitations.js");
-  const workspaceId = globalThis.crypto.randomUUID();
-  const invitation = await inviteMember({ workspaceId });
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId,
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
   const revoked = revoke(invitation);
   const identity = await newMemberIdentity();
   await assert.rejects(() => acceptInvitation({ invitation: revoked, identity, consultantId: "c-x" }));
 });
 
-test("acceptInvitation : invitation déjà consommée => rejet (pas de double enrôlement)", async () => {
+test("acceptInvitation : invitation déjà consommée (par le MÊME appelant, en 2 temps) => rejet local", async () => {
   // org-runtime n'a pas de store d'invitations (aucune E/S) : c'est l'objet
   // "consumed" retourné par le premier acceptInvitation (à charge pour
   // l'appelant/2c de le persister) qui matérialise l'état "déjà consommée" —
-  // on le repasse ici en second essai pour vérifier le rejet.
-  const workspaceId = globalThis.crypto.randomUUID();
-  const invitation = await inviteMember({ workspaceId });
+  // on le repasse ici en second essai pour vérifier le rejet local. La
+  // protection AUTORITATIVE contre le rejeu à travers deux fiches DIFFÉRENTES
+  // publiées est celle de `buildTrustedMembership` (§5.4, voir plus bas).
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId,
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
   const identity1 = await newMemberIdentity();
   const { invitation: consumedInvitation } = await acceptInvitation({
     invitation, identity: identity1, consultantId: "c-1",
@@ -149,8 +338,11 @@ test("acceptInvitation : invitation déjà consommée => rejet (pas de double en
 });
 
 test("acceptInvitation : mauvaise identité Google attendue => rejet", async () => {
-  const workspaceId = globalThis.crypto.randomUUID();
-  const invitation = await inviteMember({ workspaceId, expectedGoogleId: "google-sub-alice" });
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, expectedGoogleId: "google-sub-alice",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
   const identity = await newMemberIdentity();
   await assert.rejects(
     () => acceptInvitation({ invitation, identity, consultantId: "c-x", googleId: "google-sub-MALLORY" }),
@@ -159,8 +351,11 @@ test("acceptInvitation : mauvaise identité Google attendue => rejet", async () 
 });
 
 test("acceptInvitation : bonne identité Google attendue => accepté", async () => {
-  const workspaceId = globalThis.crypto.randomUUID();
-  const invitation = await inviteMember({ workspaceId, expectedGoogleId: "google-sub-alice" });
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, expectedGoogleId: "google-sub-alice",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
   const identity = await newMemberIdentity();
   const { membership } = await acceptInvitation({
     invitation, identity, consultantId: "c-x", googleId: "google-sub-alice",
@@ -169,50 +364,293 @@ test("acceptInvitation : bonne identité Google attendue => accepté", async () 
 });
 
 // ---------------------------------------------------------------------------
-// buildMemberRegistry / buildMembershipStore
+// buildTrustedMembership — §5.4 / §5.6
 // ---------------------------------------------------------------------------
 
-test("buildMemberRegistry/buildMembershipStore : à partir de 3 fiches, getPublicKey et MembershipStore.get renvoient les bonnes valeurs", async () => {
-  const ownerIdentity = await newMemberIdentity();
-  const org = createOrganization({ name: "Org", identity: ownerIdentity, consultantId: "c-owner" });
+test("buildTrustedMembership : scénario légitime complet (owner invite admin, admin invite user) — tout admis, rien rejeté", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
 
-  const signer = (bytes) => cryptoService.sign(ownerIdentity.privateKeyRef, bytes);
-  const invitationAdmin = await inviteMember({ workspaceId: org.workspace.workspaceId, role: "admin", signer });
+  const invitationAdmin = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "admin",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
   const adminIdentity = await newMemberIdentity();
-  const { memberRecord: adminRecord } = await acceptInvitation({
+  const { membership: adminMembership, memberRecord: adminRecord } = await acceptInvitation({
     invitation: invitationAdmin, identity: adminIdentity, consultantId: "c-admin",
   });
+  const adminSigner = (bytes) => cryptoService.sign(adminIdentity.privateKeyRef, bytes);
 
-  const invitationUser = await inviteMember({ workspaceId: org.workspace.workspaceId, role: "user", signer });
+  const invitationUser = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "user",
+    issuer: { memberId: adminIdentity.memberId }, issuerMembership: adminMembership, signer: adminSigner,
+  });
   const userIdentity = await newMemberIdentity();
-  const { membership: userMembership, memberRecord: userRecord } = await acceptInvitation({
+  const { memberRecord: userRecord } = await acceptInvitation({
     invitation: invitationUser, identity: userIdentity, consultantId: "c-user",
   });
 
   const memberRecords = [org.memberRecord, adminRecord, userRecord];
-  const registry = buildMemberRegistry(memberRecords);
-  const store = buildMembershipStore(memberRecords);
+  const { registry, membershipStore, trusted, rejected } = await buildTrustedMembership({
+    manifest: org.manifest, memberRecords,
+  });
 
+  assert.equal(rejected.length, 0, JSON.stringify(rejected));
+  assert.equal(trusted.length, 3);
   assert.deepEqual(registry.getPublicKey(ownerIdentity.memberId), ownerIdentity.publicKeyJwk);
   assert.deepEqual(registry.getPublicKey(adminIdentity.memberId), adminIdentity.publicKeyJwk);
   assert.deepEqual(registry.getPublicKey(userIdentity.memberId), userIdentity.publicKeyJwk);
   assert.equal(registry.getPublicKey("inconnu"), null);
 
-  assert.equal(store.get(org.workspace.workspaceId, ownerIdentity.memberId).role, "owner");
-  assert.equal(store.get(org.workspace.workspaceId, adminIdentity.memberId).role, "admin");
-  assert.equal(store.get(org.workspace.workspaceId, userIdentity.memberId).role, "user");
-
-  // Un membre révoqué (transformation en aval, hors de ce module) est vu révoqué.
-  store.revoke(org.workspace.workspaceId, userIdentity.memberId);
-  assert.equal(store.get(org.workspace.workspaceId, userIdentity.memberId).status, "revoked");
-  assert.deepEqual(userMembership.status, "active", "l'objet original passé n'est jamais muté (revoke renvoie une copie)");
+  assert.equal(membershipStore.get(org.workspace.workspaceId, ownerIdentity.memberId).role, "owner");
+  assert.equal(membershipStore.get(org.workspace.workspaceId, adminIdentity.memberId).role, "admin");
+  assert.equal(membershipStore.get(org.workspace.workspaceId, userIdentity.memberId).role, "user");
 });
 
-test("buildMemberRegistry/buildMembershipStore : ignorent silencieusement les entrées qui ne sont pas des fiches membres", () => {
-  const registry = buildMemberRegistry([null, { kind: "key" }, undefined]);
-  const store = buildMembershipStore([null, { kind: "license" }]);
-  assert.equal(registry.getPublicKey("x"), null);
-  assert.equal(store.get("ws", "x"), null);
+test("buildTrustedMembership : admet indépendamment de l'ordre des fiches (point fixe / BFS)", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+
+  const invitationAdmin = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "admin",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const adminIdentity = await newMemberIdentity();
+  const { membership: adminMembership, memberRecord: adminRecord } = await acceptInvitation({
+    invitation: invitationAdmin, identity: adminIdentity, consultantId: "c-admin",
+  });
+  const adminSigner = (bytes) => cryptoService.sign(adminIdentity.privateKeyRef, bytes);
+
+  const invitationUser = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "user",
+    issuer: { memberId: adminIdentity.memberId }, issuerMembership: adminMembership, signer: adminSigner,
+  });
+  const userIdentity = await newMemberIdentity();
+  const { memberRecord: userRecord } = await acceptInvitation({
+    invitation: invitationUser, identity: userIdentity, consultantId: "c-user",
+  });
+
+  // Ordre volontairement "inversé" : la fiche du user (dont l'émetteur est
+  // l'admin) précède la fiche de son émetteur ; la genèse arrive en dernier.
+  const memberRecords = [userRecord, adminRecord, org.memberRecord];
+  const { trusted, rejected } = await buildTrustedMembership({ manifest: org.manifest, memberRecords });
+
+  assert.equal(rejected.length, 0, JSON.stringify(rejected));
+  assert.equal(trusted.length, 3);
+});
+
+test("buildTrustedMembership : une fiche admin auto-déclarée (aucune invitation) est REJETÉE, absente du registre/store", async () => {
+  const { org, ownerIdentity } = await makeOrg();
+
+  const malloryIdentity = await newMemberIdentity();
+  const forgedRecord = {
+    kind: "member",
+    memberId: malloryIdentity.memberId,
+    publicKeyJwk: malloryIdentity.publicKeyJwk,
+    membership: createMembership({
+      workspaceId: org.workspace.workspaceId, memberId: malloryIdentity.memberId,
+      consultantId: "c-mallory", role: "admin",
+    }),
+    // Pas d'authorization.invitation/joinProof : auto-déclaration.
+  };
+
+  const { registry, membershipStore, trusted, rejected } = await buildTrustedMembership({
+    manifest: org.manifest, memberRecords: [org.memberRecord, forgedRecord],
+  });
+
+  assert.equal(trusted.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].record, forgedRecord);
+  assert.equal(registry.getPublicKey(malloryIdentity.memberId), null);
+  assert.equal(membershipStore.get(org.workspace.workspaceId, malloryIdentity.memberId), null);
+
+  // Un événement signé par ce faux admin, sur une collection ADMIN_ONLY, est
+  // refusé par SyncEngine : il n'est simplement pas dans le registre.
+  const adapter = new InMemoryStorageAdapter();
+  const bobEngine = new SyncEngine({
+    adapter, eventLog: new EventLog(), crypto: cryptoService, policy,
+    memberRegistry: registry, membershipStore,
+    actor: { workspaceId: org.workspace.workspaceId, memberId: ownerIdentity.memberId, privateKeyRef: ownerIdentity.privateKeyRef },
+    trusted: true,
+  });
+  const forgedEvent = {
+    version: 1, eventId: globalThis.crypto.randomUUID(), workspaceId: org.workspace.workspaceId,
+    entityType: "consultants", entityId: "cForged", operation: "create",
+    actorId: malloryIdentity.memberId, baseVersion: 0, epoch: 1,
+    createdAt: new Date().toISOString(), payload: { id: "cForged", nom: "Faux admin" },
+  };
+  forgedEvent.signature = await cryptoService.sign(malloryIdentity.privateKeyRef, canonicalize(forgedEvent));
+  await adapter.putImmutable("event", forgedEvent.eventId, forgedEvent);
+
+  const result = await bobEngine.pull();
+  assert.equal(result.rejections.length, 1);
+  assert.equal(result.rejections[0].stage, "signature", "acteur absent du registre => rejeté dès la vérification de signature");
+});
+
+test("buildTrustedMembership : une invitation 'owner' forgée par un émetteur non-owner (admin de confiance) est rejetée", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+
+  const invitationAdmin = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "admin",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const adminIdentity = await newMemberIdentity();
+  const { memberRecord: adminRecord } = await acceptInvitation({
+    invitation: invitationAdmin, identity: adminIdentity, consultantId: "c-admin",
+  });
+  const adminSigner = (bytes) => cryptoService.sign(adminIdentity.privateKeyRef, bytes);
+
+  // L'admin (réellement de confiance une fois admis) contourne `inviteMember`
+  // (qui aurait levé) et forge directement une invitation "owner" via
+  // `createInvitation`, en s'auto-attribuant `issuerId`.
+  const forgedOwnerInvitation = await createInvitation({
+    workspaceId: org.workspace.workspaceId, role: "owner", signer: adminSigner,
+  });
+  forgedOwnerInvitation.issuerId = adminIdentity.memberId;
+
+  const forgedOwnerIdentity = await newMemberIdentity();
+  const { memberRecord: forgedOwnerRecord } = await acceptInvitation({
+    invitation: forgedOwnerInvitation, identity: forgedOwnerIdentity, consultantId: "c-forged-owner",
+  });
+
+  const memberRecords = [org.memberRecord, adminRecord, forgedOwnerRecord];
+  const { trusted, rejected } = await buildTrustedMembership({ manifest: org.manifest, memberRecords });
+
+  assert.equal(trusted.length, 2, "genèse + admin légitime seulement");
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].record, forgedOwnerRecord);
+  assert.match(rejected[0].reason, /owner/);
+});
+
+test("buildTrustedMembership : une invitation au proof bidon (altéré) est rejetée", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "user",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const tamperedInvitation = { ...invitation, proof: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" };
+
+  const attackerIdentity = await newMemberIdentity();
+  const { memberRecord: attackerRecord } = await acceptInvitation({
+    invitation: tamperedInvitation, identity: attackerIdentity, consultantId: "c-attacker",
+  });
+
+  const { trusted, rejected } = await buildTrustedMembership({
+    manifest: org.manifest, memberRecords: [org.memberRecord, attackerRecord],
+  });
+
+  assert.equal(trusted.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].record, attackerRecord);
+  assert.match(rejected[0].reason, /invitation invalide/);
+});
+
+test("buildTrustedMembership : joinProof substitué (clé remplacée après coup) est rejeté", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "user",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const bobIdentity = await newMemberIdentity();
+  const { memberRecord: bobRecord } = await acceptInvitation({
+    invitation, identity: bobIdentity, consultantId: "c-bob",
+  });
+
+  // Mallory falsifie la fiche : elle y substitue SA PROPRE clé publique, mais
+  // ne peut pas re-forger le joinProof (elle n'a pas la clé privée de Bob).
+  const malloryIdentity = await newMemberIdentity();
+  const substitutedRecord = { ...bobRecord, memberId: malloryIdentity.memberId, publicKeyJwk: malloryIdentity.publicKeyJwk };
+
+  const { trusted, rejected } = await buildTrustedMembership({
+    manifest: org.manifest, memberRecords: [org.memberRecord, substitutedRecord],
+  });
+
+  assert.equal(trusted.length, 1, "seule la genèse est admise");
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].record, substitutedRecord);
+  assert.match(rejected[0].reason, /joinProof/);
+});
+
+test("buildTrustedMembership : rejeu d'une même invitation par deux fiches distinctes — une seule admise, la 2e rejetée", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+
+  const invitation = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "user",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+
+  const bobIdentity = await newMemberIdentity();
+  const { memberRecord: bobRecord } = await acceptInvitation({
+    invitation, identity: bobIdentity, consultantId: "c-bob",
+  });
+  const malloryIdentity = await newMemberIdentity();
+  const { memberRecord: malloryRecord } = await acceptInvitation({
+    invitation, identity: malloryIdentity, consultantId: "c-mallory",
+  });
+
+  const { trusted, rejected } = await buildTrustedMembership({
+    manifest: org.manifest, memberRecords: [org.memberRecord, bobRecord, malloryRecord],
+  });
+
+  assert.equal(trusted.length, 2, "genèse + première fiche seulement");
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].record, malloryRecord);
+  assert.match(rejected[0].reason, /rejeu|déjà utilisée/);
+});
+
+test("buildTrustedMembership : collision de rôle sur un même memberId — un user ne peut pas être promu admin via une 2e fiche", async () => {
+  const { org, ownerIdentity, ownerSigner } = await makeOrg();
+  const sharedIdentity = await newMemberIdentity();
+
+  const invitationUser = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "user",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const { memberRecord: userRecord } = await acceptInvitation({
+    invitation: invitationUser, identity: sharedIdentity, consultantId: "c-1",
+  });
+
+  const invitationAdmin = await inviteMember({
+    workspaceId: org.workspace.workspaceId, role: "admin",
+    issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
+  });
+  const { memberRecord: adminPromotionRecord } = await acceptInvitation({
+    invitation: invitationAdmin, identity: sharedIdentity, consultantId: "c-2",
+  });
+
+  const { trusted, rejected } = await buildTrustedMembership({
+    manifest: org.manifest, memberRecords: [org.memberRecord, userRecord, adminPromotionRecord],
+  });
+
+  assert.equal(trusted.length, 2, "genèse + première fiche (user) seulement");
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].record, adminPromotionRecord);
+  assert.match(rejected[0].reason, /déjà admis/);
+});
+
+test("buildTrustedMembership : une fiche genèse forgée (mauvaise clé) est rejetée, la vraie genèse (manifeste) prime", async () => {
+  const { org } = await makeOrg();
+  const attackerIdentity = await newMemberIdentity();
+  const forgedGenesis = {
+    kind: "member",
+    memberId: org.manifest.ownerMemberId, // usurpe le memberId de l'owner
+    publicKeyJwk: attackerIdentity.publicKeyJwk, // mais avec SA PROPRE clé
+    membership: createMembership({
+      workspaceId: org.workspace.workspaceId, memberId: org.manifest.ownerMemberId,
+      consultantId: "c-attacker", role: "owner",
+    }),
+    authorization: { genesis: true },
+  };
+
+  const { registry, trusted, rejected } = await buildTrustedMembership({
+    manifest: org.manifest, memberRecords: [forgedGenesis],
+  });
+
+  assert.equal(trusted.length, 0);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].record, forgedGenesis);
+  // La clé de l'owner reste celle du manifeste, jamais celle de l'attaquant.
+  assert.deepEqual(registry.getPublicKey(org.manifest.ownerMemberId), org.manifest.ownerPublicKeyJwk);
 });
 
 // ---------------------------------------------------------------------------
@@ -220,12 +658,13 @@ test("buildMemberRegistry/buildMembershipStore : ignorent silencieusement les en
 // ---------------------------------------------------------------------------
 
 test("intégration : Alice (owner) crée l'org, invite Bob (user), Bob rejoint ; ils convergent en clair signé ; une usurpation est rejetée", async () => {
-  const aliceIdentity = await newMemberIdentity();
-  const org = createOrganization({ name: "Cabinet Alice", identity: aliceIdentity, consultantId: "c-alice" });
+  const { org, ownerIdentity: aliceIdentity, ownerSigner: signer } = await makeOrg("Cabinet Alice");
   const workspaceId = org.workspace.workspaceId;
 
-  const signer = (bytes) => cryptoService.sign(aliceIdentity.privateKeyRef, bytes);
-  const invitation = await inviteMember({ workspaceId, role: "user", signer });
+  const invitation = await inviteMember({
+    workspaceId, role: "user",
+    issuer: { memberId: aliceIdentity.memberId }, issuerMembership: org.ownerMembership, signer,
+  });
 
   const bobIdentity = await newMemberIdentity();
   const { memberRecord: bobRecord } = await acceptInvitation({
@@ -233,8 +672,10 @@ test("intégration : Alice (owner) crée l'org, invite Bob (user), Bob rejoint ;
   });
 
   const memberRecords = [org.memberRecord, bobRecord];
-  const memberRegistry = buildMemberRegistry(memberRecords);
-  const membershipStore = buildMembershipStore(memberRecords);
+  const { registry: memberRegistry, membershipStore, rejected } = await buildTrustedMembership({
+    manifest: org.manifest, memberRecords,
+  });
+  assert.equal(rejected.length, 0);
 
   const adapter = new InMemoryStorageAdapter();
 

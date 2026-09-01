@@ -18,6 +18,7 @@ import assert from "node:assert/strict";
 import { EventLog } from "../../src/events/event-log.js";
 import { buildEvent, canonicalize } from "../../src/events/event-schema.js";
 import * as cryptoService from "../../src/crypto/crypto-service.js";
+import { Keyring } from "../../src/crypto/keyring.js";
 import * as policy from "../../src/core/permissions.js";
 import { MembershipStore } from "../../src/workspace/memberships.js";
 import { InMemoryStorageAdapter } from "../../src/storage/in-memory-adapter.js";
@@ -306,4 +307,62 @@ test("trusted policy : owner a les droits métier admin (ex: écrire sur une col
   assert.equal(result.rejections.length, 0, "owner peut écrire sur une collection ADMIN_ONLY, comme admin");
   assert.ok(h.bob.engine.getProjection().consultants.cNew);
   assert.equal(ev.epoch, 1);
+});
+
+// ---------------------------------------------------------------------------
+// 7. Durcissement §5.5 (ORG_CONTRACT) — incohérence de mode, dans les 2 sens
+// ---------------------------------------------------------------------------
+
+test("mode : un moteur trusted:true rejette (stage 'mode') un blob portant un ciphertext", async () => {
+  const h = await makeHarness();
+
+  const event = buildEvent({
+    workspaceId: h.workspaceId, entityType: "saisies", entityId: "sModeCipher", operation: "create",
+    actorId: h.alice.memberId, baseVersion: 0, epoch: 1,
+    payload: saisiePayload({ id: "sModeCipher", consultantId: "c-alice" }),
+  });
+  const { payload, ...withoutPayload } = event;
+  const blob = { ...withoutPayload, ciphertext: "ZmFrZS1jaXBoZXJ0ZXh0" }; // ciphertext bidon mais bien formé
+  blob.signature = await cryptoService.sign(h.alice.privateKeyRef, canonicalize(blob));
+  await h.adapter.putImmutable("event", event.eventId, blob);
+
+  const result = await h.bob.engine.pull();
+  assert.equal(result.rejections.length, 1);
+  assert.equal(result.rejections[0].stage, "mode");
+  assert.equal(h.bob.engine.getProjection().saisies?.sModeCipher, undefined, "jamais appliqué");
+});
+
+test("mode : un moteur trusted:false (mode chiffré par défaut) rejette (stage 'mode') un blob sans ciphertext (payload en clair)", async () => {
+  const workspaceId = globalThis.crypto.randomUUID();
+  const workspaceKey = await cryptoService.generateWorkspaceKey();
+  const adapter = new InMemoryStorageAdapter();
+  const memberRegistry = new FakeMemberRegistry();
+  const membershipStore = new MembershipStore();
+
+  const alice = await makeMember({ workspaceId, membershipStore, memberRegistry, consultantId: "c-alice", role: "owner" });
+  const bob = await makeMember({ workspaceId, membershipStore, memberRegistry, consultantId: "c-bob", role: "user" });
+
+  const bobKeyring = new Keyring();
+  bobKeyring.addEpoch(1, workspaceKey);
+  const bobEngine = new SyncEngine({
+    adapter, eventLog: new EventLog(), crypto: cryptoService, keyring: bobKeyring, policy,
+    memberRegistry, membershipStore,
+    actor: { workspaceId, memberId: bob.memberId, privateKeyRef: bob.privateKeyRef },
+    // trusted absent => false (mode chiffré par défaut, INCHANGÉ)
+  });
+
+  const event = buildEvent({
+    workspaceId, entityType: "saisies", entityId: "sModePlain", operation: "create",
+    actorId: alice.memberId, baseVersion: 0, epoch: 1,
+    payload: saisiePayload({ id: "sModePlain", consultantId: "c-alice" }),
+  });
+  // Blob EN CLAIR (comme en mode trusted) publié alors que ce moteur attend du chiffré.
+  const blob = { ...event };
+  blob.signature = await cryptoService.sign(alice.privateKeyRef, canonicalize(blob));
+  await adapter.putImmutable("event", event.eventId, blob);
+
+  const result = await bobEngine.pull();
+  assert.equal(result.rejections.length, 1);
+  assert.equal(result.rejections[0].stage, "mode");
+  assert.equal(bobEngine.getProjection().saisies?.sModePlain, undefined, "jamais appliqué");
 });
