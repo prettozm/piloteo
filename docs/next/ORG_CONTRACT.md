@@ -111,6 +111,80 @@ Tests `org-runtime.test.mjs` :
   Alice et Bob échangent des événements signés en clair et convergent ; une
   usurpation (Bob signe un event au nom d'Alice) est rejetée.
 
+## 5. Corrections sécurité — CHAÎNE DE CONFIANCE (bloquant, suite revue red team)
+
+La revue a confirmé que le pipeline d'événements (SyncEngine) est sûr, mais que
+les **fiches membres** et **invitations** n'ont AUCUNE racine de confiance :
+quiconque écrit dans le dossier peut s'auto-déclarer `admin`. Le modèle « signé »
+n'a de sens que si l'AUTORITÉ des rôles est, elle aussi, vérifiée
+cryptographiquement. Corrections OBLIGATOIRES :
+
+### 5.1 Racine de confiance = manifeste de genèse (owner)
+- `createOrganization` produit, en plus, un **manifeste** immuable :
+  `{ workspaceId, ownerMemberId, ownerPublicKeyJwk, createdAt }`, et la fiche
+  membre owner porte `authorization: { genesis: true }`.
+- Le manifeste est la RACINE : dans le dossier (lot 2c) il est write-once
+  (immuable), donc le premier créateur est l'owner incontestable. `buildTrusted*`
+  reçoit ce manifeste en ancre de confiance.
+
+### 5.2 Invitations signées et vérifiables, autorité de l'émetteur
+- `inviteMember({ workspaceId, role, issuer, issuerMembership, signer, expectedGoogleId, ttlMs })` :
+  - EXIGE un `signer` réel (Ed25519 de l'émetteur) — jamais le hash par défaut.
+  - VÉRIFIE l'autorité : `issuerMembership.role ∈ {owner, admin}` et actif ;
+    `role:"owner"` réservé à un émetteur `owner`. Sinon throw (aucune invitation
+    produite).
+  - Retourne `{ ...invitation, issuerId }` (issuerId = memberId de l'émetteur,
+    porté à côté du proof pour retrouver sa clé de vérification).
+- `verifyInvitation(invitation, { registry })` (nouveau) : retrouve la clé
+  publique de `invitation.issuerId` via le `registry` DÉJÀ VÉRIFIÉ, vérifie
+  `crypto.verify(issuerPubKey, canonicalBytes(invitation), invitation.proof)`,
+  et que l'émetteur a l'autorité pour ce rôle. Rejet explicite sinon (émetteur
+  inconnu/non autorisé, proof invalide).
+
+### 5.3 Fiche membre adossée à une invitation + preuve du porteur
+- `acceptInvitation(...)` produit une fiche membre :
+  `{ memberId, publicKeyJwk, membership, authorization: { invitation, joinProof } }`
+  où `joinProof = sign(identity.privateKeyRef, canonicalBytes(invitationId, memberId, publicKeyJwk))`
+  prouve que le détenteur de `publicKeyJwk` a bien consommé CETTE invitation avec
+  CETTE clé (anti-substitution de clé).
+
+### 5.4 Construction VÉRIFIÉE du registre/store (remplace buildMemberRegistry/Store naïfs)
+`buildTrustedMembership({ manifest, memberRecords })` -> `{ registry, membershipStore, trusted:[...], rejected:[{record, reason}] }` :
+1. Amorcer l'ensemble de confiance avec la GENÈSE (owner du manifeste :
+   ownerMemberId -> {publicKey: ownerPublicKeyJwk, role:"owner"}).
+2. Point fixe (BFS) : admettre une fiche non-genèse SEULEMENT si TOUTES ces
+   vérifs passent :
+   - `joinProof` valide (crypto.verify avec la clé de la fiche) ;
+   - `invitation` valide via `verifyInvitation` (proof signé par un émetteur
+     DÉJÀ dans l'ensemble de confiance ET autorisé pour ce rôle) ;
+   - `membership.role === invitation.role` ; `invitation.workspaceId === manifest.workspaceId` ;
+   - unicité : le `memberId` n'est pas déjà dans l'ensemble (pas de redéfinition),
+     et l'`invitationId` n'a pas déjà servi (anti-rejeu #5a).
+   Sinon la fiche est REFUSÉE et JOURNALISÉE dans `rejected` (jamais ignorée en silence).
+3. `registry.getPublicKey` / `membershipStore` ne contiennent QUE l'ensemble de confiance.
+- Les anciennes `buildMemberRegistry`/`buildMembershipStore` naïves sont
+  SUPPRIMÉES (ou deviennent des internes non exportés) : plus aucune API ne doit
+  construire un registre à partir de fiches non vérifiées.
+
+### 5.5 Durcissement SyncEngine (défense en profondeur, #2/#6)
+- Dans `_processIncoming`, AVANT decrypt/skip, refuser explicitement un blob dont
+  le mode ne correspond pas à `this.trusted` : en `trusted:true` un blob AVEC
+  `ciphertext` -> rejet `stage:"mode"` ; en `trusted:false` un blob SANS
+  `ciphertext` (donc payload clair) -> rejet `stage:"mode"`. Message dédié.
+
+### 5.6 Tests exigés (ajouts à sync-trusted / org-runtime)
+- Une fiche membre forgée (rôle admin, aucune invitation valide) est REJETÉE par
+  `buildTrustedMembership` (dans `rejected`), et un event signé par ce faux admin
+  sur une collection ADMIN_ONLY est refusé (il n'est pas dans le registre/store).
+- Une invitation `owner` forgée par un non-owner (ou proof bidon) est rejetée.
+- Un `user` invité ne peut pas être promu admin via une fiche forgée.
+- joinProof invalide (clé substituée) -> fiche rejetée.
+- Rejeu d'une même invitation -> une seule fiche admise, la 2e dans `rejected`.
+- Collision de rôle sur un même memberId -> pas de « dernier gagne » : la 2e refusée.
+- Blob de mode incohérent -> rejet `stage:"mode"` (les deux sens).
+- NON-régression : le scénario légitime (owner crée, invite admin/user signés,
+  ils rejoignent, convergent) passe toujours.
+
 ## 4. Contraintes transverses
 - Réutiliser les primitives ; ne rien réécrire (crypto, memberships, invitations,
   workspace, permissions, sync). Signaler tout manque plutôt que dupliquer.
