@@ -9,7 +9,7 @@
  * Enregistré uniquement en mode solo (par local-backend.js). Politique de MAJ
  * contrôlée : pas de skipWaiting automatique ; un nouveau SW attend.
  */
-var CACHE_VERSION = "piloteo-solo-v2";
+var CACHE_VERSION = "piloteo-solo-v3";
 // Chemins RELATIFS à l'emplacement du service worker (résolus contre son scope) :
 // fonctionne à la racine d'un domaine comme dans un sous-dossier (GitHub Pages).
 var PRECACHE = [
@@ -32,11 +32,24 @@ var PRECACHE = [
   "src/storage/folder-storage-adapter.js",
   "src/storage/google-drive-adapter.js",
   "src/storage/storage-adapter.js",
+  // Point 4 : pont Google Drive (écriture vive) et sa config runtime — mêmes
+  // raisons que le pont Dossier ci-dessus (rechargement hors ligne).
+  "piloteo-drive-bridge.mjs",
+  "src/config/runtime-config.js",
   "src/events/event-schema.js",
   "src/events/event-log.js",
   "src/events/reducer.js",
   "src/events/conflict.js",
-  "src/events/validation.js"
+  "src/events/validation.js",
+  // Point 3 (AUTH_SESSION_CONTRACT.md §2, fail-CLOSED) : le pont session/PIN
+  // et le module pur qu'il réexpose. SANS EUX, un rechargement hors ligne
+  // légitime (utilisateur déjà venu une fois, PIN défini) tombe dans la
+  // branche fail-CLOSED de `local-backend.js#ensureSessionReady` — verrouillé
+  // à tort, faute de pouvoir vérifier le PIN. Les précacher évite ce cas :
+  // le module reste disponible même hors ligne, donc le vrai déverrouillage
+  // (avec PIN) reste possible.
+  "piloteo-auth-bridge.mjs",
+  "src/auth/session.js"
 ];
 
 self.addEventListener("install", function (event) {

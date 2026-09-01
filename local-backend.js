@@ -29,6 +29,22 @@
 (function () {
   "use strict";
 
+  // --- Point 3 (docs/next/AUTH_SESSION_CONTRACT.md §1) : référence d'horloge
+  // recoupée, capturée ICI, au tout premier instant d'exécution de ce script
+  // — donc AVANT qu'un script exécuté plus tard dans la page (console
+  // DevTools, extension) ne puisse avoir monkey-patché `Date.now`. Durcissement
+  // (défense en profondeur, PAS une barrière — cf. modèle de menace §0) :
+  // `monotonicNow()` dérive "maintenant" de `performance.now()` (horloge
+  // monotone, non affectée par un `Date.now = ...` ultérieur) recalée sur
+  // cette référence murale honnête, pour recouper l'anti-force-brute
+  // (`attemptUnlock`) sans dépendre uniquement de l'horloge murale mutable.
+  var _clockRefWall = Date.now();
+  var _clockRefMono = (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : null;
+  function monotonicNow() {
+    if (_clockRefMono === null) return Date.now(); // performance.now indisponible : repli sur l'horloge murale
+    return _clockRefWall + (performance.now() - _clockRefMono);
+  }
+
   // --- Détection du mode solo (drapeau explicite, mémorisé) ----------------
   var MODE_KEY = "piloteo_mode";
   function readParam() {
@@ -121,6 +137,9 @@
   // `{load, commit}` qui rend directement la forme attendue par `handle()`.
   var STORAGE_MODE_KEY = "piloteo_storage_mode"; // localStorage : "folder" | "org" | absent (= cet appareil)
   var ORG_NAME_KEY = "piloteo_org_name";          // localStorage : nom d'affichage de l'org (best-effort, cf. §Organisation)
+  // --- Point 3 (docs/next/AUTH_SESSION_CONTRACT.md) : session / verrou d'appareil --
+  var SESSION_KEY = "piloteo_session"; // IndexedDB (store "kv", même base piloteo-solo) : {status,pin,failedAttempts,lockedUntil,lockOnOpen}
+  var sessionState = null;             // cache en mémoire du record ci-dessus, une fois chargé (ensureSessionReady)
   var activeEngine = null;           // engine {load,commit,...} du dossier/org actif, ou null (mode classique)
   var folderNeedsPermission = false; // dossier mémorisé mais permission à ré-accorder (geste utilisateur requis)
   var orgNeedsPermission = false;    // organisation mémorisée mais permission à ré-accorder (idem, mode org)
@@ -233,6 +252,183 @@
       });
     });
     return _orgReady;
+  }
+
+  // --- Point 3 (docs/next/AUTH_SESSION_CONTRACT.md) : session / verrou d'appareil --
+  //
+  // Symétrique aux `waitForPiloteoNext`/`waitForPiloteoOrg` ci-dessus :
+  // `piloteo-auth-bridge.mjs` (module ES, différé de fait) pose
+  // `window.PiloteoAuth` — `local-backend.js` ne suppose jamais sa présence
+  // au chargement, il le teste à l'usage (poll court).
+  function waitForPiloteoAuth(timeoutMs) {
+    return new Promise(function (resolve) {
+      var waited = 0, step = 50;
+      (function poll() {
+        if (window.PiloteoAuth) { resolve(window.PiloteoAuth); return; }
+        waited += step;
+        if (waited >= timeoutMs) { resolve(null); return; }
+        setTimeout(poll, step);
+      })();
+    });
+  }
+
+  function loadSessionRecord() { return idbGet(SESSION_KEY); }
+  function persistSession(rec) { return idbPut(SESSION_KEY, rec); }
+
+  // Portillon /api : `_sessionGate` est une promesse qui ne résout QUE
+  // lorsque la session est `active` (contrat §2 : « la promesse ne résout
+  // qu'après unlock »). `withSessionActive` la relit à CHAQUE appel (pas de
+  // capture figée) pour refléter un verrouillage survenu depuis (déconnexion,
+  // verrouillage manuel) — voir `closeGate`/`openGate`.
+  var _sessionGate = null;
+  var _sessionGateResolve = null;
+  function openGate() {
+    if (_sessionGateResolve) { _sessionGateResolve(); _sessionGateResolve = null; }
+    _sessionGate = Promise.resolve();
+  }
+  function closeGate() {
+    _sessionGate = new Promise(function (resolve) { _sessionGateResolve = resolve; });
+  }
+
+  // FAIL-CLOSED (contrat §0/§2, révision post-revue adverse — FAILLE 2 du
+  // round de correction) : vrai quand un PIN protège l'accès mais que
+  // `PiloteoAuth` n'a PAS pu être vérifié (chargement bloqué/hors ligne sans
+  // précache). Tant que c'est vrai, `withSessionActive` NE laisse JAMAIS
+  // passer `fn` — jamais un fail-OPEN, même temporaire. Sans PIN défini, rien
+  // à protéger : ce drapeau reste toujours faux (voir `ensureSessionReady`).
+  var _authUnavailable = false;
+
+  // Reprise/boot de la session (mémoïsée : un seul chargement par page, comme
+  // `ensureFolderReady`/`ensureOrgReady`). Calcule l'état par défaut SANS
+  // dépendre de `PiloteoAuth` (cas courant, aucun PIN : reste frictionless
+  // même si le module tarde) ; n'a besoin du module que pour vérifier un PIN
+  // (déverrouillage) ou verrouiller au boot si un PIN impose l'overlay.
+  var _sessionReady = null;
+  function ensureSessionReady() {
+    if (_sessionReady) return _sessionReady;
+    _sessionReady = Promise.all([waitForPiloteoAuth(3000), loadSessionRecord()]).then(function (r) {
+      var PA = r[0];
+      var rec = r[1];
+      if (!rec || typeof rec !== "object" || !rec.status) {
+        rec = { status: "active", pin: null, failedAttempts: 0, lockedUntil: 0, lockOnOpen: false };
+      }
+      if (!PA) {
+        if (rec.pin) {
+          // FAIL-CLOSED : le module d'auth n'a pas chargé alors qu'un PIN
+          // protège l'accès -> IMPOSSIBLE de vérifier ce PIN -> on RESTE
+          // verrouillé, on N'OUVRE JAMAIS `/api` par défaut. Ouvrir ici serait
+          // un contresens de sécurité (repro contrariant : bloquer
+          // `piloteo-auth-bridge.mjs` suffisait sinon à élider tout le
+          // verrou). `sw-solo.js` précache ce module + `src/auth/session.js`
+          // pour que le cas hors-ligne LÉGITIME (utilisateur de bonne foi,
+          // déjà venu une fois) ne tombe pas dans cette branche.
+          _authUnavailable = true;
+          sessionState = Object.assign({}, rec, { status: "locked" });
+          closeGate();
+          renderAuthUnavailableOverlay();
+          return;
+        }
+        // Sans PIN : rien à protéger, aucune dégradation de sécurité possible
+        // — même principe que les modes Dossier/Organisation (fail-open
+        // inoffensif quand il n'y a rien à ouvrir).
+        _authUnavailable = false;
+        sessionState = Object.assign({}, rec, { status: "active" });
+        openGate();
+        return;
+      }
+      _authUnavailable = false;
+      var mustLock = !!(rec.pin && (rec.lockOnOpen || rec.status !== "active"));
+      if (mustLock) {
+        sessionState = PA.lock(rec);
+        persistSession(sessionState);
+        closeGate();
+        renderLockOverlay();
+      } else {
+        sessionState = Object.assign({}, rec, { status: "active" });
+        persistSession(sessionState);
+        openGate();
+      }
+    });
+    return _sessionReady;
+  }
+
+  // Gate `/api/me`, `POST /api/login`, `GET|PUT /api/state` (contrat §3) sur
+  // `active` : `fn` n'est appelée qu'une fois la session chargée ET active
+  // (déverrouillée). Ne touche jamais au routage Dossier/Organisation
+  // existant (`withFolderReady`), qui reste composé PAR-DESSUS.
+  // FAIL-CLOSED : si `_authUnavailable` (PIN défini, module de vérification
+  // injoignable), `fn` n'est JAMAIS appelée — on répond explicitement 503
+  // (jamais de hang silencieux ni de données rendues) plutôt que d'attendre
+  // indéfiniment un portillon qui ne peut pas s'ouvrir tout seul.
+  function withSessionActive(fn) {
+    return ensureSessionReady().then(function () {
+      if (_authUnavailable) {
+        return json(503, {
+          error: "Verrou d'appareil indisponible : impossible de vérifier le code PIN (module non chargé — hors ligne ou connexion interrompue). Rechargez la page.",
+        });
+      }
+      return _sessionGate.then(fn);
+    });
+  }
+
+  // Tentative de déverrouillage (overlay + hook de test). Sans PIN défini,
+  // déverrouillage direct (verrou minimal, non protégé). Avec PIN : anti-
+  // force-brute recoupé sur deux horloges (`canAttemptCrossChecked` — §1,
+  // durcissement défense en profondeur, PAS une barrière : cf. modèle de
+  // menace §0) puis vérification à temps constant (`verifyPin`) — succès/
+  // échec persistés via `registerSuccess`/`registerFailure`.
+  function attemptUnlock(pin) {
+    var PA = window.PiloteoAuth;
+    var wallNow = Date.now();
+    var monoNow = monotonicNow();
+    if (!sessionState || !sessionState.pin) {
+      sessionState = Object.assign({}, sessionState || {}, { status: "active", failedAttempts: 0, lockedUntil: 0 });
+      persistSession(sessionState);
+      openGate();
+      return Promise.resolve({ ok: true });
+    }
+    if (!PA) return Promise.resolve({ ok: false, error: "Module de verrouillage indisponible (rechargez la page)." });
+    var gate = PA.canAttemptCrossChecked(sessionState, wallNow, monoNow);
+    if (!gate.allowed) return Promise.resolve({ ok: false, waitMs: gate.waitMs });
+    // `verifyPin` REJETTE (throw) un enregistrement `iterations<210000` (un
+    // `piloteo_session` forgé ne doit pas imposer un hash affaibli) : traité
+    // uniformément comme "PIN invalide" (échec enregistré), jamais comme une
+    // exception qui remonterait à l'UI ou, pire, comme un succès silencieux.
+    return PA.verifyPin(pin, sessionState.pin).catch(function () { return false; }).then(function (valid) {
+      if (valid) {
+        sessionState = PA.registerSuccess(sessionState);
+        persistSession(sessionState);
+        openGate();
+        return { ok: true };
+      }
+      // Horodate l'échec sur la lecture d'horloge la plus CONSERVATRICE (la
+      // plus petite des deux) : si `Date.now()` a été artificiellement avancé
+      // (monkey-patch), c'est l'estimation monotone — honnête — qui sert de
+      // base à `lockedUntil`, jamais la murale gonflée (qui produirait un
+      // `lockedUntil` sans rapport avec le temps réel écoulé).
+      var failureNow = Math.min(wallNow, monoNow);
+      sessionState = PA.registerFailure(sessionState, failureNow);
+      persistSession(sessionState);
+      var g2 = PA.canAttemptCrossChecked(sessionState, Date.now(), monotonicNow());
+      return { ok: false, waitMs: g2.allowed ? 0 : g2.waitMs };
+    });
+  }
+
+  // Verrouillage RÉEL (remplace le lock minimal du §2.4 de l'audit) : ferme le
+  // portillon `/api` synchroneement (avant même que la persistance IndexedDB
+  // ne soit terminée) et affiche l'overlay. Utilisé par « Verrouiller
+  // maintenant » (Réglages), `POST /api/logout`, et « Se déconnecter » (org).
+  function enterLocked() {
+    var PA = window.PiloteoAuth;
+    var base = sessionState || { status: "active", pin: null, failedAttempts: 0, lockedUntil: 0, lockOnOpen: false };
+    sessionState = PA ? PA.lock(base) : Object.assign({}, base, { status: "locked" });
+    closeGate();
+    persistSession(sessionState);
+    // Edge case défensif (non atteignable par l'UI normale — l'overlay
+    // d'erreur couvre déjà tout l'écran dans ce cas) : si le module d'auth
+    // est toujours injoignable, ne PAS afficher l'écran de saisie normal.
+    if (_authUnavailable) { renderAuthUnavailableOverlay(); return; }
+    renderLockOverlay();
   }
 
   // Ouvre le sélecteur natif puis crée l'organisation (writeManifest +
@@ -659,6 +855,9 @@
     method = (method || "GET").toUpperCase();
 
     if (path === "/api/me" || (path === "/api/login" && method === "POST")) {
+      // Point 3 (contrat §3) : gated sur `active` — attend le déverrouillage
+      // avant même de considérer le mode Dossier/Organisation.
+      return withSessionActive(function () {
       // Correctif revue 1b (a) : en mode Dossier, l'identité (consultant_id) doit
       // provenir du DOSSIER actif, sinon app.js peut refuser le démarrage
       // (« Compte non rattaché ») en reprenant un dossier peuplé sur un autre
@@ -667,16 +866,26 @@
       return withFolderReady(function () {
         return stateRecord().then(function (rec) { return json(200, { user: soloUser(rec.state) }); });
       });
+      });
     }
     if (path === "/api/logout" && method === "POST") {
-      return Promise.resolve(json(200, { ok: true }));
+      // Point 3 (contrat §3) : n'est plus un no-op. Verrouille réellement la
+      // session (l'identité — org comprise — est CONSERVÉE, reconnexion
+      // possible) et affiche l'overlay ; ne ré-entre jamais automatiquement.
+      return ensureSessionReady().then(function () {
+        enterLocked();
+        return json(200, { ok: true });
+      });
     }
     if (path === "/api/state" && method === "GET") {
+      // Point 3 : gated sur `active`, comme /api/me.
+      return withSessionActive(function () {
       // Point 1b : mode par défaut (storageMode !== "folder") -> `withFolderReady`
       // appelle `fn()` immédiatement et `activeEngine` est toujours null ici, donc
       // `stateRecord()` vaut `getRecord()` : chemin STRICTEMENT identique à avant.
       return withFolderReady(function () {
         return stateRecord().then(function (rec) { return json(200, { revision: rec.revision, state: rec.state }); });
+      });
       });
     }
     if (path === "/api/state" && method === "PUT") {
@@ -684,6 +893,8 @@
       try { incoming = JSON.parse(body || "{}"); } catch (e) { return Promise.resolve(json(400, { error: "JSON invalide" })); }
       var state = incoming && incoming.state;
       if (!state || typeof state !== "object") return Promise.resolve(json(400, { error: "état manquant" }));
+      // Point 3 : gated sur `active`, comme /api/me / GET /api/state.
+      return withSessionActive(function () {
       return withFolderReady(function () {
         if (activeEngine) {
           // Mode Dossier : le store event-first (piloteo-solo-bridge.mjs) rend
@@ -721,6 +932,7 @@
           });
         });
       });
+      });
     }
     if (path === "/api/health") {
       return Promise.resolve(json(200, { ok: true, mode: "solo" }));
@@ -751,6 +963,10 @@
     console.info("[Pilotéo] mode solo actif — données locales à cet appareil, aucun serveur.");
     setupBrandingWhenReady();
     setupReglagesWhenReady();
+    // Point 3 : lance la reprise de session tôt (dès l'installation), pour que
+    // l'overlay de verrouillage apparaisse au plus vite si un PIN l'exige,
+    // plutôt que d'attendre le premier appel /api/me gaté par `withSessionActive`.
+    ensureSessionReady();
     // Hors ligne après premier chargement (Phase 2B). Nécessite un contexte
     // sécurisé (https ou localhost) ; échec silencieux sinon. Chemins dérivés de
     // la base de déploiement (racine ou sous-dossier).
@@ -1019,7 +1235,14 @@
       folderRow.appendChild(folderMsg);
       body.appendChild(folderRow);
 
-      body.appendChild(modeRow("Google Drive", "Bientôt", "#8a6d1f", "Adaptateur prêt ; activation par identifiant OAuth (GOOGLE_CLIENT_ID), après le câblage dossier."));
+      var driveAvailable = !!(window.PiloteoDrive && window.PiloteoDrive.isAvailable);
+      body.appendChild(modeRow(
+        "Google Drive",
+        driveAvailable ? "Disponible" : "Bientôt",
+        driveAvailable ? "#137a3f" : "#8a6d1f",
+        driveAvailable
+          ? "Client OAuth configuré (GOOGLE_CLIENT_ID, scope drive.file). Écriture vive : événements signés en fichiers immuables, réconciliation déterministe. Sélection du dossier racine Drive au moment de créer/rejoindre."
+          : "Adaptateur câblé et testé ; activation par identifiant OAuth public (GOOGLE_CLIENT_ID) dans la config de déploiement."));
       body.appendChild(modeRow("Serveur hébergé", "Disponible séparément", "#5b6b76", "Déploiement Docker (voir docs/deployment). Mode centralisé, hors application solo."));
 
       // Section 3bis — Organisation (point 2c-C2, ORG_UI_CONTRACT §3).
@@ -1115,13 +1338,137 @@
         body.appendChild(mkBtn("Créer / rejoindre une organisation", function () { close(); renderWelcomeScreen(); }));
       }
 
-      // Section 4 — Session
-      body.appendChild(sectionTitle("Session"));
+      // Section 4 — Session / Sécurité (Point 3, AUTH_SESSION_CONTRACT.md §4).
+      body.appendChild(sectionTitle("Session / Sécurité"));
+      body.appendChild(el("p", "margin:2px 0 4px;font-size:12.5px;color:#5b6b76;",
+        "Le code verrouille l'accès sur CET appareil. Il ne chiffre pas les données ; la confidentialité repose sur les permissions du dossier/Drive."));
+      // Divulgation honnête complémentaire (round de correction r2, §0) : le
+      // libellé ci-dessus (contractuel, §4, ne pas reformuler) suffit pour
+      // l'usage courant ; celui-ci précise le modèle de menace pour qui lit
+      // attentivement — jamais présenté comme une barrière technique.
+      body.appendChild(el("p", "margin:2px 0 10px;font-size:12px;color:#8a8f94;",
+        "C'est un verrou best-effort contre un accès occasionnel (un collègue, un écran laissé ouvert) — pas une " +
+        "protection technique : un accès aux réglages système de l'appareil, ou aux outils développeur du " +
+        "navigateur, permet de le contourner."));
+
+      var hasPin = !!(sessionState && sessionState.pin);
+      var MIN_PIN_LENGTH = 6; // contrat §4 (révision post-revue r2) : seule barrière indépendante de l'horloge, cf. avertissement ci-dessous.
+      var pinBox = el("div", "display:grid;grid-template-columns:1fr;gap:8px;margin:6px 0;");
+      var currentPinIn = hasPin ? fieldInput("Code actuel", "password") : null;
+      if (currentPinIn) { currentPinIn.input.id = "piloteo-pin-current"; pinBox.appendChild(currentPinIn.wrap); }
+      var newPinIn = fieldInput(hasPin ? "Nouveau code" : "Code (" + MIN_PIN_LENGTH + " caractères minimum)", "password");
+      newPinIn.input.id = "piloteo-pin-new";
+      var confirmPinIn = fieldInput("Confirmer", "password");
+      confirmPinIn.input.id = "piloteo-pin-confirm";
+      pinBox.appendChild(newPinIn.wrap); pinBox.appendChild(confirmPinIn.wrap);
+      body.appendChild(pinBox);
+
+      var pinMsg = el("div", "font-size:12.5px;color:#5b6b76;min-height:16px;");
+      pinMsg.id = "piloteo-pin-msg";
+      var pinRow = el("div", "display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;");
+      var pinSubmitBtn = mkBtn(hasPin ? "Changer le code" : "Définir un code", function () {
+        var PA = window.PiloteoAuth;
+        if (!PA) { pinMsg.textContent = "Module de verrouillage indisponible (rechargez la page)."; return; }
+        var newVal = newPinIn.input.value;
+        var confirmVal = confirmPinIn.input.value;
+        if (!newVal || newVal.length < MIN_PIN_LENGTH) {
+          // Contrat §4 (révision post-revue r2) : SEULE barrière indépendante
+          // de l'horloge système — le coût PBKDF2 par tentative ne protège
+          // que si l'espace de PIN est assez grand. Message honnête sur le
+          // POURQUOI (pas juste "trop court").
+          pinMsg.textContent = "Code trop court (" + MIN_PIN_LENGTH + " caractères minimum) : un code court reste " +
+            "devinable même avec le blocage, car le blocage peut être contourné en changeant l'heure de l'appareil.";
+          return;
+        }
+        if (newVal !== confirmVal) { pinMsg.textContent = "Les deux codes ne correspondent pas."; return; }
+        var proceed = hasPin
+          ? PA.verifyPin(currentPinIn.input.value, sessionState.pin).then(function (ok) {
+              if (!ok) throw new Error("Code actuel incorrect.");
+            })
+          : Promise.resolve();
+        pinMsg.textContent = "Enregistrement…";
+        proceed
+          .then(function () { return PA.hashPin(newVal, PA.newSalt()); })
+          .then(function (hashed) {
+            sessionState = Object.assign({}, sessionState, { pin: hashed, status: "active", failedAttempts: 0, lockedUntil: 0 });
+            return persistSession(sessionState);
+          })
+          .then(function () {
+            pinMsg.textContent = "Code enregistré.";
+            setTimeout(function () { close(); openPanel(); }, 400);
+          })
+          .catch(function (e) { pinMsg.textContent = "Échec : " + ((e && e.message) || e); });
+      }, true);
+      pinSubmitBtn.id = "piloteo-pin-submit";
+      pinRow.appendChild(pinSubmitBtn);
+      if (hasPin) {
+        var pinRemoveBtn = mkBtn("Retirer le code", function () {
+          var PA = window.PiloteoAuth;
+          if (!PA) { pinMsg.textContent = "Module de verrouillage indisponible (rechargez la page)."; return; }
+          var currentVal = currentPinIn.input.value;
+          if (!currentVal) { pinMsg.textContent = "Saisissez le code actuel pour le retirer."; return; }
+          pinMsg.textContent = "Vérification…";
+          PA.verifyPin(currentVal, sessionState.pin).then(function (ok) {
+            if (!ok) { pinMsg.textContent = "Code actuel incorrect."; return; }
+            sessionState = Object.assign({}, sessionState, { pin: null, status: "active", failedAttempts: 0, lockedUntil: 0 });
+            return persistSession(sessionState).then(function () {
+              pinMsg.textContent = "Code retiré.";
+              setTimeout(function () { close(); openPanel(); }, 400);
+            });
+          }).catch(function (e) { pinMsg.textContent = "Échec : " + ((e && e.message) || e); });
+        });
+        pinRemoveBtn.id = "piloteo-pin-remove";
+        pinRow.appendChild(pinRemoveBtn);
+      }
+      body.appendChild(pinRow);
+      body.appendChild(pinMsg);
+
+      var lockOnOpenRow = el("label", "display:flex;align-items:center;gap:8px;font-size:13px;margin:10px 0;cursor:pointer;");
+      var lockOnOpenChk = document.createElement("input");
+      lockOnOpenChk.type = "checkbox";
+      lockOnOpenChk.checked = !!(sessionState && sessionState.lockOnOpen);
+      lockOnOpenChk.id = "piloteo-lock-on-open";
+      lockOnOpenChk.addEventListener("change", function () {
+        sessionState = Object.assign({}, sessionState, { lockOnOpen: lockOnOpenChk.checked });
+        persistSession(sessionState);
+      });
+      lockOnOpenRow.appendChild(lockOnOpenChk);
+      lockOnOpenRow.appendChild(document.createTextNode("Verrouiller à chaque ouverture"));
+      body.appendChild(lockOnOpenRow);
+
       var lockRow = el("div", "display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;");
-      lockRow.appendChild(mkBtn("Verrouiller l'espace", function () { close(); lockSpace(); }));
+      lockRow.appendChild(mkBtn("Verrouiller maintenant", function () { close(); ensureSessionReady().then(enterLocked); }, true));
       body.appendChild(lockRow);
-      body.appendChild(el("p", "margin:2px 0 2px;font-size:12.5px;color:#5b6b76;",
-        "Verrouille l'affichage sur cet appareil. La déconnexion/reconnexion par compte réel arrive avec l'authentification (modes partagés)."));
+
+      // Distinction org (contrat §4) : « Se déconnecter » (verrouille, garde
+      // l'identité) vs « Changer d'identité » (oublie la clé — destructif,
+      // avertissement explicite), proposée UNIQUEMENT ici, jamais confondue
+      // avec « Revenir à cet appareil » ci-dessus (qui, lui, ne touche pas à
+      // l'identité : il quitte seulement le stockage org pour l'appareil).
+      if (storageMode === "org") {
+        body.appendChild(el("div", "height:1px;background:#f1f4f6;margin:12px 0;"));
+        var orgSessionRow = el("div", "display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;");
+        orgSessionRow.appendChild(mkBtn("Se déconnecter", function () { close(); ensureSessionReady().then(enterLocked); }));
+        orgSessionRow.appendChild(mkBtn("Changer d'identité", function () {
+          var warn = "Changer d'identité oublie votre clé de membre sur CET appareil (rayon d'explosion nul pour " +
+            "les autres membres). Mais VOUS perdrez tout accès à l'organisation tant qu'un administrateur ne vous " +
+            "aura pas ré-invité.\n\nContinuer ?";
+          if (!window.confirm(warn)) return;
+          if (!window.PiloteoOrg || typeof window.PiloteoOrg.forgetIdentity !== "function") {
+            alert("Fonctionnalité indisponible (module Organisation non chargé).");
+            return;
+          }
+          window.PiloteoOrg.forgetIdentity().then(function () {
+            deactivateOrg();
+            alert("Identité oubliée. L'application va se recharger.");
+            location.reload();
+          }).catch(function (e) { alert("Échec : " + ((e && e.message) || e)); });
+        }));
+        body.appendChild(orgSessionRow);
+        body.appendChild(el("p", "margin:6px 0 2px;font-size:12.5px;color:#5b6b76;",
+          "« Se déconnecter » verrouille l'accès sur cet appareil et conserve votre identité (reconnexion " +
+          "possible). « Changer d'identité » l'oublie définitivement sur cet appareil."));
+      }
 
       function close() { var p = document.getElementById("piloteo-reglages"); if (p) p.remove(); }
     }
@@ -1149,18 +1496,175 @@
     return row;
   }
 
-  // Verrouillage d'écran (sans mot de passe — vrai lock, pas de sécurité factice).
-  function lockSpace() {
-    if (document.getElementById("piloteo-lock")) return;
+  // Overlay de verrouillage (Point 3, AUTH_SESSION_CONTRACT.md §2/§4) —
+  // ÉTEND l'overlay `lockSpace` déjà présent (même id `piloteo-lock`, même
+  // style d'ensemble), jamais un nouvel écran app.js. Deux formes :
+  //  - aucun PIN défini : verrou minimal (comme avant), un clic déverrouille ;
+  //  - PIN défini : saisie + anti-force-brute recoupé sur deux horloges
+  //    (`canAttemptCrossChecked`), compte à rebours affiché et saisie
+  //    refusée pendant un blocage.
+  //
+  // BEST-EFFORT, PAS une barrière (modèle de menace §0, révisé après DEUX
+  // revues adverses) : le blocage temporisé est un ralentisseur UX, pas une
+  // protection technique. Il repose sur une horloge (murale ou monotone
+  // ré-ancrée au chargement de la page) — un adversaire ayant accès aux
+  // RÉGLAGES SYSTÈME de l'appareil (avancer la date de l'OS, SANS aucun
+  // JavaScript) le contourne intégralement (round 2 : repro
+  // tests/e2e/attack-p3-session-round2.mjs via libfaketime). Ce niveau
+  // d'accès (appareil déverrouillé, réglages OS) est déjà comparable à celui
+  // qui permet de lire IndexedDB en clair : le lockout n'élargit donc pas la
+  // surface d'attaque, il ralentit seulement un curieux pressé. Le
+  // recoupement `canAttemptCrossChecked` (horloge monotone via
+  // `performance.now`) reste utile contre un monkey-patch de `Date.now`
+  // DANS la page (round 1) — mais PAS contre un changement d'horloge OS, qui
+  // fausse les deux estimations à la source. La SEULE barrière réellement
+  // indépendante de l'horloge : le coût PBKDF2 par tentative combiné à une
+  // longueur de PIN minimale (§4, `MIN_PIN_LENGTH` ci-dessous) et à un
+  // compteur d'échecs qui PERSISTE (jamais remis à zéro par un simple
+  // rechargement — voir `ensureSessionReady`/`registerFailure`).
+  var _lockCountdownTimer = null;
+  function formatWait(ms) {
+    var s = Math.max(1, Math.ceil(ms / 1000));
+    if (s < 60) return s + " s";
+    return Math.ceil(s / 60) + " min";
+  }
+  function renderLockOverlay() {
+    if (document.body) buildLockOverlay();
+    else document.addEventListener("DOMContentLoaded", buildLockOverlay, { once: true });
+  }
+  function buildLockOverlay() {
+    var existing = document.getElementById("piloteo-lock");
+    if (existing) existing.remove(); // reconstruit (reflète l'état PIN courant, ex. juste retiré)
+    var hasPin = !!(sessionState && sessionState.pin);
+
     var ov = el("div", "position:fixed;inset:0;z-index:2147483002;background:#0d1a22;color:#eaf1f4;" +
-      "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;" +
+      "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;" +
       "font:400 15px/1.4 system-ui,-apple-system,sans-serif;text-align:center;padding:24px;");
     ov.id = "piloteo-lock";
     ov.appendChild(el("div", "font-size:34px;", "🔒"));
     ov.appendChild(el("div", "font-size:18px;font-weight:600;", "Espace verrouillé"));
-    ov.appendChild(el("div", "opacity:.75;max-width:320px;", "Vos données restent sur cet appareil. Déverrouillez pour reprendre."));
-    var btn = mkBtn("Déverrouiller", function () { ov.remove(); }, true);
+    ov.appendChild(el("div", "opacity:.75;max-width:340px;",
+      "Vos données restent sur cet appareil. " + (hasPin ? "Saisissez votre code pour reprendre." : "Déverrouillez pour reprendre.")));
+
+    var input = null;
+    if (hasPin) {
+      input = document.createElement("input");
+      input.type = "password"; input.inputMode = "numeric"; input.autocomplete = "off";
+      input.id = "piloteo-lock-pin";
+      input.placeholder = "Code";
+      input.setAttribute("style", "width:200px;box-sizing:border-box;padding:10px 12px;border-radius:8px;" +
+        "border:1px solid rgba(255,255,255,.28);background:#152530;color:#eaf1f4;font:16px monospace;" +
+        "text-align:center;letter-spacing:.2em;");
+      ov.appendChild(input);
+    }
+
+    var msg = el("div", "font-size:13px;color:#f6d685;min-height:18px;");
+    msg.id = "piloteo-lock-msg";
+    var btn = mkBtn("Déverrouiller", function () { submit(); }, true);
+    btn.id = "piloteo-lock-submit";
+    ov.appendChild(msg);
     ov.appendChild(btn);
+
+    if (input) {
+      input.addEventListener("keydown", function (ev) { if (ev.key === "Enter") submit(); });
+      setTimeout(function () { input.focus(); }, 0);
+    }
+    document.body.appendChild(ov);
+
+    function setBusy(disabled) {
+      btn.disabled = disabled;
+      if (input) input.disabled = disabled;
+    }
+
+    function refreshLockoutDisplay() {
+      var PA = window.PiloteoAuth;
+      if (!PA || !sessionState) return;
+      // Recoupement d'horloge (§1, durcissement) : reflète EXACTEMENT la même
+      // estimation que `attemptUnlock`, pour ne jamais afficher "vous pouvez
+      // réessayer" alors que la vérification réelle refuserait encore.
+      var gate = PA.canAttemptCrossChecked(sessionState, Date.now(), monotonicNow());
+      if (!gate.allowed) {
+        setBusy(true);
+        msg.textContent = "Trop de tentatives. Réessayez dans " + formatWait(gate.waitMs) + ".";
+        if (!_lockCountdownTimer) {
+          _lockCountdownTimer = setInterval(function () {
+            if (!document.getElementById("piloteo-lock")) { clearInterval(_lockCountdownTimer); _lockCountdownTimer = null; return; }
+            refreshLockoutDisplay();
+          }, 1000);
+        }
+      } else {
+        setBusy(false);
+        if (_lockCountdownTimer) { clearInterval(_lockCountdownTimer); _lockCountdownTimer = null; }
+        if (msg.textContent.indexOf("Trop de tentatives") === 0) msg.textContent = "";
+      }
+    }
+    if (hasPin) refreshLockoutDisplay();
+
+    function submit() {
+      if (btn.disabled) return;
+      setBusy(true);
+      msg.textContent = hasPin ? "Vérification…" : "";
+      attemptUnlock(input ? input.value : "").then(function (result) {
+        if (result.ok) {
+          if (_lockCountdownTimer) { clearInterval(_lockCountdownTimer); _lockCountdownTimer = null; }
+          ov.remove();
+          return;
+        }
+        setBusy(false);
+        if (input) { input.value = ""; input.focus(); }
+        if (result.waitMs) { refreshLockoutDisplay(); }
+        else { msg.textContent = result.error || "Code incorrect."; }
+      });
+    }
+  }
+
+  // Overlay d'ERREUR fail-CLOSED (Point 3, AUTH_SESSION_CONTRACT.md §0/§2 —
+  // révision post-revue adverse, FAILLE 2 du round de correction) : rendu
+  // UNIQUEMENT quand un PIN protège l'accès mais que `PiloteoAuth` n'a pas pu
+  // être vérifié. Réutilise le même id `piloteo-lock` (extension de l'overlay
+  // existant, jamais un nouvel écran app.js) mais SANS le champ de saisie
+  // normal — le contrat l'interdit explicitement dans ce cas précis (rien à
+  // vérifier le PIN contre). Deux actions : « Réessayer » (relance
+  // `ensureSessionReady()` sans recharger — utile si le réseau revient) et
+  // « Recharger la page » (repli classique).
+  function renderAuthUnavailableOverlay() {
+    if (document.body) buildAuthUnavailableOverlay();
+    else document.addEventListener("DOMContentLoaded", buildAuthUnavailableOverlay, { once: true });
+  }
+  function buildAuthUnavailableOverlay() {
+    var existing = document.getElementById("piloteo-lock");
+    if (existing) existing.remove();
+
+    var ov = el("div", "position:fixed;inset:0;z-index:2147483002;background:#2a1414;color:#f5e7e7;" +
+      "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;" +
+      "font:400 15px/1.4 system-ui,-apple-system,sans-serif;text-align:center;padding:24px;");
+    ov.id = "piloteo-lock";
+    ov.setAttribute("data-piloteo-lock-state", "auth-unavailable");
+    ov.appendChild(el("div", "font-size:34px;", "⚠️"));
+    ov.appendChild(el("div", "font-size:18px;font-weight:600;", "Verrou d'appareil indisponible"));
+    ov.appendChild(el("div", "opacity:.85;max-width:360px;",
+      "Impossible de vérifier le code PIN de cet appareil (module de verrouillage non chargé — hors ligne ou " +
+      "connexion interrompue). Par sécurité, l'accès reste VERROUILLÉ tant que la vérification n'est pas possible."));
+
+    var msg = el("div", "font-size:13px;color:#f6c2c2;min-height:18px;");
+    msg.id = "piloteo-lock-msg";
+    ov.appendChild(msg);
+
+    var row = el("div", "display:flex;gap:8px;flex-wrap:wrap;justify-content:center;");
+    row.appendChild(mkBtn("Réessayer", function () {
+      msg.textContent = "Nouvelle tentative…";
+      // Force une relecture de `window.PiloteoAuth` (ex. réseau revenu entre
+      // temps) sans recharger toute la page : si le module est là cette
+      // fois, `ensureSessionReady()` retombe sur le chemin normal (overlay de
+      // saisie ou session active selon `lockOnOpen`/PIN).
+      _sessionReady = null;
+      ensureSessionReady().then(function () {
+        if (_authUnavailable) msg.textContent = "Toujours indisponible. Réessayez ou rechargez la page.";
+      });
+    }, false));
+    row.appendChild(mkBtn("Recharger la page", function () { location.reload(); }, true));
+    ov.appendChild(row);
+
     document.body.appendChild(ov);
   }
 
@@ -1230,6 +1734,69 @@
           return JSON.stringify(ka) === JSON.stringify(kb) && ka.every(function (id) { return a[id] === b[id]; });
         });
         return { ok: ok, journalLength: journal.length };
+      });
+    },
+    // --- Point 3 (AUTH_SESSION_CONTRACT.md) : hooks de TEST pour les e2e ----
+    // `_authSessionReady` : attend la reprise de session (boot) — utile pour
+    // synchroniser un test AVANT de vérifier l'overlay/le gating.
+    _authSessionReady: function () { return ensureSessionReady(); },
+    // `_authSetPin` : définit un PIN directement (sans passer par le
+    // formulaire Réglages), pour préparer un scénario e2e (ex. « recharger →
+    // overlay affiché »). `opts.lockOnOpen` force le verrouillage au
+    // PROCHAIN boot (contrat §2) sans quoi définir un PIN pendant une session
+    // déjà active ne la verrouille pas immédiatement (opt-in frictionless).
+    // NB : contourne DÉLIBÉRÉMENT la longueur minimale (§4, 6 caractères) —
+    // c'est un hook de test pour poser un état arbitraire rapidement, pas le
+    // chemin utilisateur réel (Réglages, seul endroit qui applique la
+    // politique). Ne pas s'appuyer dessus pour tester la politique de
+    // longueur elle-même (voir la section Réglages / #piloteo-pin-submit).
+    _authSetPin: function (pin, opts) {
+      opts = opts || {};
+      return ensureSessionReady().then(function () {
+        var PA = window.PiloteoAuth;
+        if (!PA) return Promise.reject(new Error("PiloteoAuth non chargé."));
+        return PA.hashPin(pin, PA.newSalt()).then(function (hashed) {
+          sessionState = Object.assign({}, sessionState, {
+            pin: hashed,
+            status: "active",
+            failedAttempts: 0,
+            lockedUntil: 0,
+            lockOnOpen: opts.lockOnOpen != null ? !!opts.lockOnOpen : !!(sessionState && sessionState.lockOnOpen),
+          });
+          return persistSession(sessionState);
+        });
+      });
+    },
+    // `_authClearPin` : retire le PIN (retour à l'état frictionless par défaut).
+    _authClearPin: function () {
+      return ensureSessionReady().then(function () {
+        sessionState = Object.assign({}, sessionState, { pin: null, status: "active", failedAttempts: 0, lockedUntil: 0 });
+        return persistSession(sessionState);
+      });
+    },
+    // `_authLockNow` : verrouille immédiatement (équivalent programmatique de
+    // « Verrouiller maintenant » / `POST /api/logout`).
+    _authLockNow: function () { return ensureSessionReady().then(function () { enterLocked(); }); },
+    // `_authState` : lecture de l'état de session pour assertions e2e — ne
+    // renvoie JAMAIS le hash/sel du PIN (uniquement `hasPin`, un booléen).
+    _authState: function () {
+      return sessionState ? {
+        status: sessionState.status,
+        hasPin: !!sessionState.pin,
+        failedAttempts: sessionState.failedAttempts,
+        lockedUntil: sessionState.lockedUntil,
+        lockOnOpen: !!sessionState.lockOnOpen,
+      } : null;
+    },
+    // `_authGateOpen` : `true` une fois le portillon /api ouvert (session
+    // active) — permet à un e2e de vérifier qu'un appel /api/state EST
+    // effectivement en attente (jamais résolu) tant que verrouillé.
+    _authGateOpen: function () {
+      return ensureSessionReady().then(function () {
+        return Promise.race([
+          _sessionGate.then(function () { return true; }),
+          new Promise(function (resolve) { setTimeout(function () { resolve(false); }, 50); }),
+        ]);
       });
     }
   };

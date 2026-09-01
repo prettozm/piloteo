@@ -156,6 +156,25 @@ async function saveIdentity(identity) {
   }
 }
 
+// Point 3 (docs/next/AUTH_SESSION_CONTRACT.md §4) : « Changer d'identité »
+// (Réglages, distinct de « Se déconnecter ») oublie DÉFINITIVEMENT la clé de
+// membre de CET appareil — l'ancien memberId/sa clé publique restent dans les
+// fiches déjà publiées du dossier (rien n'est réécrit là-bas, rayon
+// d'explosion nul pour les autres membres), mais cet appareil ne pourra plus
+// authentifier les actions de cette identité tant qu'un administrateur ne
+// l'aura pas ré-invité sous une IDENTITÉ FRAÎCHE. Efface aussi le mémoïsé
+// `_identityPromise` pour qu'un prochain `getOrCreateIdentity()` en génère une
+// nouvelle plutôt que de resservir l'ancienne depuis le cache mémoire.
+async function forgetIdentity() {
+  const db = await openIdentityDb();
+  try {
+    await idbTx(db, "readwrite", (store) => reqToPromise(store.delete(CURRENT_KEY)));
+  } finally {
+    db.close();
+  }
+  _identityPromise = null;
+}
+
 // Mémoïsé : un seul appel de création par chargement de page (comme
 // `ensureFolderReady` côté piloteo-solo-bridge.mjs) — évite deux identités
 // générées en parallèle par deux appels concurrents.
@@ -415,6 +434,7 @@ window.PiloteoOrg = {
   invite,
   revoke,
   listMembers,
+  forgetIdentity,
   __identityStore,
   __openOrgEngineFromHandle,
 };

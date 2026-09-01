@@ -19,6 +19,7 @@ on:
       - "local-backend.js"
       - "piloteo-solo-bridge.mjs"
       - "piloteo-org-bridge.mjs"
+      - "piloteo-drive-bridge.mjs"
       - "src/**"
       - "sw-solo.js"
       - "seed.json"
@@ -52,6 +53,9 @@ jobs:
           # Point 2c-C2 : idem pour le pont mode Organisation (importe aussi src/*,
           # déjà copié ci-dessous — aucune duplication de dossier nécessaire).
           cp piloteo-org-bridge.mjs _site/
+          # Point 4 : idem pour le pont mode Google Drive (écriture vive) — même
+          # raison (module ES important src/*, déjà copié ci-dessous).
+          cp piloteo-drive-bridge.mjs _site/
           mkdir -p _site/src
           cp -r src/. _site/src/
           # Seed PUBLIC neutre : aucune donnée personnelle sur le site déployé.

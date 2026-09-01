@@ -27,7 +27,6 @@ import {
   driveQueryParams,
   DRIVE_SCOPE,
   GoogleDriveStorageAdapter,
-  NotWiredError,
 } from "../../src/storage/google-drive-adapter.js";
 
 // ---------------------------------------------------------------------------
@@ -455,7 +454,8 @@ test("InMemoryStorageAdapter : kind invalide rejeté", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// GoogleDriveStorageAdapter — helpers purs + squelette non câblé
+// GoogleDriveStorageAdapter — helpers purs (le câblage réseau réel est couvert
+// par tests/next/drive-adapter-live.test.mjs, contre un fetch mocké).
 // ---------------------------------------------------------------------------
 
 test("google-drive-adapter : mapping kind -> dossier (docs/next/04 §2)", () => {
@@ -505,14 +505,19 @@ test("google-drive-adapter : oauthTokenProvider requis, jamais copié/transform�
   assert.equal(shared.isSharedDrive, true);
 });
 
-test("google-drive-adapter : méthodes réseau NON câblées lèvent NotWiredError (documenté, cf. en-tête du fichier)", async () => {
+test("google-drive-adapter : réseau câblé (Point 4) — connect() sans rootFolderId échoue clairement (plus de NotWiredError)", async () => {
   const adapter = new GoogleDriveStorageAdapter({ oauthTokenProvider: async () => "fake-token" });
-  await assert.rejects(() => adapter.connect(), NotWiredError);
-  await assert.rejects(() => adapter.putImmutable("event", "e1", {}), NotWiredError);
-  await assert.rejects(() => adapter.get("event", "e1"), NotWiredError);
-  await assert.rejects(() => adapter.listChanges(), NotWiredError);
-  await assert.rejects(() => adapter.readMetadata("event", "e1"), NotWiredError);
-  await assert.rejects(() => adapter.share("m1"), NotWiredError);
-  await assert.rejects(() => adapter.revoke("m1"), NotWiredError);
-  await assert.rejects(() => adapter.health(), NotWiredError);
+  // Sans rootFolderId, connect() ne peut pas résoudre l'arbre : erreur de config
+  // explicite (TypeError), plus jamais NotWiredError (Point 4 : transport câblé).
+  await assert.rejects(() => adapter.connect(), TypeError);
+  await assert.rejects(() => adapter.putImmutable("event", "e1", {}), TypeError);
+  await assert.rejects(() => adapter.get("event", "e1"), TypeError);
+  await assert.rejects(() => adapter.listChanges(), TypeError);
+  await assert.rejects(() => adapter.readMetadata("event", "e1"), TypeError);
+  // share/revoke restent déclaratifs (hors scope), mais ne lèvent plus jamais.
+  assert.deepEqual(await adapter.share("m1"), { ok: true, delegated: true, detail: "Partage Drive (ACL) hors scope de ce lot — géré manuellement." });
+  assert.deepEqual(await adapter.revoke("m1"), { ok: true, delegated: true, detail: "Révocation Drive (ACL) hors scope de ce lot — géré manuellement." });
+  // health() ne lève JAMAIS (best-effort) : rootFolderId absent -> ok:false, jamais un throw.
+  const health = await adapter.health();
+  assert.equal(health.ok, false);
 });

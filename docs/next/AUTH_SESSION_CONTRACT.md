@@ -18,6 +18,37 @@ Le **code PIN** (optionnel) est un **verrou d'appareil honnête**, PAS de la
 confidentialité : il ne chiffre pas les données (le chiffrement reste derrière la
 revue sécu). Cohérent avec le modèle « signé, non chiffré ». L'UI doit le dire.
 
+### Modèle de menace (à énoncer honnêtement — révisé après revue adverse)
+
+Le PIN protège contre un **accès occasionnel** à un appareil laissé déverrouillé
+(un collègue, un écran non surveillé). Il ne protège PAS, et ne peut pas protéger,
+contre un adversaire capable d'**exécuter du JavaScript dans la page** (console
+DevTools, extension, bookmarklet) NI contre la **lecture directe du stockage**
+(IndexedDB) : dans le modèle « signé, non chiffré », les données sont en clair au
+repos, donc un tel adversaire les lit sans jamais toucher au PIN. Conséquences
+pour ce lot :
+- Les protections (anti-force-brute, gating) sont **best-effort** contre l'accès
+  occasionnel — pas des barrières cryptographiques. Ne JAMAIS prétendre qu'elles
+  sont « incontournables » : les libellés doivent rester exacts.
+- **Le blocage temporisé (lockout) est un ralentisseur UX, pas une barrière** :
+  toute temporisation en navigateur repose sur une horloge (murale ou monotone
+  ré-ancrée au chargement) qu'un adversaire ayant accès aux **Réglages système
+  de l'appareil** peut fausser (avancer la date) — SANS aucun JavaScript. Ce
+  niveau d'accès (appareil déverrouillé, réglages OS) est **comparable** à celui
+  qui permet déjà de lire IndexedDB en clair : le lockout n'élargit donc pas la
+  surface, il ralentit seulement un curieux. **La seule barrière réellement
+  indépendante de l'horloge** est le **coût par tentative** (PBKDF2, 210k+ itérations
+  = temps CPU réel non raccourcissable) combiné à un **compteur d'échecs persistant**
+  (non remis à zéro au reload) et à une **entropie de PIN suffisante** → d'où une
+  **longueur minimale de PIN imposée** (voir §4). Le recoupement d'horloge monotone
+  reste utile (empêche un simple monkey-patch de `Date.now` in-page de raccourcir
+  l'attente dans la session courante) mais n'est PAS présenté comme inviolable.
+- Le **fail-safe est néanmoins fail-CLOSED** : si le module d'auth ne peut pas se
+  charger alors qu'un PIN est défini, on RESTE verrouillé (on n'ouvre pas l'accès).
+  Ouvrir en cas d'échec de chargement serait un contresens de sécurité ET casserait
+  le cas légitime hors-ligne. La vraie confidentialité viendra du chiffrement
+  (gate sécu séparé), pas du PIN.
+
 ## 1. Module pur `src/auth/session.js` (testable node, sans DOM)
 
 Exporte :
@@ -40,9 +71,16 @@ Règles :
 - `verifyPin` compare à **temps constant** (pas de court-circuit `===` sur les octets).
 - Anti-force-brute : ≤ 5 tentatives, puis fenêtre de blocage **exponentielle**
   (`lockedUntil`), horodatée par `now` **passé en paramètre** (jamais `Date.now()`
-  interne — pour être testable et non contournable en changeant l'horloge : le
-  code appelant fournit `now`, le module ne fait pas confiance à une horloge
-  auto-déclarée pour raccourcir un blocage).
+  interne au module — pour être testable et pour que le module ne raccourcisse
+  jamais un blocage sur un `now` qui régresse). NB best-effort (cf. modèle de
+  menace §0) : côté navigateur, l'appelant lit forcément une horloge (`Date.now`)
+  qu'un script exécuté dans la page peut faire **avancer** ; c'est acceptable car
+  un tel script lit de toute façon les données en clair. Durcissement demandé
+  (défense en profondeur, pas barrière) : dériver l'écoulement d'une horloge
+  **monotone** (`performance.now`) recoupée avec `Date.now`, et refuser toute
+  incohérence flagrante ; `verifyPin` doit AUSSI **rejeter** un enregistrement
+  dont `iterations < 210000` (un `piloteo_session` forgé ne doit pas imposer un
+  hash faible).
 - **Aucun secret en clair** : ni le PIN, ni un dérivé réversible ne sont stockés
   ni loggés. Seuls `hashB64`/`saltB64`/`iterations` persistent.
 
@@ -56,9 +94,18 @@ Règles :
     tant que non déverrouillé (la promesse ne résout qu'après unlock) ;
   - sinon → session `active` directement (UX solo frictionless préservée : le PIN
     est **opt-in**, l'app sans PIN démarre exactement comme aujourd'hui).
+  - **fail-CLOSED** (révision post-revue) : si le module d'auth (`PiloteoAuth`) ne
+    peut PAS se charger (offline sans précache, cache vidé, requête bloquée) ALORS
+    QU'un PIN est défini → **rester verrouillé**, NE PAS ouvrir `/api`, afficher un
+    message d'erreur explicite (« impossible de vérifier le verrou, rechargez »),
+    PAS l'écran de saisie normal. Ouvrir dans ce cas est interdit. Corollaire :
+    `sw-solo.js` DOIT précacher `piloteo-auth-bridge.mjs` et `src/auth/session.js`
+    pour que le cas hors-ligne légitime fonctionne (sinon on verrouille à tort un
+    utilisateur de bonne foi). Sans PIN défini → rien à protéger → `active`.
 - **Déverrouillage** : saisie du PIN dans l'overlay → `canAttempt` → `verifyPin` →
   `registerSuccess`/`registerFailure` persistés. Pendant un blocage, l'overlay
-  affiche le temps restant et refuse la saisie. Aucun chemin ne contourne le blocage.
+  affiche le temps restant et refuse la saisie. Aucun chemin applicatif normal ne
+  contourne le blocage (best-effort, cf. §0).
 
 ## 3. Routes interceptées
 
@@ -75,6 +122,13 @@ Règles :
 
 - Définir / changer / retirer un **code PIN** (avec confirmation ; retirer exige
   le PIN courant).
+- **Longueur minimale imposée : 6 caractères** (révision post-revue). C'est la
+  seule barrière indépendante de l'horloge (cf. §0) : le coût PBKDF2 par tentative
+  ne protège que si l'espace de PIN est assez grand. Refuser à la création un PIN
+  < 6 caractères, avec un message expliquant POURQUOI (« un code court reste
+  devinable même avec le blocage, car le blocage peut être contourné en changeant
+  l'heure de l'appareil »). Le **compteur d'échecs doit persister** (déjà le cas
+  via `piloteo_session`) et NE PAS se réinitialiser au simple rechargement.
 - **Verrouiller maintenant** (remplace le lock minimal du §2.4 de l'audit).
 - Case « Verrouiller à chaque ouverture » (`lockOnOpen`).
 - Libellé honnête : « Le code verrouille l'accès sur CET appareil. Il ne chiffre
