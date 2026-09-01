@@ -67,7 +67,7 @@ function toBase64Url(bytes) {
 // l'émetteur, seulement à sa clé publique + l'invitation reçue) — plutôt que
 // de dupliquer cette sérialisation (source de bug si les deux divergent un
 // jour), on l'exporte telle quelle. Signalé au contrat comme acceptable.
-export function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce, issuerId }) {
+export function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce, issuerId, consultantId }) {
   // Sérialisation déterministe (ordre de clés fixe) — pas de JSON.stringify
   // direct sur un objet dont l'ordre des clés serait accidentel.
   // docs/next/ORG_REVOCATION_CONTRACT.md §3 : `issuerId` est ajouté EN FIN de
@@ -75,8 +75,20 @@ export function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, 
   // NI les octets ni les tests existants quand issuerId est absent (défaut
   // rétro-compatible). Le binding émetteur↔proof devient ainsi structurel
   // (dans les octets signés) dès que l'appelant fournit issuerId.
+  //
+  // docs/next/ORG_TRUST_HARDENING_CONTRACT.md (round contrariant 4) : `consultantId`
+  // est ajouté selon EXACTEMENT le même principe (append conditionnel,
+  // `!== undefined`), APRÈS `issuerId` — sans lui, `consultantId` restait un
+  // paramètre LIBRE de l'accepteur d'invitation (jamais couvert par une
+  // signature), permettant à tout membre légitimement invité de déclarer le
+  // `consultantId` d'un AUTRE consultant existant et de se faire traiter par
+  // `core/permissions.js` comme lui (lecture ET écriture usurpées). Le signer
+  // (l'émetteur, owner/admin) décide désormais explicitement à quel
+  // consultant l'invitation est destinée ; `org-runtime.js#acceptInvitation`
+  // n'utilise plus jamais un `consultantId` fourni librement par l'accepteur.
   const fields = [workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce];
   if (issuerId !== undefined) fields.push(issuerId);
+  if (consultantId !== undefined) fields.push(consultantId);
   return JSON.stringify(fields);
 }
 
@@ -102,6 +114,7 @@ export async function createInvitation({
   now = new Date(),
   signer = null,
   issuerId,
+  consultantId,
 } = {}) {
   if (!workspaceId) throw new Error("createInvitation: 'workspaceId' requis");
   if (!["owner", "admin", "user"].includes(role)) {
@@ -122,6 +135,7 @@ export async function createInvitation({
     expiresAt,
     nonce,
     issuerId,
+    consultantId,
   });
 
   const proof = signer
@@ -139,6 +153,7 @@ export async function createInvitation({
     proof,
     status: "pending",
     ...(issuerId !== undefined ? { issuerId } : {}),
+    ...(consultantId !== undefined ? { consultantId } : {}),
   };
 }
 

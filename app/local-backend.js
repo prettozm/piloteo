@@ -181,6 +181,11 @@
   var activeEngine = null;           // engine {load,commit,...} du dossier/org actif, ou null (mode classique)
   var folderNeedsPermission = false; // dossier mémorisé mais permission à ré-accorder (geste utilisateur requis)
   var orgNeedsPermission = false;    // organisation mémorisée mais permission à ré-accorder (idem, mode org)
+  // Point Drive onboarding lot A (DRIVE_ONBOARDING_CONTRACT.md §2) : organisation
+  // Drive mémorisée mais reconnexion Google requise (le token OAuth n'est JAMAIS
+  // persisté — piloteo-drive-bridge.mjs — donc `true` à CHAQUE boot d'une org-drive
+  // mémorisée, jusqu'au clic « Se reconnecter à Google »).
+  var orgDriveNeedsAuth = false;
   var activeOrgAdapter = null;       // StorageAdapter de l'organisation active (requis par invite/revoke)
   var storageMode = null;
   try { storageMode = localStorage.getItem(STORAGE_MODE_KEY); } catch (e) { storageMode = null; }
@@ -290,6 +295,79 @@
       });
     });
     return _orgReady;
+  }
+
+  // --- Onboarding Drive (docs/next/DRIVE_ONBOARDING_CONTRACT.md §2) : mode
+  // Organisation SUR GOOGLE DRIVE (`storageMode==="org-drive"`) --------------
+  // SYMÉTRIQUE au mode Organisation dossier ci-dessus, mais reprise via
+  // `window.PiloteoDrive.resumeDriveOrg()` (query-only au boot, JAMAIS
+  // d'OAuth interactif hors geste utilisateur) au lieu d'une permission
+  // File System Access. Même garde-fou (module non chargé -> mode
+  // indisponible, bannière visible).
+  function waitForPiloteoDrive(timeoutMs) {
+    return new Promise(function (resolve) {
+      var waited = 0, step = 50;
+      (function poll() {
+        if (window.PiloteoDrive) { resolve(window.PiloteoDrive); return; }
+        waited += step;
+        if (waited >= timeoutMs) { resolve(null); return; }
+        setTimeout(poll, step);
+      })();
+    });
+  }
+
+  var _driveOrgReady = null;
+  function ensureDriveOrgReady() {
+    if (_driveOrgReady) return _driveOrgReady;
+    _driveOrgReady = waitForPiloteoDrive(4000).then(function (PD) {
+      if (!PD || !PD.isAvailable) {
+        showFolderBanner("Mode Google Drive indisponible (hors ligne, chargement incomplet, ou configuration Google absente). " +
+          "Les données affichées sont celles de cet appareil, pas de votre organisation Google Drive. Rechargez une fois en ligne.");
+        return;
+      }
+      return PD.resumeDriveOrg().then(function (result) {
+        if (result && result.engine) {
+          activeEngine = result.engine;
+          activeOrgAdapter = result.adapter || null;
+          orgDriveNeedsAuth = false;
+          console.info("[Pilotéo] organisation Google Drive reprise.");
+        } else if (result && result.needsAuth) {
+          // JAMAIS d'OAuth interactif au boot (query-only, cf. resumeDriveOrg) :
+          // bannière visible + reconnexion UNIQUEMENT dans le clic ci-dessous.
+          orgDriveNeedsAuth = true;
+          showFolderBanner("Votre organisation Google Drive nécessite de vous reconnecter à Google.",
+            "Se reconnecter à Google", function () {
+              retryDriveOrgAuth().then(function () { location.reload(); })
+                .catch(function (e) { alert("Connexion à Google refusée : " + ((e && e.message) || e)); });
+            });
+        }
+        // `result === null` : jamais activé malgré le drapeau (improbable) — on reste sur cet appareil.
+      }).catch(function (e) {
+        showFolderBanner("Reprise de l'organisation Google Drive impossible : " + ((e && e.message) || e) +
+          " Les données affichées sont celles de cet appareil.");
+      });
+    });
+    return _driveOrgReady;
+  }
+
+  // Reconnexion Google DANS un geste utilisateur (clic « Se reconnecter à
+  // Google ») : seul endroit autorisé à passer `interactive:true` à
+  // `resumeDriveOrg` (déclenche `requestAccessToken()` si besoin).
+  function retryDriveOrgAuth() {
+    if (!window.PiloteoDrive) return Promise.reject(new Error("Le pont Google Drive n'a pas chargé (rechargez la page)."));
+    return window.PiloteoDrive.resumeDriveOrg({ interactive: true }).then(function (result) {
+      if (result && result.engine) {
+        activeEngine = result.engine;
+        activeOrgAdapter = result.adapter || null;
+        orgDriveNeedsAuth = false;
+        storageMode = "org-drive";
+        try { localStorage.setItem(STORAGE_MODE_KEY, "org-drive"); } catch (e) {}
+        _driveOrgReady = Promise.resolve();
+        return result;
+      }
+      if (result && result.needsAuth) { orgDriveNeedsAuth = true; throw new Error("Connexion à Google refusée ou fermée."); }
+      throw new Error("Aucune organisation Google Drive mémorisée.");
+    });
   }
 
   // --- Point 3 (docs/next/AUTH_SESSION_CONTRACT.md) : session / verrou d'appareil --
@@ -530,6 +608,83 @@
     });
   }
 
+  // Crée l'organisation SUR GOOGLE DRIVE (docs/next/DRIVE_ONBOARDING_CONTRACT.md
+  // §1/§2, lot A) : SYMÉTRIQUE de `activateCreateOrg` ci-dessus, mais sans
+  // sélecteur de dossier — `window.PiloteoDrive.createDriveOrg` crée elle-même
+  // le dossier racine Drive puis publie le manifeste/la fiche membre (même
+  // chaîne d'org que le mode dossier, sur un adapter Drive).
+  //
+  // ORDRE CRITIQUE (correction round vérificateur — CE COMMENTAIRE ÉTAIT FAUX
+  // avant : il affirmait « appelée DANS le geste » sans que le CODE le fasse
+  // réellement) : `window.PiloteoDrive.oauthTokenProvider()` — qui peut ouvrir
+  // la popup Google (`requestAccessToken()`) — DOIT être le TOUT PREMIER
+  // `await` de cette fonction, AVANT `stateRecord()` (un aller-retour
+  // IndexedDB réel, donc un `await` à part entière). Un navigateur strict sur
+  // l'activation utilisateur transitoire (Safari/WebKit, mobile — précisément
+  // la cible de ce lot, cf. contrat §0 « y compris sur mobile ») la CONSOMME
+  // au premier `await` rencontré : intercaler `stateRecord()` AVANT
+  // consommerait le geste et ferait BLOQUER la popup OAuth. Exactement
+  // symétrique de `activateCreateOrg` ci-dessus, qui appelle
+  // `window.PiloteoOrg.pickDirectory()` (le sélecteur natif, lui aussi
+  // consommateur de geste) EN TOUT PREMIER, `stateRecord()` seulement APRÈS.
+  // Le second appel à `oauthTokenProvider()` fait PAR `createDriveOrg`
+  // elle-même (contrat §1) retombe sur le token déjà mis en cache MÉMOIRE par
+  // CET appel-ci — aucune 2e popup.
+  //
+  // Migration (Point 5, MIGRATION_MODE_CONTRACT.md, qui anticipe explicitement
+  // les cibles « folder/org/drive ») : SANS migration, l'organisation Drive
+  // fraîchement créée démarrerait avec zéro consultant et app.js refuserait le
+  // démarrage (« compte non rattaché ») — comme pour le mode dossier, on migre
+  // donc l'état solo existant AVANT d'activer le mode localement. Un échec
+  // (vérification en échec) ne laisse jamais ce navigateur actif sur une
+  // organisation Drive non fiable : le drapeau `piloteo_storage_mode` déjà
+  // posé par `createDriveOrg` (contrat §1) est alors explicitement annulé ;
+  // l'organisation elle-même reste créée sur Drive (genèse write-once, comme
+  // pour le dossier) mais ce navigateur retourne à « cet appareil », données
+  // intactes.
+  function activateCreateOrgDrive(name) {
+    if (!window.PiloteoDrive) return Promise.reject(new Error("Le pont Google Drive n'a pas chargé (rechargez la page)."));
+    if (!window.PiloteoDrive.isAvailable) return Promise.reject(new Error("Google Drive n'est pas disponible (configuration Google absente)."));
+    // PREMIER await de la fonction (voir commentaire ci-dessus) : consomme
+    // l'activation utilisateur transitoire du clic AVANT tout autre await.
+    return window.PiloteoDrive.oauthTokenProvider().then(function () {
+      return stateRecord().then(function (rec) {
+        var solo = ensureUsable(rec.state);
+        var cs = solo.consultants || [];
+        var i = adminConsultantIndex(cs);
+        var consultantId = i >= 0 ? cs[i].id : null;
+        var targetLabel = "l'organisation" + (name ? " « " + name + " »" : " créée") + " (Google Drive)";
+        return window.PiloteoDrive.createDriveOrg({ name: name, consultantId: consultantId }).then(function (result) {
+          return decideAndRunMigration(result.engine, solo, targetLabel).then(function (migration) {
+            return { result: result, migration: migration };
+          }).catch(function (e) {
+            // Migration non vérifiée : jamais de mode org-drive actif dans ce cas
+            // (contrat §1/§2 point 4, symétrique du mode dossier) — on annule le
+            // drapeau déjà posé par createDriveOrg (ET le rootFolderId associé,
+            // qui resterait sinon orphelin en localStorage sans que le mode
+            // "org-drive" ne pointe plus dessus) ; l'organisation reste créée
+            // sur Drive (write-once) mais n'est pas activée sur cet appareil.
+            try { localStorage.removeItem(STORAGE_MODE_KEY); } catch (e2) {}
+            try { localStorage.removeItem("piloteo_drive_root_folder_id"); } catch (e2) {}
+            throw new Error(((e && e.message) || "Migration impossible.") +
+              " Retour à cet appareil : vos données ne sont pas perdues.");
+          });
+        });
+      });
+    }).then(function (r) {
+      var result = r.result, migration = r.migration;
+      activeEngine = result.engine;
+      activeOrgAdapter = result.adapter || null;
+      orgDriveNeedsAuth = false;
+      storageMode = "org-drive";
+      try { localStorage.setItem(STORAGE_MODE_KEY, "org-drive"); } catch (e) {}
+      try { if (name) localStorage.setItem(ORG_NAME_KEY, name); } catch (e) {}
+      _driveOrgReady = Promise.resolve();
+      _lastMigrationResult = migration;
+      return Object.assign({}, result, { migration: migration });
+    });
+  }
+
   // Ouvre le sélecteur natif (dossier partagé de l'organisation à rejoindre)
   // puis rejoint via le code d'invitation collé (`codeText`) et active le
   // mode org.
@@ -555,15 +710,21 @@
   }
 
   // Revient au stockage « cet appareil » : les données DE L'ORGANISATION
-  // restent intactes sur le dossier partagé (rien n'est supprimé) ;
-  // `/api/state` repasse sur IndexedDB.
+  // restent intactes sur le dossier partagé/Drive (rien n'est supprimé) ;
+  // `/api/state` repasse sur IndexedDB. Générique aux DEUX variantes
+  // d'organisation (dossier ET Drive, `storageMode` "org"/"org-drive") — un
+  // rechargement suit toujours cet appel, donc réinitialiser les DEUX caches
+  // de reprise (`_orgReady`/`_driveOrgReady`) est sans risque quelle que soit
+  // la variante active.
   function deactivateOrg() {
     activeEngine = null;
     activeOrgAdapter = null;
     orgNeedsPermission = false;
+    orgDriveNeedsAuth = false;
     storageMode = null;
     try { localStorage.removeItem(STORAGE_MODE_KEY); } catch (e) {}
     _orgReady = Promise.resolve();
+    _driveOrgReady = Promise.resolve();
   }
 
   // Re-demande la permission sur le dossier de l'organisation mémorisée.
@@ -967,17 +1128,50 @@
     c1.appendChild(mkBtn("Continuer", function () { ov.remove(); }, true));
     grid.appendChild(c1);
 
-    // Carte 2 — créer une organisation.
-    var c2 = card("Créer une organisation", "Choisissez un dossier (local, OneDrive, SharePoint, Drive…) qui deviendra le dossier partagé de votre organisation.");
+    // Carte 2 — créer une organisation. Point Drive onboarding lot A
+    // (DRIVE_ONBOARDING_CONTRACT.md §2) : DEUX emplacements possibles quand
+    // `window.PiloteoDrive.isAvailable` — « Un dossier (ordinateur) »
+    // (existant, File System Access) ou « Google Drive (recommandé sur
+    // mobile) », l'OAuth Google étant déclenché DANS le clic du bouton
+    // « Créer l'organisation » (activation utilisateur requise). Sans
+    // `PiloteoDrive.isAvailable`, seul le dossier reste proposé (radio Drive
+    // restée cachée) — comportement inchangé.
+    var c2 = card("Créer une organisation", "Choisissez où vivront les données de votre organisation.");
     var nameIn = fieldInput("Nom de l'organisation", "text");
     darkInput(nameIn.input);
     c2.appendChild(nameIn.wrap);
+
+    var locWrap = el("div", "display:flex;flex-direction:column;gap:7px;margin:2px 0 6px;");
+    function locOption(value, label, checked) {
+      var lab = document.createElement("label");
+      lab.setAttribute("style", "display:flex;align-items:center;gap:8px;font-size:.84rem;cursor:pointer;");
+      var radio = document.createElement("input");
+      radio.type = "radio"; radio.name = "piloteo-org-location"; radio.value = value; radio.checked = !!checked;
+      lab.appendChild(radio);
+      lab.appendChild(document.createTextNode(label));
+      locWrap.appendChild(lab);
+      return { wrap: lab, radio: radio };
+    }
+    var locFolder = locOption("folder", "Un dossier (ordinateur)", true);
+    var locDrive = locOption("drive", "Google Drive (recommandé sur mobile)", false);
+    locDrive.wrap.hidden = true; // révélé plus bas SI window.PiloteoDrive.isAvailable
+    c2.appendChild(locWrap);
+
     var msg2 = el("div", "font-size:12.5px;color:#f6d685;min-height:16px;");
-    var b2 = mkBtn("Choisir un dossier et créer", function () {
+    var b2 = mkBtn("Créer l'organisation", function () {
       var name = nameIn.input.value.trim();
       if (!name) { msg2.textContent = "Indiquez un nom d'organisation."; return; }
-      msg2.textContent = "Sélection du dossier…";
-      activateCreateOrg(name).then(function () {
+      var useDrive = locDrive.radio.checked;
+      msg2.textContent = useDrive ? "Connexion à Google…" : "Sélection du dossier…";
+      // IMPORTANT : appelé SYNCHRONEMENT dans ce clic (jamais différé après un
+      // `await`) — l'OAuth Google exige une activation utilisateur, exactement
+      // comme pickDirectory() pour le dossier. `activateCreateOrgDrive`
+      // consomme elle-même ce geste EN TOUT PREMIER (avant tout autre await —
+      // voir son en-tête ci-dessus) ; ce n'est pas juste cet appel-ci qui doit
+      // être synchrone, mais aussi le PREMIER await À L'INTÉRIEUR de la
+      // fonction appelée.
+      var activation = useDrive ? activateCreateOrgDrive(name) : activateCreateOrg(name);
+      activation.then(function () {
         alert("Organisation créée. L'application va se recharger.");
         location.reload();
       }).catch(function (e) { msg2.textContent = "Échec : " + ((e && e.message) || e); });
@@ -1006,16 +1200,41 @@
     grid.appendChild(c3);
 
     // Sur navigateur sans File System Access, options 2/3 désactivées + explication
-    // (contrat §3). `window.PiloteoOrg` peut ne pas être chargé ENCORE (module
-    // différé) : on attend un court instant avant de trancher, jamais un blocage
-    // définitif de l'écran (garde-fou déjà appliqué ailleurs, cf. ensureOrgReady).
-    waitForPiloteoOrg(4000).then(function (PO) {
-      var available = !!(PO && PO.hasFileSystemAccess);
-      if (!available) {
-        [b2, b3].forEach(function (b) { b.disabled = true; b.style.opacity = ".45"; b.style.cursor = "not-allowed"; });
-        var note = "Nécessite Chrome/Edge/Opera sur ordinateur (File System Access).";
-        c2.appendChild(el("div", "font-size:12px;color:#f6d685;", note));
-        c3.appendChild(el("div", "font-size:12px;color:#f6d685;", note));
+    // (contrat §3), SAUF si Google Drive est disponible (DRIVE_ONBOARDING_CONTRACT.md
+    // §2) : dans ce cas, la carte 2 (créer) reste utilisable via l'emplacement
+    // Drive — seule la carte 3 (rejoindre, hors scope Drive de ce lot, cf. Google
+    // Picker = lot B) reste désactivée sans File System Access. `window.PiloteoOrg`/
+    // `window.PiloteoDrive` peuvent ne pas être chargés ENCORE (modules différés) :
+    // on attend un court instant avant de trancher, jamais un blocage définitif de
+    // l'écran (garde-fou déjà appliqué ailleurs, cf. ensureOrgReady/ensureDriveOrgReady).
+    Promise.all([waitForPiloteoOrg(4000), waitForPiloteoDrive(4000)]).then(function (r) {
+      var PO = r[0], PD = r[1];
+      var fsaAvailable = !!(PO && PO.hasFileSystemAccess);
+      var driveAvailable = !!(PD && PD.isAvailable);
+      var fsaNote = "Nécessite Chrome/Edge/Opera sur ordinateur (File System Access).";
+
+      if (driveAvailable) {
+        locDrive.wrap.hidden = false;
+        if (!fsaAvailable) locDrive.radio.checked = true;
+      }
+      locFolder.radio.disabled = !fsaAvailable;
+      if (!fsaAvailable) locFolder.wrap.style.opacity = ".5";
+
+      var canCreate = fsaAvailable || driveAvailable;
+      b2.disabled = !canCreate;
+      b2.style.opacity = canCreate ? "" : ".45";
+      b2.style.cursor = canCreate ? "" : "not-allowed";
+      if (!canCreate) c2.appendChild(el("div", "font-size:12px;color:#f6d685;", fsaNote));
+
+      // « Rejoindre » (b3) reste sur File System Access seul : rejoindre une
+      // organisation Google Drive (Google Picker) est explicitement le lot B,
+      // hors scope de ce contrat.
+      b3.disabled = !fsaAvailable;
+      b3.style.opacity = fsaAvailable ? "" : ".45";
+      b3.style.cursor = fsaAvailable ? "" : "not-allowed";
+      if (!fsaAvailable) {
+        c3.appendChild(el("div", "font-size:12px;color:#f6d685;",
+          driveAvailable ? fsaNote + " (rejoindre une organisation Google Drive arrive bientôt)" : fsaNote));
       }
     });
   }
@@ -1032,6 +1251,7 @@
   function withFolderReady(fn) {
     if (storageMode === "folder") return ensureFolderReady().then(fn);
     if (storageMode === "org") return ensureOrgReady().then(fn);
+    if (storageMode === "org-drive") return ensureDriveOrgReady().then(fn);
     return fn();
   }
 
@@ -1204,8 +1424,10 @@
     // `state` EST celui du dossier org quand `storageMode==="org"`, cf.
     // `stateRecord()`) et `role` du membership de l'identité locale
     // (owner/admin -> "admin", pour qu'app.js applique ses permissions
-    // d'affichage ; user -> "user").
-    if (storageMode === "org" && activeEngine && activeEngine.membership) {
+    // d'affichage ; user -> "user"). Point Drive onboarding lot A
+    // (DRIVE_ONBOARDING_CONTRACT.md §2) : IDENTIQUE pour `storageMode==="org-drive"`
+    // (même forme d'`activeEngine.membership`, seul le stockage sous-jacent change).
+    if ((storageMode === "org" || storageMode === "org-drive") && activeEngine && activeEngine.membership) {
       var m = activeEngine.membership;
       role = (m.role === "owner" || m.role === "admin") ? "admin" : "user";
       if (m.consultantId && consultants.some(function (c) { return c && c.id === m.consultantId; })) {
@@ -1645,13 +1867,18 @@
         driveAvailable ? "Disponible" : "Bientôt",
         driveAvailable ? "#137a3f" : "#8a6d1f",
         driveAvailable
-          ? "Client OAuth configuré (GOOGLE_CLIENT_ID, scope drive.file). Écriture vive : événements signés en fichiers immuables, réconciliation déterministe. Sélection du dossier racine Drive au moment de créer/rejoindre."
+          ? "Client OAuth configuré (GOOGLE_CLIENT_ID, scope drive.file). Écriture vive : événements signés en fichiers immuables, réconciliation déterministe. Créer une organisation Google Drive se fait depuis l'écran d'accueil (« Créer une organisation ») — le dossier racine est créé automatiquement sur votre Drive."
           : "Adaptateur câblé et testé ; activation par identifiant OAuth public (GOOGLE_CLIENT_ID) dans la config de déploiement."));
       body.appendChild(modeRow("Serveur hébergé", "Disponible séparément", "#5b6b76", "Déploiement Docker (voir docs/deployment). Mode centralisé, hors application solo."));
 
-      // Section 3bis — Organisation (point 2c-C2, ORG_UI_CONTRACT §3).
+      // Section 3bis — Organisation (point 2c-C2, ORG_UI_CONTRACT §3). Point
+      // Drive onboarding lot A (DRIVE_ONBOARDING_CONTRACT.md §2) : IDENTIQUE
+      // qu'on soit en org dossier ou org-drive (nom, rôle, membres, inviter,
+      // révoquer) — `invite`/`revoke`/`listMembers`/`members()` sont
+      // agnostiques de l'adaptateur sous-jacent, aucune branche dédiée requise
+      // au-delà de cette condition.
       body.appendChild(sectionTitle("Organisation"));
-      if (storageMode === "org" && activeEngine && activeEngine.manifest && activeEngine.membership) {
+      if ((storageMode === "org" || storageMode === "org-drive") && activeEngine && activeEngine.manifest && activeEngine.membership) {
         var orgEngineRef = activeEngine;      // capturé : évite un décalage si l'utilisateur revient à cet appareil pendant que ce panneau est ouvert
         var orgAdapterRef = activeOrgAdapter;
         var myRole = orgEngineRef.membership.role || "user";
@@ -1849,7 +2076,8 @@
       // avertissement explicite), proposée UNIQUEMENT ici, jamais confondue
       // avec « Revenir à cet appareil » ci-dessus (qui, lui, ne touche pas à
       // l'identité : il quitte seulement le stockage org pour l'appareil).
-      if (storageMode === "org") {
+      // IDENTIQUE pour org-drive (DRIVE_ONBOARDING_CONTRACT.md §2).
+      if (storageMode === "org" || storageMode === "org-drive") {
         body.appendChild(el("div", "height:1px;background:#f1f4f6;margin:12px 0;"));
         var orgSessionRow = el("div", "display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;");
         orgSessionRow.appendChild(mkBtn("Se déconnecter", function () { close(); ensureSessionReady().then(enterLocked); }));
@@ -2152,8 +2380,19 @@
     _useOrgEngineForTest: function (engine, adapter) {
       activeEngine = engine; activeOrgAdapter = adapter || null; storageMode = "org"; _orgReady = Promise.resolve();
     },
+    // Point Drive onboarding lot A (DRIVE_ONBOARDING_CONTRACT.md §2) : hook de
+    // TEST symétrique pour le mode Organisation SUR GOOGLE DRIVE — pose un org
+    // engine RÉEL (construit via `window.PiloteoDrive.__createOrgOnAdapter`/
+    // `__openOrgOnAdapter` sur un FakeDrive) comme moteur actif, SANS OAuth ni
+    // appel réseau réel.
+    _useDriveOrgEngineForTest: function (engine, adapter) {
+      activeEngine = engine; activeOrgAdapter = adapter || null; storageMode = "org-drive"; _driveOrgReady = Promise.resolve();
+    },
     _deactivateOrg: deactivateOrg,
     _orgStorageMode: function () { return storageMode === "org"; },
+    _orgDriveStorageMode: function () { return storageMode === "org-drive"; },
+    _createOrgDrive: activateCreateOrgDrive,
+    _retryDriveOrgAuth: retryDriveOrgAuth,
     _getJournal: function () { return idbGet(JOURNAL_KEY).then(function (j) { return Array.isArray(j) ? j : []; }); },
     // Invariant Phase 3 : l'état reconstruit en rejouant le journal doit être
     // identique (ensembliste) au snapshot courant.

@@ -1238,7 +1238,7 @@
         <div class="topbar">
           <div>
             <h1>Clients et Partenaires</h1>
-            <div class="hint">Clientes, prospects ou partenaires — le statut se déduit automatiquement des affaires saisies et des rôles qui y sont associés.</div>
+            <div class="hint">Clients, prospects ou partenaires — le statut se déduit automatiquement des affaires saisies et des rôles qui y sont associés.</div>
           </div>
           <button class="btn primary" id="open-nouvelle-org">+ Nouvelle organisation</button>
         </div>
@@ -1975,6 +1975,19 @@
      à l'usage — voir piloteo-solo-bridge.mjs. -->
 <script type="module" src="piloteo-solo-bridge.mjs"></script>
 <script type="module" src="piloteo-org-bridge.mjs"></script>
+<!-- Pont mode Google Drive (Point 4 + onboarding lot A, DRIVE_ONBOARDING_CONTRACT.md §3) :
+     client id OAuth PUBLIC (jamais de client_secret) posé AVANT le script GSI et
+     AVANT le pont, qui le lisent tous deux au chargement — puis Google Identity
+     Services (GIS), puis le pont lui-même (module ES, différé de fait comme les
+     autres ; chargé APRÈS piloteo-org-bridge.mjs pour réutiliser l'identité de
+     membre partagée, window.PiloteoOrg.getOrCreateIdentity). Ces trois ajouts
+     sont IDEMPOTENTS et n'ont aucun effet tant que le geste utilisateur qui
+     déclenche l'OAuth n'a pas eu lieu (le pont est inerte si isAvailable=false,
+     GIS ne fait rien tant qu'on n'appelle pas initTokenClient) : aucune
+     régression du mode solo/dossier. -->
+<script>window.PILOTEO_GOOGLE_CLIENT_ID="940162140944-llbfni295begfk20egmvnuqd9sc37cj8.apps.googleusercontent.com";</script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script type="module" src="piloteo-drive-bridge.mjs"></script>
 <!-- Pont migration à la bascule de mode (Point 5, MIGRATION_MODE_CONTRACT.md) :
      même principe, module ES pur réexposé sur window.PiloteoMigration — voir
      piloteo-migration-bridge.mjs. -->
