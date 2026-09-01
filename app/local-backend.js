@@ -2477,6 +2477,71 @@
     }
   };
 
+  // --- Point 1 (docs/next/STATIC_HARDENING_CONTRACT.md §1) -----------------
+  // En solo (aucun backend serveur — audit §2/§11) : pas de comptes serveur,
+  // pas d'audit, pas de sauvegardes serveur, et `/support` est un 404 sec sur
+  // Pages. Le panneau `#support-admin-panel` (statique dans index.html,
+  // seulement basculé via `.hidden` par app.js — jamais recréé) doit être
+  // ABSENT, pas grisé ni menant à un 404. Retrait fait ICI, SANS toucher
+  // app.js : app.js relit l'élément via `getElementById` et le null-garde déjà
+  // (`if(support) support.hidden=...`), donc son retrait pur et simple est
+  // sans risque pour lui. Trois couches (idempotentes, sans effet en mode
+  // Serveur V1 puisque tout ceci est sous la garde `isSolo()`) :
+  //   1. retrait DOM immédiat (le panneau + tout lien href="/support") ;
+  //   2. masquage CSS `display:none !important` PERMANENT injecté en <head>,
+  //      sur l'ID du panneau ET sur tout lien href="/support" — défense en
+  //      profondeur indépendante du timing, même réinjecté bien plus tard ;
+  //   3. un MutationObserver BORNÉ (se déconnecte après 5s, largement au-delà
+  //      du boot d'app.js) qui répète le retrait DOM si un code futur
+  //      réinsérait ces nœuds — jamais un observeur qui tourne indéfiniment
+  //      (la couche 2 couvre déjà, sans borne, la réinsertion tardive).
+  var SUPPORT_PANEL_ID = "support-admin-panel";
+  var SUPPORT_HREF = "/support";
+  function hideSupportPanelCss() {
+    try {
+      if (document.getElementById("piloteo-support-hide-style")) return;
+      var style = document.createElement("style");
+      style.id = "piloteo-support-hide-style";
+      // Deux règles PERMANENTES (indépendantes du MutationObserver borné) :
+      // l'ID du panneau ET tout lien href="/support" — pour qu'un lien nu
+      // (futur bouton d'aide ailleurs dans l'UI) réinséré APRÈS l'expiration de
+      // l'observer reste inaccessible. Le contrat §1 exige « tout lien
+      // href="/support" » absent/inaccessible SANS borne temporelle.
+      style.textContent =
+        "#" + SUPPORT_PANEL_ID + "{display:none !important;}" +
+        'a[href="' + SUPPORT_HREF + '"]{display:none !important;pointer-events:none !important;}';
+      (document.head || document.documentElement).appendChild(style);
+    } catch (e) {}
+  }
+  function removeSupportNodes() {
+    try {
+      var panel = document.getElementById(SUPPORT_PANEL_ID);
+      if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+    } catch (e) {}
+    try {
+      var links = document.querySelectorAll('a[href="' + SUPPORT_HREF + '"]');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].parentNode) links[i].parentNode.removeChild(links[i]);
+      }
+    } catch (e) {}
+  }
+  function hardenSupportAbsence() {
+    hideSupportPanelCss();
+    removeSupportNodes();
+    try {
+      if (typeof MutationObserver === "function" && document.body) {
+        var BOUND_MS = 5000; // largement au-delà du boot synchrone d'app.js
+        var deadline = monotonicNow() + BOUND_MS;
+        var observer = new MutationObserver(function () {
+          removeSupportNodes();
+          if (monotonicNow() > deadline) observer.disconnect();
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(function () { observer.disconnect(); }, BOUND_MS);
+      }
+    } catch (e) {}
+  }
+
   // Auto-installation synchrone AVANT app.js si le mode solo est actif.
-  if (isSolo()) install();
+  if (isSolo()) { install(); hardenSupportAbsence(); }
 })();

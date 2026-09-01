@@ -1,6 +1,14 @@
 <!doctype html>
 <title>Pilotéo</title>
 <meta charset="utf-8">
+<!-- Durcissement mode statique (Point 2, docs/next/STATIC_HARDENING_CONTRACT.md §2) :
+     script-src SANS 'unsafe-inline' — d'où l'externalisation de la config runtime
+     dans pages-config.js (chargé tout en bas, avant les autres scripts) ; style-src
+     garde 'unsafe-inline' (nombreux attributs style="" existants, pas de refonte
+     CSS demandée). Compatible GSI (script-src/frame-src accounts.google.com) et
+     Drive REST (connect-src www.googleapis.com) + modules ES ('self' couvre les
+     scripts/imports same-origin). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com; connect-src 'self' https://www.googleapis.com https://accounts.google.com; frame-src https://accounts.google.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'self'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
 <style>
@@ -1969,6 +1977,15 @@
   </div>
 </div>
 
+<!-- Durcissement mode statique (Point 2, STATIC_HARDENING_CONTRACT.md §2) : les
+     deux globals de config runtime (window.PILOTEO_FORCE_SOLO,
+     window.PILOTEO_GOOGLE_CLIENT_ID — client id PUBLIC, aucun secret) sont
+     EXTERNALISÉS dans pages-config.js, servi en statique, chargé EN PREMIER
+     (avant piloteo-events.js, tous les ponts et local-backend.js) — la CSP
+     script-src ci-dessus n'autorise plus les scripts inline. pages.yml et la
+     republication worktree doivent embarquer ce fichier tel quel à côté
+     d'index.html. -->
+<script src="pages-config.js"></script>
 <script src="piloteo-events.js"></script>
 <!-- Pont mode Dossier (point 1b) : module ES, différé de fait (comme `defer`).
      local-backend.js ne suppose jamais sa présence au chargement, il le teste
@@ -1976,16 +1993,16 @@
 <script type="module" src="piloteo-solo-bridge.mjs"></script>
 <script type="module" src="piloteo-org-bridge.mjs"></script>
 <!-- Pont mode Google Drive (Point 4 + onboarding lot A, DRIVE_ONBOARDING_CONTRACT.md §3) :
-     client id OAuth PUBLIC (jamais de client_secret) posé AVANT le script GSI et
-     AVANT le pont, qui le lisent tous deux au chargement — puis Google Identity
+     client id OAuth PUBLIC (jamais de client_secret), désormais posé par
+     pages-config.js (chargé tout en haut) AVANT le script GSI et AVANT le
+     pont, qui le lisent tous deux au chargement — puis Google Identity
      Services (GIS), puis le pont lui-même (module ES, différé de fait comme les
      autres ; chargé APRÈS piloteo-org-bridge.mjs pour réutiliser l'identité de
-     membre partagée, window.PiloteoOrg.getOrCreateIdentity). Ces trois ajouts
+     membre partagée, window.PiloteoOrg.getOrCreateIdentity). Ces ajouts
      sont IDEMPOTENTS et n'ont aucun effet tant que le geste utilisateur qui
      déclenche l'OAuth n'a pas eu lieu (le pont est inerte si isAvailable=false,
      GIS ne fait rien tant qu'on n'appelle pas initTokenClient) : aucune
      régression du mode solo/dossier. -->
-<script>window.PILOTEO_GOOGLE_CLIENT_ID="940162140944-llbfni295begfk20egmvnuqd9sc37cj8.apps.googleusercontent.com";</script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script type="module" src="piloteo-drive-bridge.mjs"></script>
 <!-- Pont migration à la bascule de mode (Point 5, MIGRATION_MODE_CONTRACT.md) :
@@ -1995,6 +2012,5 @@
 <!-- Pont session/PIN (Point 3, AUTH_SESSION_CONTRACT.md) : même principe,
      module ES pur réexposé sur window.PiloteoAuth — voir piloteo-auth-bridge.mjs. -->
 <script type="module" src="piloteo-auth-bridge.mjs"></script>
-<script>window.PILOTEO_FORCE_SOLO=true;</script>
 <script src="local-backend.js"></script>
 <script src="app.js"></script>
