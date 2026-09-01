@@ -218,10 +218,13 @@ export async function inviteMember({
     throw new Error("inviteMember: le rôle 'owner' ne peut être délégué que par un émetteur 'owner'");
   }
 
-  const invitation = await createInvitation({ workspaceId, expectedGoogleId, role, ttlMs, signer });
-  // issuerId : porté à côté de `proof` pour retrouver la clé de vérification
-  // de l'émetteur (§5.2) — le registre DE CONFIANCE (jamais une fiche brute).
-  return { ...invitation, issuerId: issuer.memberId };
+  // ORG_REVOCATION_CONTRACT.md §3 : `issuerId` est désormais passé à
+  // `createInvitation` pour qu'il fasse PARTIE des octets signés (le binding
+  // émetteur↔proof est structurel, pas seulement une conséquence de la
+  // logique de `verifyInvitation`) — toute modification d'`issuerId` après
+  // signature invalide donc le proof.
+  const invitation = await createInvitation({ workspaceId, expectedGoogleId, role, ttlMs, signer, issuerId: issuer.memberId });
+  return invitation;
 }
 
 /**
@@ -266,6 +269,11 @@ export async function verifyInvitation(invitation, { registry } = {}) {
     createdAt: invitation.createdAt,
     expiresAt: invitation.expiresAt,
     nonce: invitation.nonce,
+    // §3 : recompose EXACTEMENT les mêmes octets côté vérificateur, avec
+    // l'issuerId ANNONCÉ par l'invitation — si celui-ci a été modifié après
+    // signature (ex: pour usurper un autre émetteur), les octets recomposés
+    // divergent de ceux signés et la vérification échoue plus bas.
+    issuerId: invitation.issuerId,
   });
   const bytes = new TextEncoder().encode(canonical);
   let sigOk = false;
@@ -336,6 +344,157 @@ export async function acceptInvitation({ invitation, identity, consultantId, goo
   };
 
   return { membership, memberRecord, invitation: consumedInvitation };
+}
+
+// ---------------------------------------------------------------------------
+// Révocation signée — docs/next/ORG_REVOCATION_CONTRACT.md §1
+//
+// Une fiche `{kind:"revocation", workspaceId, revokedMemberId, revokedAt,
+// issuerId, proof}` publiable, dont `proof` couvre exactement les mêmes
+// champs (sérialisation déterministe `revocationCanonicalPayload`), signée
+// par l'émetteur. Autorité de révocation (contrat §1/vigilance) : `owner`
+// peut révoquer `owner`/`admin`/`user` ; `admin` peut révoquer un `user`
+// SEULEMENT (jamais un `owner` ni un autre `admin`) ; `user` ne révoque
+// personne. Cette règle est centralisée ici (`canRevokeRole`) et réutilisée
+// identiquement à l'émission (`createRevocation`) et à la vérification
+// (`verifyRevocation`) pour éviter toute divergence entre les deux.
+// ---------------------------------------------------------------------------
+
+/** Rang d'autorité de révocation : `issuerRole` doit être suffisant pour
+ *  révoquer un membre de rôle `revokedRole`. */
+function canRevokeRole(issuerRole, revokedRole) {
+  if (issuerRole === "owner") return revokedRole === "owner" || revokedRole === "admin" || revokedRole === "user";
+  if (issuerRole === "admin") return revokedRole === "user";
+  return false; // 'user' (ou rôle inconnu) : aucune autorité de révocation.
+}
+
+/** §1 — octets canoniques d'une fiche de révocation (même style que
+ *  `invitations.js#canonicalPayload`) : sérialisation déterministe, ordre de
+ *  champs fixe. */
+export function revocationCanonicalPayload({ workspaceId, revokedMemberId, revokedAt, issuerId }) {
+  return JSON.stringify([workspaceId, revokedMemberId, revokedAt, issuerId]);
+}
+
+/**
+ * Crée une fiche de révocation signée. EXIGE un `signer` réel + une autorité
+ * suffisante de `issuerMembership.role` sur `revokedRole` (voir
+ * `canRevokeRole`) — sinon lève AVANT toute production de fiche (aucune
+ * révocation n'est émise pour une autorité insuffisante).
+ * @param {{workspaceId:string, revokedMemberId:string, issuer:{memberId:string},
+ *          issuerMembership:object, revokedRole:"owner"|"admin"|"user",
+ *          signer:Function, now?:Date}} params
+ * @returns {Promise<object>} fiche de révocation `{kind:"revocation", workspaceId, revokedMemberId, revokedAt, issuerId, proof}`
+ */
+export async function createRevocation({
+  workspaceId,
+  revokedMemberId,
+  issuer,
+  issuerMembership,
+  revokedRole,
+  signer,
+  now = new Date(),
+} = {}) {
+  if (!workspaceId) throw new Error("createRevocation: 'workspaceId' requis");
+  if (!revokedMemberId) throw new Error("createRevocation: 'revokedMemberId' requis");
+  if (typeof signer !== "function") {
+    throw new Error("createRevocation: 'signer' réel requis (Ed25519 de l'émetteur)");
+  }
+  if (!issuer || !issuer.memberId) {
+    throw new Error("createRevocation: 'issuer' invalide ('memberId' requis)");
+  }
+  if (!issuerMembership || issuerMembership.memberId !== issuer.memberId) {
+    throw new Error("createRevocation: 'issuerMembership' invalide ou ne correspond pas à 'issuer'");
+  }
+  if (issuerMembership.workspaceId !== workspaceId) {
+    throw new Error("createRevocation: 'issuerMembership' n'appartient pas à ce workspace");
+  }
+  if (issuerMembership.status !== "active") {
+    throw new Error("createRevocation: émetteur non actif (révoqué) — aucune autorité pour révoquer");
+  }
+  if (!["owner", "admin", "user"].includes(revokedRole)) {
+    throw new Error(`createRevocation: 'revokedRole' invalide '${revokedRole}'`);
+  }
+  if (!canRevokeRole(issuerMembership.role, revokedRole)) {
+    throw new Error(
+      "createRevocation: émetteur sans autorité suffisante (owner révoque owner/admin/user ; admin révoque user seulement)"
+    );
+  }
+
+  const revokedAt = new Date(now).toISOString();
+  const canonical = revocationCanonicalPayload({
+    workspaceId,
+    revokedMemberId,
+    revokedAt,
+    issuerId: issuer.memberId,
+  });
+  const proof = await signer(new TextEncoder().encode(canonical));
+
+  return {
+    kind: "revocation",
+    workspaceId,
+    revokedMemberId,
+    revokedAt,
+    issuerId: issuer.memberId,
+    proof,
+  };
+}
+
+/**
+ * Vérifie une fiche de révocation : `crypto.verify` de `proof` avec la clé
+ * publique de `revocation.issuerId` retrouvée via `registry` (DÉJÀ vérifié —
+ * jamais une fiche brute), ET que l'émetteur a le rang d'autorité suffisant
+ * pour révoquer le rôle ACTUEL (dans ce `registry`) du membre visé. Ne lève
+ * jamais : renvoie `{ok:false, reason}`.
+ * @param {object} revocation
+ * @param {{registry:{getPublicKey:Function, getMembership:Function}}} params
+ * @returns {Promise<{ok:boolean, reason?:string}>}
+ */
+export async function verifyRevocation(revocation, { registry } = {}) {
+  if (!revocation || revocation.kind !== "revocation") {
+    return { ok: false, reason: "fiche de révocation invalide (kind manquant)" };
+  }
+  if (!revocation.workspaceId || !revocation.revokedMemberId || !revocation.revokedAt || !revocation.issuerId || !revocation.proof) {
+    return { ok: false, reason: "fiche de révocation incomplète" };
+  }
+  if (!registry || typeof registry.getPublicKey !== "function" || typeof registry.getMembership !== "function") {
+    return { ok: false, reason: "registry invalide (getPublicKey/getMembership requis)" };
+  }
+  const issuerPublicKey = registry.getPublicKey(revocation.issuerId);
+  if (!issuerPublicKey) {
+    return { ok: false, reason: `émetteur inconnu de l'ensemble de confiance (${revocation.issuerId})` };
+  }
+  const issuerMembership = registry.getMembership(revocation.issuerId);
+  if (!issuerMembership || issuerMembership.status !== "active") {
+    return { ok: false, reason: "émetteur non actif (révoqué ou inconnu) — aucune autorité" };
+  }
+  const revokedMembership = registry.getMembership(revocation.revokedMemberId);
+  if (!revokedMembership) {
+    return { ok: false, reason: `membre à révoquer inconnu de l'ensemble de confiance (${revocation.revokedMemberId})` };
+  }
+  if (!canRevokeRole(issuerMembership.role, revokedMembership.role)) {
+    return {
+      ok: false,
+      reason: "émetteur sans autorité suffisante (owner révoque owner/admin/user ; admin révoque user seulement)",
+    };
+  }
+
+  const canonical = revocationCanonicalPayload({
+    workspaceId: revocation.workspaceId,
+    revokedMemberId: revocation.revokedMemberId,
+    revokedAt: revocation.revokedAt,
+    issuerId: revocation.issuerId,
+  });
+  const bytes = new TextEncoder().encode(canonical);
+  let sigOk = false;
+  try {
+    sigOk = await cryptoService.verify(issuerPublicKey, bytes, revocation.proof);
+  } catch {
+    sigOk = false;
+  }
+  if (!sigOk) {
+    return { ok: false, reason: "proof invalide (signature de l'émetteur incorrecte)" };
+  }
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -418,17 +577,38 @@ function isCandidateShape(record) {
  * `manifest.workspaceId`, `memberId` pas déjà admis (pas de redéfinition), et
  * `invitationId` pas déjà utilisé (anti-rejeu). Toute fiche refusée est
  * JOURNALISÉE dans `rejected` (jamais ignorée en silence).
- * @param {{manifest:object, memberRecords?:Array<object>}} params
- * @returns {Promise<{registry:object, membershipStore:import("./memberships.js").MembershipStore, trusted:Array<object>, rejected:Array<{record:object, reason:string}>}>}
+ *
+ * ORG_REVOCATION_CONTRACT.md §2 — étendu en 3 passes pour la révocation
+ * signée : (1) l'algorithme ci-dessus (INCHANGÉ) établit un ensemble de
+ * confiance CANDIDAT (clés/rôles/lignée), sans tenir compte des révocations ;
+ * (2) chaque fiche de `revocations` est vérifiée (`verifyRevocation`) contre
+ * ce registre candidat (émetteur de confiance + rang suffisant + proof
+ * valide) — une révocation invalide va dans `rejected`, jamais appliquée ;
+ * (3) re-filtrage par point fixe : une fiche candidate n'est admise dans
+ * l'ensemble FINAL que si, sur toute sa lignée jusqu'à la genèse, aucun
+ * émetteur intermédiaire n'était révoqué AVANT d'avoir émis son maillon
+ * (`invitation.createdAt < issuer.revokedAt` si révoqué). Le membre révoqué
+ * lui-même reste dans `membershipStore` avec `status:"revoked"` (pour que
+ * `SyncEngine` bloque ses événements) mais ne peut plus servir d'émetteur
+ * valide pour un maillon postérieur à sa révocation.
+ * @param {{manifest:object, memberRecords?:Array<object>, revocations?:Array<object>}} params
+ * @returns {Promise<{registry:object, membershipStore:import("./memberships.js").MembershipStore, trusted:Array<object>, revoked:Array<{memberId:string, revokedAt:string, revokedBy:string}>, rejected:Array<{record:object, reason:string}>}>}
  */
-export async function buildTrustedMembership({ manifest, memberRecords = [] } = {}) {
+export async function buildTrustedMembership({ manifest, memberRecords = [], revocations = [] } = {}) {
   if (!manifest || !manifest.workspaceId || !manifest.ownerMemberId || !manifest.ownerPublicKeyJwk) {
     throw new Error("buildTrustedMembership: 'manifest' invalide (genèse {workspaceId, ownerMemberId, ownerPublicKeyJwk} requise)");
   }
 
-  const registry = createTrustRegistry();
-  const membershipStore = new MembershipStore();
-  const trusted = [];
+  // ===========================================================================
+  // PASSE 1 — arbre de confiance des fiches (BFS existant, INCHANGÉ). Produit
+  // un registre CANDIDAT (`candidateRegistry`) et l'ordre d'admission
+  // (`candidateTrusted`, genèse en tête, puis chaque fiche après son
+  // émetteur — invariant utilisé tel quel par la passe 3 plus bas). Les
+  // révocations ne sont PAS encore prises en compte ici.
+  // ===========================================================================
+
+  const candidateRegistry = createTrustRegistry();
+  const candidateTrusted = [];
   const rejected = [];
   const admittedMemberIds = new Set();
   const usedInvitationIds = new Set();
@@ -436,7 +616,7 @@ export async function buildTrustedMembership({ manifest, memberRecords = [] } = 
   // 1. Racine de confiance : la clé/le rôle de l'owner sont pinnés directement
   //    depuis le MANIFESTE (write-once, lot 2c) — jamais depuis une fiche
   //    publiée, qui pourrait être absente, dupliquée ou forgée.
-  registry._add(manifest.ownerMemberId, manifest.ownerPublicKeyJwk, "owner", "active");
+  candidateRegistry._add(manifest.ownerMemberId, manifest.ownerPublicKeyJwk, "owner", "active");
   admittedMemberIds.add(manifest.ownerMemberId);
 
   // 2. Fiche membre genèse (si publiée) : admise seulement si elle correspond
@@ -455,8 +635,7 @@ export async function buildTrustedMembership({ manifest, memberRecords = [] } = 
       rejected.push({ record, reason });
       continue;
     }
-    membershipStore.add(record.membership);
-    trusted.push(record);
+    candidateTrusted.push(record);
     genesisAdmitted = true;
   }
 
@@ -499,10 +678,10 @@ export async function buildTrustedMembership({ manifest, memberRecords = [] } = 
     if (!joinOk) {
       return { verdict: "reject", reason: "joinProof invalide (clé substituée ou preuve falsifiée)" };
     }
-    if (!registry.getPublicKey(invitation.issuerId)) {
+    if (!candidateRegistry.getPublicKey(invitation.issuerId)) {
       return { verdict: "retry", reason: `émetteur (${invitation.issuerId}) pas encore dans l'ensemble de confiance` };
     }
-    const invCheck = await verifyInvitation(invitation, { registry });
+    const invCheck = await verifyInvitation(invitation, { registry: candidateRegistry });
     if (!invCheck.ok) {
       return { verdict: "reject", reason: `invitation invalide : ${invCheck.reason}` };
     }
@@ -517,9 +696,8 @@ export async function buildTrustedMembership({ manifest, memberRecords = [] } = 
       const outcome = await evaluate(record);
       if (outcome.verdict === "admit") {
         const { invitation } = record.authorization;
-        trusted.push(record);
-        membershipStore.add(record.membership);
-        registry._add(record.memberId, record.publicKeyJwk, record.membership.role, record.membership.status);
+        candidateTrusted.push(record);
+        candidateRegistry._add(record.memberId, record.publicKeyJwk, record.membership.role, record.membership.status);
         admittedMemberIds.add(record.memberId);
         usedInvitationIds.add(invitation.invitationId);
         progressed = true;
@@ -541,5 +719,106 @@ export async function buildTrustedMembership({ manifest, memberRecords = [] } = 
     rejected.push({ record, reason: lastReason.get(record) || "émetteur jamais admis dans l'ensemble de confiance" });
   }
 
-  return { registry, membershipStore, trusted, rejected };
+  // ===========================================================================
+  // PASSE 2 — collecte des révocations valides, vérifiées contre le registre
+  // CANDIDAT de la passe 1 (émetteur de confiance + rang suffisant + proof
+  // valide — §1/`verifyRevocation`, qui applique déjà `canRevokeRole`). Une
+  // révocation invalide (proof bidon, émetteur inconnu/non autorisé, cible
+  // inconnue) est journalisée dans `rejected`, sans aucun effet.
+  // ===========================================================================
+
+  /** memberId révoqué -> {revokedAt, revokedBy} (la plus ANCIENNE révocation
+   *  valide gagne : c'est le moment réel où l'autorité de l'émetteur a cessé,
+   *  et retenir la plus tardive romprait moins de maillons qu'il ne le faut). */
+  const revokedMap = new Map();
+  for (const revocation of revocations) {
+    const result = await verifyRevocation(revocation, { registry: candidateRegistry });
+    if (!result.ok) {
+      rejected.push({ record: revocation, reason: `révocation invalide : ${result.reason}` });
+      continue;
+    }
+    const existing = revokedMap.get(revocation.revokedMemberId);
+    if (!existing || revocation.revokedAt < existing.revokedAt) {
+      revokedMap.set(revocation.revokedMemberId, { revokedAt: revocation.revokedAt, revokedBy: revocation.issuerId });
+    }
+  }
+
+  // ===========================================================================
+  // PASSE 3 — re-filtrage (point fixe) : reconstruit l'ensemble de confiance
+  // FINAL. `candidateTrusted` est déjà dans un ordre où l'émetteur de chaque
+  // fiche apparaît AVANT elle (invariant de la BFS de la passe 1 : une fiche
+  // n'est admise qu'une fois son émetteur déjà dans `candidateRegistry`) —
+  // un seul passage linéaire suffit donc pour propager la cascade, sans
+  // nouveau point fixe explicite.
+  // ===========================================================================
+
+  const registry = createTrustRegistry();
+  const membershipStore = new MembershipStore();
+  const trusted = [];
+  const chainValid = new Map(); // memberId -> boolean (maillon intact jusqu'à la genèse)
+
+  // Racine de confiance (comportement PRÉEXISTANT conservé) : le registre
+  // FINAL expose TOUJOURS la clé/le rôle de l'owner via le seul manifeste,
+  // que sa fiche "genèse" ait été publiée ou non (le manifeste suffit à
+  // ancrer la vérification de signature) — seule sa présence dans
+  // `trusted`/`membershipStore` dépend d'une fiche genèse effectivement
+  // publiée et admise (boucle ci-dessous, qui réécrit alors ces mêmes
+  // valeurs sans effet). La révocation de l'owner reste possible même sans
+  // fiche genèse publiée : le manifeste seul suffit à l'identifier comme
+  // cible/émetteur.
+  const ownerRevoked = revokedMap.has(manifest.ownerMemberId);
+  registry._add(manifest.ownerMemberId, manifest.ownerPublicKeyJwk, "owner", ownerRevoked ? "revoked" : "active");
+  chainValid.set(manifest.ownerMemberId, true);
+
+  for (const record of candidateTrusted) {
+    const isGenesis = record.memberId === manifest.ownerMemberId;
+    let ok = true;
+    let breakReason = null;
+
+    if (!isGenesis) {
+      const { invitation } = record.authorization;
+      const issuerId = invitation.issuerId;
+      if (!chainValid.get(issuerId)) {
+        // L'émetteur lui-même a déjà été retiré de l'ensemble de confiance
+        // final (son propre maillon était cassé) : cascade.
+        ok = false;
+        breakReason = `chaîne cassée (cascade) : l'émetteur (${issuerId}) est lui-même exclu de l'ensemble de confiance final`;
+      } else {
+        const issuerRevocation = revokedMap.get(issuerId);
+        // Un émetteur non révoqué reste valide. Un émetteur révoqué reste
+        // valide pour tout maillon ÉMIS AVANT sa révocation (il avait
+        // l'autorité à ce moment) ; un maillon émis à/après `revokedAt` casse
+        // la chaîne.
+        if (issuerRevocation && !(invitation.createdAt < issuerRevocation.revokedAt)) {
+          ok = false;
+          breakReason = `chaîne cassée : invitation émise par ${issuerId} le ${invitation.createdAt}, après sa révocation (${issuerRevocation.revokedAt})`;
+        }
+      }
+    }
+
+    chainValid.set(record.memberId, ok);
+    if (!ok) {
+      rejected.push({ record, reason: breakReason });
+      continue;
+    }
+
+    trusted.push(record);
+    // Le membre lui-même reste dans le store même s'il est révoqué : c'est
+    // SA fiche qui reste légitime (chaîne intacte JUSQU'À lui), seul son
+    // statut change — pour que `SyncEngine` bloque ses événements FUTURS
+    // (docs/next/05 §9) sans jamais le faire disparaître silencieusement.
+    const status = revokedMap.has(record.memberId) ? "revoked" : record.membership.status;
+    registry._add(record.memberId, record.publicKeyJwk, record.membership.role, status);
+    membershipStore.add({ ...record.membership, status });
+  }
+
+  // `revoked` : uniquement les révocations valides dont la CIBLE fait partie
+  // de l'ensemble de confiance final (sa propre chaîne, jusqu'à ELLE, est
+  // intacte) — une révocation valide visant un membre dont la fiche est par
+  // ailleurs rejetée pour une autre raison n'a rien à révoquer.
+  const revoked = Array.from(revokedMap.entries())
+    .filter(([memberId]) => chainValid.get(memberId) === true)
+    .map(([memberId, info]) => ({ memberId, revokedAt: info.revokedAt, revokedBy: info.revokedBy }));
+
+  return { registry, membershipStore, trusted, revoked, rejected };
 }

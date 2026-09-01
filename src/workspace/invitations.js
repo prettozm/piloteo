@@ -67,10 +67,17 @@ function toBase64Url(bytes) {
 // l'émetteur, seulement à sa clé publique + l'invitation reçue) — plutôt que
 // de dupliquer cette sérialisation (source de bug si les deux divergent un
 // jour), on l'exporte telle quelle. Signalé au contrat comme acceptable.
-export function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce }) {
+export function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce, issuerId }) {
   // Sérialisation déterministe (ordre de clés fixe) — pas de JSON.stringify
   // direct sur un objet dont l'ordre des clés serait accidentel.
-  return JSON.stringify([workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce]);
+  // docs/next/ORG_REVOCATION_CONTRACT.md §3 : `issuerId` est ajouté EN FIN de
+  // tableau, et SEULEMENT s'il est fourni (!== undefined) — pour ne changer
+  // NI les octets ni les tests existants quand issuerId est absent (défaut
+  // rétro-compatible). Le binding émetteur↔proof devient ainsi structurel
+  // (dans les octets signés) dès que l'appelant fournit issuerId.
+  const fields = [workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce];
+  if (issuerId !== undefined) fields.push(issuerId);
+  return JSON.stringify(fields);
 }
 
 async function defaultProof(canonical) {
@@ -94,6 +101,7 @@ export async function createInvitation({
   ttlMs = DEFAULT_TTL_MS,
   now = new Date(),
   signer = null,
+  issuerId,
 } = {}) {
   if (!workspaceId) throw new Error("createInvitation: 'workspaceId' requis");
   if (!["owner", "admin", "user"].includes(role)) {
@@ -113,6 +121,7 @@ export async function createInvitation({
     createdAt,
     expiresAt,
     nonce,
+    issuerId,
   });
 
   const proof = signer
@@ -129,6 +138,7 @@ export async function createInvitation({
     nonce,
     proof,
     status: "pending",
+    ...(issuerId !== undefined ? { issuerId } : {}),
   };
 }
 
