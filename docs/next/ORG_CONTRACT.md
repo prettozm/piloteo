@@ -185,6 +185,34 @@ cryptographiquement. Corrections OBLIGATOIRES :
 - NON-régression : le scénario légitime (owner crée, invite admin/user signés,
   ils rejoignent, convergent) passe toujours.
 
+## 5bis. Exigences de sécurité REPORTÉES au lot 2c (issues de la re-revue)
+
+Le lot moteur est validé pour ce qu'il couvre (admission de fiches vérifiée,
+anti-rejeu, anti-collision, contrôle de mode, 16 vecteurs d'attaque clos). Deux
+garanties NE PEUVENT être fournies que par le lot 2c (distribution sur dossier) et
+sont **bloquantes avant toute livraison d'organisations réelles** :
+
+1. **Immuabilité du manifeste de genèse.** `buildTrustedMembership` fait confiance
+   au `manifest` qu'on lui passe : sa sécurité repose entièrement sur le fait que
+   le dossier ne contient qu'UN manifeste, écrit **write-once** et jamais réécrit.
+   2c DOIT : écrire le manifeste via `putImmutable("workspace", ...)` (déjà
+   write-once), le charger comme racine unique, et refuser/alerter si un second
+   manifeste concurrent apparaît. Limite assumée du modèle « Dossier de confiance »
+   : quiconque a le droit de SUPPRIMER le fichier manifeste dans le dossier
+   partagé contrôle la racine — c'est la responsabilité du SI du client
+   (permissions OneDrive/SharePoint), à documenter pour l'utilisateur.
+2. **Protocole de révocation signé.** Aujourd'hui, un membre révoqué est bien
+   empêché de PUBLIER des événements (SyncEngine lit le `membershipStore` vivant),
+   mais l'arbre de confiance des invitations n'a pas de notion de révocation. 2c
+   DOIT concevoir une **fiche de révocation signée** par une autorité de rang
+   suffisant (owner pour révoquer un admin/owner ; owner/admin pour un user),
+   consommée dans le même point fixe BFS que les fiches membres, invalidant les
+   invitations émises par le membre révoqué après la date de révocation.
+3. **(Durcissement)** Lier `issuerId` dans les octets canoniques signés de
+   l'invitation (aujourd'hui la protection tient à l'infalsifiabilité d'Ed25519
+   mais `issuerId` voyage hors du proof) — à intégrer quand 2c retouche le format
+   d'invitation pour la révocation.
+
 ## 4. Contraintes transverses
 - Réutiliser les primitives ; ne rien réécrire (crypto, memberships, invitations,
   workspace, permissions, sync). Signaler tout manque plutôt que dupliquer.
