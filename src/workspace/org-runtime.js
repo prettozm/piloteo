@@ -154,6 +154,11 @@ export function createOrganization({ name, identity, consultantId } = {}) {
     name: ws.name || name || null,
     ownerMemberId: identity.memberId,
     ownerPublicKeyJwk: identity.publicKeyJwk,
+    // docs/next/ORG_TRUST_HARDENING_CONTRACT.md (round contrariant 4) : ancré
+    // au même titre que `ownerMemberId`/`ownerPublicKeyJwk`, write-once —
+    // `buildTrustedMembership` PASSE 3 lit CE champ (jamais
+    // `record.membership.consultantId`) pour le consultantId du owner.
+    ownerConsultantId: consultantId ?? null,
     createdAt: nowIso(),
   };
 
@@ -185,9 +190,23 @@ export function createOrganization({ name, identity, consultantId } = {}) {
  * `issuerMembership.role` doit être `owner` ou `admin` et `status:"active"` ;
  * `role:"owner"` est réservé à un émetteur `owner`. Toute violation lève
  * AVANT tout appel à `createInvitation` (aucune invitation n'est produite).
+ *
+ * `consultantId` (docs/next/ORG_TRUST_HARDENING_CONTRACT.md, round contrariant
+ * 4) : le PROFIL CONSULTANT PILOTÉO auquel l'émetteur (owner/admin) DESTINE ce
+ * futur membre — SIGNÉ dans l'invitation (`invitations.js#canonicalPayload`),
+ * exactement comme `role`. `acceptInvitation` n'accepte PLUS un `consultantId`
+ * fourni librement par l'accepteur : la valeur de confiance vient TOUJOURS de
+ * CETTE invitation vérifiée. Paramètre optionnel pour CE lot (défaut `null`,
+ * « aucun consultant précisé ») — le câblage UI (sélection du consultant cible
+ * au moment d'inviter, dans `local-backend.js`/les ponts) reste à faire par un
+ * lot ultérieur ; exposer et signer ce paramètre dès maintenant ferme
+ * néanmoins la classe de faille immédiatement (un accepteur ne peut plus
+ * jamais choisir librement un `consultantId` usurpant un tiers, qu'un
+ * `consultantId` cible ait été précisé à l'émission ou non).
  * @param {{workspaceId:string, role?:"owner"|"admin"|"user", expectedGoogleId?:string|null,
- *          issuer:{memberId:string}, issuerMembership:object, signer:Function, ttlMs?:number}} params
- * @returns {Promise<object>} invitation, avec `issuerId` en plus (§5.2)
+ *          issuer:{memberId:string}, issuerMembership:object, signer:Function, ttlMs?:number,
+ *          consultantId?:string|null}} params
+ * @returns {Promise<object>} invitation, avec `issuerId`/`consultantId` en plus (§5.2 / round 4)
  */
 export async function inviteMember({
   workspaceId,
@@ -197,6 +216,7 @@ export async function inviteMember({
   issuerMembership,
   signer,
   ttlMs,
+  consultantId = null,
 } = {}) {
   if (!workspaceId) throw new Error("inviteMember: 'workspaceId' requis");
   if (typeof signer !== "function") {
@@ -228,7 +248,7 @@ export async function inviteMember({
   // émetteur↔proof est structurel, pas seulement une conséquence de la
   // logique de `verifyInvitation`) — toute modification d'`issuerId` après
   // signature invalide donc le proof.
-  const invitation = await createInvitation({ workspaceId, expectedGoogleId, role, ttlMs, signer, issuerId: issuer.memberId });
+  const invitation = await createInvitation({ workspaceId, expectedGoogleId, role, ttlMs, signer, issuerId: issuer.memberId, consultantId });
   return invitation;
 }
 
@@ -279,6 +299,10 @@ export async function verifyInvitation(invitation, { registry } = {}) {
     // signature (ex: pour usurper un autre émetteur), les octets recomposés
     // divergent de ceux signés et la vérification échoue plus bas.
     issuerId: invitation.issuerId,
+    // Round contrariant 4 (docs/next/ORG_TRUST_HARDENING_CONTRACT.md) : IDEM
+    // pour `consultantId` — recomposé depuis l'invitation ANNONCÉE ; s'il a
+    // été modifié après signature, le `proof` recomposé ne correspondra plus.
+    consultantId: invitation.consultantId,
   });
   const bytes = new TextEncoder().encode(canonical);
   let sigOk = false;
@@ -297,9 +321,37 @@ export async function verifyInvitation(invitation, { registry } = {}) {
 // Rejoindre — §5.3 : fiche membre adossée à l'invitation + preuve du porteur
 // ---------------------------------------------------------------------------
 
-/** §5.3/8 — octets canoniques du joinProof : sérialisation déterministe LOCALE (voir décision 8). */
+/**
+ * Sérialisation CANONIQUE (clés d'objet triées récursivement, ordre des tableaux
+ * conservé) — même algorithme que `google-drive-adapter.js#canonicalStringify`
+ * (réimplémenté ici plutôt qu'importé, pour la MÊME raison que là-bas : ne pas
+ * inverser le sens de dépendance `workspace` -> `storage`).
+ *
+ * Point Drive onboarding (docs/next/DRIVE_ONBOARDING_CONTRACT.md) : NÉCESSAIRE
+ * pour que `joinCanonicalPayload` (ci-dessous, embarque `publicKeyJwk` — un
+ * OBJET, pas une simple primitive) reste vérifiable une fois `publicKeyJwk`
+ * relu depuis un stockage qui CANONICALISE le contenu qu'il écrit
+ * (`GoogleDriveStorageAdapter#putImmutable`, §9d) : sans cela, la signature
+ * calculée à l'émission sur l'ordre d'insertion ORIGINAL des clés du JWK
+ * (celui produit par `crypto.subtle.exportKey`) ne correspond plus, après un
+ * aller-retour Drive, à l'ordre (trié) relu au moment de la vérification —
+ * `buildTrustedMembership` rejetait alors à tort un `joinProof` pourtant
+ * authentique (repro : `tests/next/drive-onboarding.test.mjs`, un membre
+ * invité rejoignant sur un dossier Drive). Le mode Dossier n'est PAS affecté
+ * (`FolderStorageAdapter.putImmutable` écrit `JSON.stringify(blob)` brut, sans
+ * réordonner les clés) — cette canonicalisation le rend maintenant ROBUSTE aux
+ * DEUX transports, jamais dépendant d'un ordre d'insertion incident.
+ */
+function canonicalJsonStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(canonicalJsonStringify).join(",") + "]";
+  const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalJsonStringify(value[k])).join(",") + "}";
+}
+
+/** §5.3/8 — octets canoniques du joinProof : sérialisation déterministe LOCALE (voir décision 8), CANONIQUE (voir ci-dessus). */
 function joinCanonicalPayload(invitationId, memberId, publicKeyJwk) {
-  return JSON.stringify([invitationId, memberId, publicKeyJwk]);
+  return canonicalJsonStringify([invitationId, memberId, publicKeyJwk]);
 }
 
 /**
@@ -311,12 +363,31 @@ function joinCanonicalPayload(invitationId, memberId, publicKeyJwk) {
  * (donc de `identity.publicKeyJwk`) a bien consommé CETTE invitation — sans
  * cela, un attaquant pourrait rejouer une invitation valide avec SA PROPRE clé
  * publique pour usurper le rôle qu'elle porte.
+ *
+ * CORRECTIF SÉCURITÉ (docs/next/ORG_TRUST_HARDENING_CONTRACT.md, round
+ * contrariant 4) : le paramètre `consultantId` de cette fonction est CONSERVÉ
+ * pour compatibilité d'appel (les appelants existants — ponts, tests — peuvent
+ * continuer à le passer sans erreur) mais son CONTENU N'EST PLUS JAMAIS
+ * UTILISÉ pour construire le membership. Avant ce correctif, `consultantId`
+ * était un paramètre entièrement LIBRE fourni par l'ACCEPTEUR lui-même — non
+ * couvert par `joinProof` (qui ne signe que `invitationId`/`memberId`/
+ * `publicKeyJwk`) ni par aucune autre vérification — permettant à N'IMPORTE
+ * QUEL membre légitimement invité (même rôle "user") de déclarer le
+ * `consultantId` d'un AUTRE consultant déjà existant et de se faire traiter
+ * par `core/permissions.js` comme lui (lecture ET écriture usurpées, sans
+ * jamais casser une seule signature). Le `consultantId` DE CONFIANCE vient
+ * désormais EXCLUSIVEMENT de `invitation.consultantId` (signé par l'émetteur,
+ * vérifié par `verifyInvitation`/`buildTrustedMembership` en amont) —
+ * `null` (« aucun consultant précisé par l'émetteur ») si l'invitation n'en
+ * portait pas.
  * Lève si l'invitation est invalide/expirée/révoquée/déjà consommée, ou si
  * l'identité Google ne correspond pas.
- * @param {{invitation:object, identity:{memberId:string, publicKeyJwk:object, privateKeyRef:object}, consultantId:string, googleId?:string|null}} params
+ * @param {{invitation:object, identity:{memberId:string, publicKeyJwk:object, privateKeyRef:object}, consultantId?:string, googleId?:string|null}} params
+ *   `consultantId` : PARAMÈTRE HISTORIQUE IGNORÉ (voir ci-dessus) — conservé
+ *   uniquement pour ne pas casser les appelants existants.
  * @returns {Promise<{membership:object, memberRecord:object, invitation:object}>}
  */
-export async function acceptInvitation({ invitation, identity, consultantId, googleId = null } = {}) {
+export async function acceptInvitation({ invitation, identity, consultantId: _ignoredFreeConsultantId, googleId = null } = {}) {
   if (!identity || !identity.memberId || !identity.publicKeyJwk || !identity.privateKeyRef) {
     throw new Error("acceptInvitation: 'identity' invalide (newMemberIdentity() attendu, avec privateKeyRef)");
   }
@@ -327,10 +398,14 @@ export async function acceptInvitation({ invitation, identity, consultantId, goo
   // elle lève si l'une de ces conditions échoue (décision 6).
   const consumedInvitation = consume(invitation, { googleId });
 
+  // Round 4 : SEULE source de confiance pour `consultantId` — JAMAIS le
+  // paramètre `consultantId` reçu par cette fonction (voir en-tête).
+  const verifiedConsultantId = invitation.consultantId ?? null;
+
   const membership = createMembership({
     workspaceId: invitation.workspaceId,
     memberId: identity.memberId,
-    consultantId,
+    consultantId: verifiedConsultantId,
     role: invitation.role,
     googleSubject: googleId,
   });
@@ -705,11 +780,122 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
     genesisAdmitted = true;
   }
 
-  // 3. Point fixe (BFS) sur les fiches restantes, adossées à une invitation.
-  //    Une fiche dont l'émetteur n'est pas ENCORE dans l'ensemble de confiance
-  //    est réessayée au prochain passage (l'émetteur peut être admis entre
-  //    temps) ; toute autre raison de rejet est définitive.
-  let pending = memberRecords.filter((r) => r && r.memberId !== manifest.ownerMemberId);
+  // 2bis. DURCISSEMENT ANTI-USURPATION (docs/next/ORG_TRUST_HARDENING_CONTRACT.md,
+  //    round contrariant 2) — AVANT tout traitement dépendant de l'ORDRE des
+  //    fiches (BFS ci-dessous) : une invitation, une fois PUBLIÉE (visible en
+  //    clair dans la fiche du destinataire légitime — le modèle "dossier de
+  //    confiance" ne chiffre rien, CLAUDE.md §4), est un secret PARTAGÉ que
+  //    N'IMPORTE QUEL lecteur du dossier peut REJOUER avec SA PROPRE paire de
+  //    clés, y compris en choisissant LE MEMBERID d'un membre légitime déjà
+  //    admis (rien dans `acceptInvitation` ne borne `identity.memberId`). Le
+  //    correctif round 1 (`getAllCandidates`, DoS gouvernance) fournit
+  //    désormais TOUS les candidats physiques à cette fonction plutôt que d'en
+  //    faire disparaître un sur `ImmutableConflictError` — ce qui rouvre un
+  //    chemin d'ESCALADE si l'admission reste un simple "premier examiné
+  //    gagne" : l'ORDRE d'examen (`pending`, hérité de l'ordre de
+  //    `memberRecords`, lui-même hérité de `listChanges`/`getAllCandidates`,
+  //    triés par `createdTime` — un champ NON SIGNÉ, sous contrôle total d'un
+  //    écrivain hostile du dossier) deviendrait alors l'arbitre de sécurité :
+  //    l'attaquant choisit un `createdTime` antérieur pour son candidat forgé
+  //    et se fait examiner (donc admettre) EN PREMIER, siphonnant le rôle de
+  //    la victime et la faisant rejeter comme "memberId déjà admis".
+  //
+  //    Principe (contrat §1, règles 2/3) : une décision de SÉCURITÉ ne se
+  //    fonde JAMAIS sur `createdTime`/l'ordre de listing. Deux pré-passes,
+  //    AVANT la BFS, détectent les CONTESTATIONS de façon DÉTERMINISTE
+  //    (indépendante de l'ordre des candidats en entrée — un `Map`/`Set` sur
+  //    tout l'ensemble, jamais "le premier vu") :
+  //      (a) `memberId` CONTESTÉ : ≥2 fiches candidates (hors genèse, déjà
+  //          traitée ci-dessus) portant le MÊME `memberId` avec des
+  //          `publicKeyJwk` DIFFÉRENTES -> AUCUNE des deux n'est admise
+  //          (règle 2). Un doublon EXACT (même memberId, même clé, même
+  //          contenu canonique — `canonicalJsonStringify`, robuste à un
+  //          réordonnancement de clés JSON survenu en transit, ex. Drive)
+  //          n'est PAS une contestation (règle 4) : dédupliqué en UN seul
+  //          candidat avant la BFS, jamais un "conflit" ni un rejet.
+  //      (b) `invitationId` CONTESTÉ : la MÊME invitation revendiquée par des
+  //          fiches d'identités DIFFÉRENTES (`memberId`+`publicKeyJwk`, y
+  //          compris pour des `memberId` DIFFÉRENTS l'un de l'autre — un rejeu
+  //          n'usurpe pas nécessairement le memberId de la victime) -> AUCUNE
+  //          des fiches contestées n'est admise (règle 3).
+  //    Les fiches ainsi écartées vont dans `rejected` avec une raison
+  //    EXPLICITE (règle 5, observabilité — jamais une disparition
+  //    silencieuse), puis la BFS ci-dessous ne voit plus JAMAIS de candidat
+  //    contesté : aucune fenêtre de course sur l'ordre ne subsiste ensuite.
+  const nonGenesisRecords = memberRecords.filter((r) => r && r.memberId !== manifest.ownerMemberId);
+
+  // (a) Regroupement par memberId + déduplication par contenu canonique EXACT
+  //     (règle 4) — une `Map` interne, jamais un "premier vu gagne".
+  const byMemberId = new Map(); // memberId -> Map<contenu canonique, record>
+  for (const record of nonGenesisRecords) {
+    if (!record || !record.memberId) continue;
+    if (!byMemberId.has(record.memberId)) byMemberId.set(record.memberId, new Map());
+    const bucket = byMemberId.get(record.memberId);
+    const fingerprint = canonicalJsonStringify(record);
+    if (!bucket.has(fingerprint)) bucket.set(fingerprint, record);
+  }
+  const contestedMemberIds = new Set();
+  for (const [memberId, variants] of byMemberId) {
+    if (variants.size <= 1) continue; // un seul contenu canonique distinct -> jamais contesté (doublon exact = règle 4).
+    const distinctKeys = new Set([...variants.values()].map((r) => JSON.stringify(r.publicKeyJwk ?? null)));
+    // Contesté SEULEMENT si les CLÉS divergent (règle 2) : plusieurs contenus
+    // distincts sous la MÊME clé (ex. une fiche re-signée avec des métadonnées
+    // différentes par son propre détenteur légitime) ne sont PAS un risque
+    // d'usurpation — laissés à l'arbitrage "déjà admis" existant de la BFS
+    // (non sécuritaire : la même personne contrôle la clé dans tous les cas).
+    if (distinctKeys.size > 1) contestedMemberIds.add(memberId);
+  }
+
+  // (b) Regroupement par invitationId revendiqué + détection de rejeu par des
+  //     identités DIFFÉRENTES (règle 3) — sur l'ENSEMBLE des fiches non-genèse
+  //     (avant tout filtrage par (a), pour ne rater aucun rejeu inter-memberId).
+  const byInvitationId = new Map(); // invitationId -> Map<contenu canonique, record>
+  for (const record of nonGenesisRecords) {
+    const invitationId = record?.authorization?.invitation?.invitationId;
+    if (!invitationId) continue;
+    if (!byInvitationId.has(invitationId)) byInvitationId.set(invitationId, new Map());
+    byInvitationId.get(invitationId).set(canonicalJsonStringify(record), record);
+  }
+  const contestedInvitationIds = new Set();
+  for (const [invitationId, variants] of byInvitationId) {
+    if (variants.size <= 1) continue;
+    const distinctIdentities = new Set(
+      [...variants.values()].map((r) => (r.memberId ?? "") + "|" + JSON.stringify(r.publicKeyJwk ?? null))
+    );
+    if (distinctIdentities.size > 1) contestedInvitationIds.add(invitationId);
+  }
+
+  // Construit `pending` (fiches soumises à la BFS ci-dessous) en écartant
+  // TOUTE fiche contestée par (a) OU (b) — déterministe, jamais d'ordre.
+  let pending = [];
+  for (const [memberId, variants] of byMemberId) {
+    if (contestedMemberIds.has(memberId)) {
+      for (const record of variants.values()) {
+        rejected.push({
+          record,
+          reason: "memberId contesté (clés divergentes) — aucune fiche admise pour ce memberId (ORG_TRUST_HARDENING_CONTRACT.md §1.2)",
+        });
+      }
+      continue;
+    }
+    for (const record of variants.values()) {
+      const invitationId = record?.authorization?.invitation?.invitationId;
+      if (invitationId && contestedInvitationIds.has(invitationId)) {
+        rejected.push({
+          record,
+          reason: "invitation rejouée (consommée par des identités divergentes) — aucune fiche admise pour cette invitation (ORG_TRUST_HARDENING_CONTRACT.md §1.3)",
+        });
+        continue;
+      }
+      pending.push(record);
+    }
+  }
+
+  // 3. Point fixe (BFS) sur les fiches restantes (déjà expurgées de toute
+  //    contestation ci-dessus), adossées à une invitation. Une fiche dont
+  //    l'émetteur n'est pas ENCORE dans l'ensemble de confiance est réessayée
+  //    au prochain passage (l'émetteur peut être admis entre temps) ; toute
+  //    autre raison de rejet est définitive.
   const lastReason = new Map();
 
   async function evaluate(record) {
@@ -947,9 +1133,97 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
     // SA fiche qui reste légitime (chaîne intacte JUSQU'À lui), seul son
     // statut change — pour que `SyncEngine` bloque ses événements FUTURS
     // (docs/next/05 §9) sans jamais le faire disparaître silencieusement.
-    const status = revokedSet.has(record.memberId) ? "revoked" : record.membership.status;
-    registry._add(record.memberId, record.publicKeyJwk, record.membership.role, status);
-    membershipStore.add({ ...record.membership, status });
+    //
+    // CORRECTIF SÉCURITÉ (empoisonnement de `membershipStore`, round
+    // contrariant 3, docs/next/ORG_TRUST_HARDENING_CONTRACT.md ; ligne
+    // fautive d'origine : `membershipStore.add({ ...record.membership,
+    // status })`) : `joinCanonicalPayload` (le `joinProof`) ne signe QUE
+    // `(invitationId, memberId, publicKeyJwk)` — JAMAIS le contenu de l'objet
+    // `membership` publié à côté. `evaluate()` ci-dessus vérifie bien
+    // `record.membership.role === invitation.role`, mais AUCUNE vérification
+    // n'existait pour `record.membership.memberId` (jamais recoupé contre
+    // `record.memberId`, le SEUL couvert par joinProof) ni pour
+    // `record.membership.status` (jamais recoupé contre `revokedSet`) :
+    // N'IMPORTE QUEL membre légitimement admis — même avec le rôle "user", le
+    // plus faible — pouvait publier une fiche dont SON PROPRE joinProof reste
+    // parfaitement valide (il ne prouve que SA clé/SON memberId), mais dont
+    // `membership.memberId` pointe vers un memberId ARBITRAIRE (le owner, un
+    // membre révoqué…) et `membership.status` vers une valeur ARBITRAIRE —
+    // écrasant ainsi l'entrée `membershipStore` de la VICTIME (ressusciter un
+    // membre révoqué ; neutraliser un membre actif, y compris le OWNER, via
+    // `SyncEngine._processIncoming` qui tranche le statut sur
+    // `membershipStore`, pas sur `registry`). Le chemin GENÈSE, lui, était
+    // déjà protégé : `genesisMismatchReason` (PASSE 1) vérifie EXPLICITEMENT
+    // `record.membership.memberId === manifest.ownerMemberId` et
+    // `record.membership.role === "owner"` AVANT toute admission — inchangé,
+    // non régressé ici.
+    //
+    // ROUND CONTRARIANT 4 (docs/next/ORG_TRUST_HARDENING_CONTRACT.md) — le
+    // paragraphe ci-dessus affirmait que `consultantId` était une "métadonnée
+    // d'affichage hors du modèle de confiance cryptographique" : c'était FAUX.
+    // `core/permissions.js` scope TOUTE lecture/écriture non-admin par égalité
+    // stricte sur `actorMembership.consultantId` (saisies, notes de frais,
+    // bordereaux, missions, profil consultant avec `tjmBase`). Comme
+    // `role`/`memberId`/`status` avant lui, `consultantId` était copié
+    // directement depuis `record.membership.consultantId` — jamais couvert
+    // par `joinProof` (qui ne signe que `invitationId`/`memberId`/
+    // `publicKeyJwk`), ni par `evaluate()` (qui ne vérifie QUE `role`, pas
+    // `consultantId`, contre l'invitation) : n'importe quel membre
+    // légitimement invité (même rôle "user") pouvait déclarer, à
+    // l'ACCEPTATION de SA PROPRE invitation, le `consultantId` d'un AUTRE
+    // consultant déjà existant et se faire traiter par `core/permissions.js`
+    // comme lui — lecture de son profil complet (TJM inclus) et de ses
+    // données privées, ÉCRITURE en son nom — sans jamais casser une seule
+    // signature.
+    //
+    // Construction DÉSORMAIS exclusivement à partir d'une LISTE BLANCHE de
+    // sources VÉRIFIÉES — jamais un simple `{ ...record.membership }`, et
+    // aucun champ supplémentaire tiré de `record.membership` ne doit être
+    // ajouté ici sans démontrer QU'IL EST VÉRIFIÉ (le prochain champ non
+    // vérifié copié depuis `record.membership` reproduirait exactement cette
+    // même classe de faille — c'est arrivé 3 fois de suite : memberId/role/
+    // status au round 3, consultantId ici) :
+    //   - memberId     : `record.memberId` (le SEUL couvert par le joinProof),
+    //     JAMAIS `record.membership.memberId`.
+    //   - role         : pour la genèse, celui du manifeste (`genesisMismatchReason`
+    //     l'a déjà forcé à "owner" et à correspondre au manifeste) ; sinon
+    //     celui de l'INVITATION VÉRIFIÉE (`record.authorization.invitation.role`
+    //     — authenticité déjà établie par `verifyInvitation`/la chaîne
+    //     d'émetteurs de confiance ci-dessus), JAMAIS `record.membership.role`.
+    //   - consultantId : pour la genèse, celui du MANIFESTE
+    //     (`manifest.ownerConsultantId`, ancré write-once au même titre que
+    //     `ownerMemberId`) ; sinon celui de l'INVITATION VÉRIFIÉE
+    //     (`record.authorization.invitation.consultantId`, désormais SIGNÉE —
+    //     `invitations.js#canonicalPayload` — au même titre que `role`),
+    //     JAMAIS `record.membership.consultantId`. `null` si l'émetteur n'a
+    //     précisé aucun consultant cible à l'invitation.
+    //   - status       : calculé EXCLUSIVEMENT depuis `revokedSet` (PASSE 2,
+    //     elle-même fondée sur des révocations SIGNÉES) — JAMAIS
+    //     `record.membership.status` (qui vaut d'ailleurs TOUJOURS "active" à
+    //     la création légitime, `memberships.js#createMembership`, et n'est
+    //     jamais revérifié depuis une source de confiance).
+    //   - publicKeyJwk : `record.publicKeyJwk` (couvert par le joinProof).
+    // `googleSubject`/`email` restent repris de `record.membership` : SEULES
+    // métadonnées d'affichage réellement hors du modèle de confiance —
+    // `core/permissions.js`/`SyncEngine` ne les lisent JAMAIS pour une
+    // décision de sécurité (contrairement à `consultantId`, dont l'exclusion
+    // de cette liste ci-dessus est justement le correctif de ce round).
+    const verifiedRole = isGenesis ? record.membership.role : record.authorization.invitation.role;
+    const verifiedConsultantId = isGenesis
+      ? (manifest.ownerConsultantId ?? record.membership.consultantId ?? null)
+      : (record.authorization.invitation.consultantId ?? null);
+    const status = revokedSet.has(record.memberId) ? "revoked" : "active";
+    registry._add(record.memberId, record.publicKeyJwk, verifiedRole, status);
+    membershipStore.add({
+      workspaceId: manifest.workspaceId,
+      memberId: record.memberId,
+      role: verifiedRole,
+      consultantId: verifiedConsultantId,
+      status,
+      // Champs non sécuritaires (jamais consultés par une décision — voir ci-dessus) :
+      googleSubject: record.membership.googleSubject ?? null,
+      email: record.membership.email ?? null,
+    });
   }
 
   // `revoked` : uniquement les révocations valides dont la CIBLE fait partie

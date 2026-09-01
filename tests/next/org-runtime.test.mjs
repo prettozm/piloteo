@@ -261,15 +261,24 @@ test("verifyInvitation : rejette une invitation dont le proof a été altéré (
 test("inviteMember + acceptInvitation : le nouvel arrivant reçoit le rôle porté par l'invitation, avec joinProof", async () => {
   const { org, ownerIdentity, ownerSigner } = await makeOrg();
 
+  // docs/next/ORG_TRUST_HARDENING_CONTRACT.md (round contrariant 4) :
+  // `consultantId` est désormais un paramètre de `inviteMember` (SIGNÉ dans
+  // l'invitation) — l'émetteur (owner/admin) décide à quel consultant
+  // l'invitation est destinée ; ce n'est plus un choix libre de l'accepteur.
   const invitation = await inviteMember({
-    workspaceId: org.workspace.workspaceId, role: "admin",
+    workspaceId: org.workspace.workspaceId, role: "admin", consultantId: "c-bob",
     issuer: { memberId: ownerIdentity.memberId }, issuerMembership: org.ownerMembership, signer: ownerSigner,
   });
   assert.equal(invitation.role, "admin");
   assert.equal(invitation.status, "pending");
   assert.equal(invitation.workspaceId, org.workspace.workspaceId);
+  assert.equal(invitation.consultantId, "c-bob");
 
   const bobIdentity = await newMemberIdentity();
+  // Un `consultantId` LIBRE passé ici (différent de celui de l'invitation)
+  // est désormais totalement IGNORÉ — voir le test dédié plus bas
+  // ("round contrariant 4" / cas d'usurpation) ; ici on passe la même valeur
+  // pour vérifier le cas NOMINAL sans ambiguïté.
   const { membership, memberRecord } = await acceptInvitation({
     invitation, identity: bobIdentity, consultantId: "c-bob",
   });
@@ -277,7 +286,7 @@ test("inviteMember + acceptInvitation : le nouvel arrivant reçoit le rôle port
   assert.equal(membership.role, "admin");
   assert.equal(membership.workspaceId, org.workspace.workspaceId);
   assert.equal(membership.memberId, bobIdentity.memberId);
-  assert.equal(membership.consultantId, "c-bob");
+  assert.equal(membership.consultantId, "c-bob", "le consultantId provient de l'invitation SIGNÉE, pas du paramètre libre");
   assert.equal(membership.status, "active");
 
   assert.equal(memberRecord.kind, "member");
@@ -571,7 +580,7 @@ test("buildTrustedMembership : joinProof substitué (clé remplacée après coup
   assert.match(rejected[0].reason, /joinProof/);
 });
 
-test("buildTrustedMembership : rejeu d'une même invitation par deux fiches distinctes — une seule admise, la 2e rejetée", async () => {
+test("buildTrustedMembership : rejeu d'une même invitation par deux fiches distinctes (identités DIFFÉRENTES) — AUCUNE des deux admise (docs/next/ORG_TRUST_HARDENING_CONTRACT.md §1 règle 3 : jamais un arbitrage par ordre, conflit observable pour les DEUX)", async () => {
   const { org, ownerIdentity, ownerSigner } = await makeOrg();
 
   const invitation = await inviteMember({
@@ -588,14 +597,38 @@ test("buildTrustedMembership : rejeu d'une même invitation par deux fiches dist
     invitation, identity: malloryIdentity, consultantId: "c-mallory",
   });
 
+  // Round contrariant 2 (usurpation) : une invitation PUBLIÉE (visible en clair
+  // dans une fiche membre déjà publiée — modèle "dossier de confiance", jamais
+  // chiffré) peut être REJOUÉE par n'importe quel lecteur du dossier avec SA
+  // PROPRE clé. Avant le durcissement, la BFS admettait la PREMIÈRE fiche
+  // rencontrée dans `memberRecords` (ordre non sécuritaire — sur Drive, sous
+  // contrôle total d'un écrivain hostile via `createdTime`) et rejetait
+  // seulement la seconde comme "déjà utilisée" : Mallory (l'attaquante, si son
+  // ordre d'examen la place en premier) pouvait ainsi être ADMISE avec le rôle
+  // de l'invitation. Le correctif : un `invitationId` revendiqué par des
+  // identités DIFFÉRENTES est CONTESTÉ -> AUCUNE des deux fiches contestées
+  // n'est admise, quel que soit l'ordre du tableau `memberRecords` en entrée.
   const { trusted, rejected } = await buildTrustedMembership({
     manifest: org.manifest, memberRecords: [org.memberRecord, bobRecord, malloryRecord],
   });
 
-  assert.equal(trusted.length, 2, "genèse + première fiche seulement");
-  assert.equal(rejected.length, 1);
-  assert.equal(rejected[0].record, malloryRecord);
-  assert.match(rejected[0].reason, /rejeu|déjà utilisée/);
+  assert.equal(trusted.length, 1, "genèse SEULE — ni Bob ni Mallory (les deux contestent la même invitation)");
+  assert.equal(rejected.length, 2, "les DEUX fiches contestées sont rejetées, jamais un « premier gagne »");
+  assert.ok(rejected.some((r) => r.record === bobRecord), "la fiche de Bob est rejetée (contestée), jamais silencieusement admise ou effacée");
+  assert.ok(rejected.some((r) => r.record === malloryRecord), "la fiche de Mallory (l'attaquante) est rejetée");
+  rejected.forEach((r) => assert.match(r.reason, /rejou|rejeu/i));
+
+  // Même ordre d'entrée INVERSÉ (Mallory avant Bob) -> EXACTEMENT le même
+  // verdict — la décision ne dépend d'AUCUN ordre (règle 3, "jamais createdTime").
+  const reversed = await buildTrustedMembership({
+    manifest: org.manifest, memberRecords: [org.memberRecord, malloryRecord, bobRecord],
+  });
+  assert.equal(reversed.trusted.length, 1);
+  assert.equal(reversed.rejected.length, 2);
+  assert.equal(reversed.registry.getPublicKey(bobIdentity.memberId), null, "ni Bob...");
+  assert.equal(reversed.registry.getPublicKey(malloryIdentity.memberId), null, "...ni Mallory ne sont admis, dans AUCUN ordre");
+  assert.equal(reversed.registry.getMembership(bobIdentity.memberId), null);
+  assert.equal(reversed.registry.getMembership(malloryIdentity.memberId), null);
 });
 
 test("buildTrustedMembership : collision de rôle sur un même memberId — un user ne peut pas être promu admin via une 2e fiche", async () => {
@@ -661,14 +694,17 @@ test("intégration : Alice (owner) crée l'org, invite Bob (user), Bob rejoint ;
   const { org, ownerIdentity: aliceIdentity, ownerSigner: signer } = await makeOrg("Cabinet Alice");
   const workspaceId = org.workspace.workspaceId;
 
+  // Round contrariant 4 : consultantId est désormais SIGNÉ dans l'invitation
+  // (décidé par Alice, l'émetteur) — nécessaire pour que la policy accepte
+  // ensuite l'écriture de Bob sur SON PROPRE consultantId ci-dessous.
   const invitation = await inviteMember({
-    workspaceId, role: "user",
+    workspaceId, role: "user", consultantId: "c-bob",
     issuer: { memberId: aliceIdentity.memberId }, issuerMembership: org.ownerMembership, signer,
   });
 
   const bobIdentity = await newMemberIdentity();
   const { memberRecord: bobRecord } = await acceptInvitation({
-    invitation, identity: bobIdentity, consultantId: "c-bob",
+    invitation, identity: bobIdentity,
   });
 
   const memberRecords = [org.memberRecord, bobRecord];

@@ -67,6 +67,16 @@
 import { createSoloStore } from "./src/integration/solo-store.js";
 import { GoogleDriveStorageAdapter, DRIVE_SCOPE } from "./src/storage/google-drive-adapter.js";
 import { normalizeConfig } from "./src/config/runtime-config.js";
+// Onboarding Drive (docs/next/DRIVE_ONBOARDING_CONTRACT.md, lot A) : mêmes
+// primitives d'organisation que piloteo-org-bridge.mjs#createOrg
+// (createOrganization + writeManifest + writeMemberRecord + openOrgEngine),
+// RÉUTILISÉES telles quelles ici sur un GoogleDriveStorageAdapter au lieu d'un
+// FolderStorageAdapter — la logique d'org (org-runtime.js/org-folder-store.js/
+// org-engine.js) est déjà agnostique de l'adaptateur (contrat §0). Aucune
+// logique d'org n'est réécrite.
+import { openOrgEngine } from "./src/workspace/org-engine.js";
+import { createOrganization } from "./src/workspace/org-runtime.js";
+import { writeManifest, writeMemberRecord } from "./src/workspace/org-folder-store.js";
 
 // ---------------------------------------------------------------------------
 // Gating (docs/next/DRIVE_LIVE_CONTRACT.md §5, storage-factory.js §10) :
@@ -312,6 +322,219 @@ function createDriveEngine({ rootFolderId, driveId } = {}) {
   return { engine: buildEngine(adapter), adapter };
 }
 
+// ---------------------------------------------------------------------------
+// Onboarding Drive (docs/next/DRIVE_ONBOARDING_CONTRACT.md, lot A) : créer +
+// inviter + reprendre une organisation dont le « dossier » est un espace
+// Google Drive au lieu d'un `FileSystemDirectoryHandle` local — pour un
+// onboarding utilisable partout, y compris mobile (l'API File System Access
+// ne marche pas sur un dossier Drive synchronisé). Le « rejoindre » (Google
+// Picker) est le lot B, hors scope ici.
+//
+// Décisions/hypothèses :
+// - IDENTITÉ PARTAGÉE (contrat §1) : la MÊME identité de membre Ed25519
+//   persistée par `piloteo-org-bridge.mjs` (`window.PiloteoOrg.getOrCreateIdentity`)
+//   est réutilisée — jamais une seconde identité fabriquée ici. `index.html`
+//   charge `piloteo-org-bridge.mjs` avant `piloteo-drive-bridge.mjs` (les deux
+//   sont des modules ES non-`async`, donc exécutés dans l'ordre du document),
+//   mais l'accès se fait par un lookup PARESSEUX de `window.PiloteoOrg` à
+//   CHAQUE appel (jamais figé au chargement du module) — robuste à un ordre de
+//   chargement différent en test. Si `window.PiloteoOrg` est absent, on lève
+//   une erreur explicite plutôt que de fabriquer une identité de repli (ce qui
+//   violerait "jamais une 2e identité").
+// - `createDriveRootFolder`/`createDriveOrg`/`openDriveOrg`/`resumeDriveOrg`
+//   sont couverts par `tests/next/drive-onboarding.test.mjs` via les hooks de
+//   TEST `__createOrgOnAdapter`/`__openOrgOnAdapter` ci-dessous (adaptateur
+//   Drive déjà construit sur un FakeDrive, `fetchImpl` mocké) : ils exercent
+//   EXACTEMENT la même chaîne (createOrganization + writeManifest +
+//   writeMemberRecord + openOrgEngine) que les fonctions publiques, sans OAuth
+//   ni appel réseau réel à Google (impossible à automatiser ici, cf.
+//   docs/next/DRIVE_ONBOARDING_MANUAL.md). Seule la création RÉELLE du dossier
+//   racine (`createDriveRootFolder`, un appel `fetch` direct vers l'API Drive,
+//   mêmes endpoints/en-têtes que `tools/team-spike/index.html`, déjà prouvés
+//   en navigateur réel) et l'obtention interactive d'un token restent
+//   vérifiables UNIQUEMENT en navigateur réel.
+// - `resumeDriveOrg` : SYMÉTRIQUE de `piloteo-org-bridge.mjs#resumeOrg` — au
+//   boot (`interactive` absent/`false`), ne consulte QUE le token déjà en
+//   cache MÉMOIRE (`cachedToken`, jamais `requestAccessToken()`) ; comme ce
+//   cache est une variable de MODULE (jamais persisté, décision Point 4 ci-
+//   dessus), il est TOUJOURS vide après un rechargement de page — `resumeDriveOrg()`
+//   renvoie donc `{needsAuth:true}` à CHAQUE boot d'une organisation Drive
+//   mémorisée, jusqu'à ce qu'un geste utilisateur (bouton « Se reconnecter à
+//   Google ») appelle `resumeDriveOrg({interactive:true})`, qui peut alors
+//   déclencher `requestAccessToken()`. JAMAIS d'appel interactif hors geste.
+// ---------------------------------------------------------------------------
+
+const DRIVE_STORAGE_MODE_KEY = "piloteo_storage_mode"; // partagé avec les autres ponts (un seul mode actif à la fois)
+const DRIVE_ROOT_FOLDER_ID_KEY = "piloteo_drive_root_folder_id"; // localStorage : id Drive du dossier racine de l'org active
+
+/** `window.PiloteoOrg`, si chargé — jamais mis en cache (lookup à chaque appel, cf. décision ci-dessus). */
+function orgBridge() {
+  return (typeof window !== "undefined" && window.PiloteoOrg) || null;
+}
+
+/** Identité de membre PARTAGÉE (piloteo-org-bridge.mjs) — jamais une 2e identité fabriquée ici (contrat §1). */
+async function getSharedIdentity() {
+  const PO = orgBridge();
+  if (!PO || typeof PO.getOrCreateIdentity !== "function") {
+    throw new Error(
+      "piloteo-drive-bridge: window.PiloteoOrg indisponible — piloteo-org-bridge.mjs doit être chargé (index.html) " +
+        "pour fournir l'identité de membre partagée (jamais une 2e identité fabriquée ici)."
+    );
+  }
+  return PO.getOrCreateIdentity();
+}
+
+function persistDriveOrgMode(rootFolderId) {
+  try { localStorage.setItem(DRIVE_STORAGE_MODE_KEY, "org-drive"); } catch (e) { /* localStorage indisponible : dégradé, pas bloquant */ }
+  try { localStorage.setItem(DRIVE_ROOT_FOLDER_ID_KEY, rootFolderId); } catch (e) { /* idem */ }
+}
+function loadStoredRootFolderId() {
+  try { return localStorage.getItem(DRIVE_ROOT_FOLDER_ID_KEY) || null; } catch (e) { return null; }
+}
+
+/** Le token en cache MÉMOIRE s'il est valide, `null` sinon — QUERY-ONLY, ne déclenche jamais `requestAccessToken()`. */
+function cachedTokenOnly() {
+  if (cachedToken && cachedToken.expiresAt > Date.now()) return cachedToken.accessToken;
+  return null;
+}
+
+/**
+ * Crée un dossier Drive `Pilotéo - <name>` (`files.create`, mimeType dossier,
+ * scope `drive.file` suffit) via le token courant. Mêmes appels REST que
+ * `tools/team-spike/index.html` (endpoints/en-têtes déjà prouvés en navigateur
+ * réel). Vérifiable UNIQUEMENT en navigateur réel (docs/next/DRIVE_ONBOARDING_MANUAL.md).
+ * @param {string} name nom d'affichage de l'organisation
+ * @returns {Promise<{rootFolderId:string, webViewLink:string|null}>}
+ */
+async function createDriveRootFolder(name) {
+  const token = await oauthTokenProvider();
+  const folderName = "Pilotéo - " + (name && String(name).trim() ? String(name).trim() : "Organisation");
+  const res = await fetch("https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: folderName, mimeType: "application/vnd.google-apps.folder" }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`createDriveRootFolder: échec de la création du dossier Drive (HTTP ${res.status}) ${body}`);
+  }
+  const data = await res.json();
+  return { rootFolderId: data.id, webViewLink: data.webViewLink || null };
+}
+
+/**
+ * Chaîne d'organisation générique (contrat §0/§1), sur un `GoogleDriveStorageAdapter`
+ * DÉJÀ CONSTRUIT — hook de TEST public (`__createOrgOnAdapter`) ET brique
+ * interne de `createDriveOrg`. `createOrganization`/`writeManifest`/
+ * `writeMemberRecord`/`openOrgEngine` : RÉUTILISÉS tels quels (aucune logique
+ * d'org réécrite), exactement la séquence de `piloteo-org-bridge.mjs#createOrg`.
+ */
+async function createOrgOnAdapter({ adapter, name, consultantId, identity } = {}) {
+  if (!adapter) throw new Error("createOrgOnAdapter: 'adapter' requis.");
+  await adapter.connect();
+  const id = identity || (await getSharedIdentity());
+  const org = createOrganization({ name, identity: id, consultantId });
+  await writeManifest(adapter, org.manifest);
+  await writeMemberRecord(adapter, org.memberRecord);
+  const engine = await openOrgEngine({ adapter, identity: id, consultantId });
+  engine.folderName = "Google Drive";
+  return { engine, adapter, manifest: engine.manifest };
+}
+
+/** Rouvre (sans rien publier) une organisation existante sur un adapter Drive DÉJÀ CONSTRUIT — hook de TEST public (`__openOrgOnAdapter`) ET brique interne de `openDriveOrg`/`resumeDriveOrg`. */
+async function openOrgOnAdapter({ adapter, consultantId, identity } = {}) {
+  if (!adapter) throw new Error("openOrgOnAdapter: 'adapter' requis.");
+  await adapter.connect();
+  const id = identity || (await getSharedIdentity());
+  const engine = await openOrgEngine({ adapter, identity: id, consultantId });
+  engine.folderName = "Google Drive";
+  return { engine, adapter, manifest: engine.manifest, membership: engine.membership };
+}
+
+/**
+ * Crée une organisation sur un dossier Drive FRAÎCHEMENT CRÉÉ (contrat §1) :
+ * `oauthTokenProvider()` (déclenche le consentement si besoin, DANS le geste
+ * utilisateur qui a appelé cette fonction) → `createDriveRootFolder(name)` →
+ * `GoogleDriveStorageAdapter` → même chaîne d'org que `createOrgOnAdapter`.
+ * Persiste `piloteo_storage_mode="org-drive"` + `rootFolderId` pour la reprise.
+ * @returns {Promise<{engine:object, adapter:GoogleDriveStorageAdapter, manifest:object, rootFolderId:string, webViewLink:string|null}>}
+ */
+async function createDriveOrg({ name, consultantId, identity } = {}) {
+  if (!GOOGLE_CLIENT_ID) {
+    throw new Error("createDriveOrg: mode Google Drive indisponible (GOOGLE_CLIENT_ID absent de la configuration runtime).");
+  }
+  await oauthTokenProvider(); // déclenche le consentement si besoin (contrat §1) — DANS le geste utilisateur appelant.
+  const { rootFolderId, webViewLink } = await createDriveRootFolder(name);
+  const adapter = new GoogleDriveStorageAdapter({ oauthTokenProvider, rootFolderId });
+  const result = await createOrgOnAdapter({ adapter, name, consultantId, identity });
+  persistDriveOrgMode(rootFolderId);
+  return Object.assign({}, result, { rootFolderId, webViewLink });
+}
+
+/**
+ * Rouvre une organisation Drive existante (contrat §1) — pour la reprise au
+ * boot et pour un futur « rejoindre » (lot B).
+ * @returns {Promise<{engine:object, adapter:GoogleDriveStorageAdapter, manifest:object, membership:object, rootFolderId:string}>}
+ */
+async function openDriveOrg({ rootFolderId, consultantId, identity } = {}) {
+  if (!GOOGLE_CLIENT_ID) {
+    throw new Error("openDriveOrg: mode Google Drive indisponible (GOOGLE_CLIENT_ID absent de la configuration runtime).");
+  }
+  if (typeof rootFolderId !== "string" || rootFolderId.length === 0) {
+    throw new Error("openDriveOrg: 'rootFolderId' (id Drive du dossier racine du workspace) requis.");
+  }
+  const adapter = new GoogleDriveStorageAdapter({ oauthTokenProvider, rootFolderId });
+  const result = await openOrgOnAdapter({ adapter, consultantId, identity });
+  return Object.assign({}, result, { rootFolderId });
+}
+
+/**
+ * Reprise au boot (contrat §1, symétrique de `piloteo-org-bridge.mjs#resumeOrg`) :
+ * lit le `rootFolderId` mémorisé (`null` si aucun) ; sinon QUERY-ONLY sur le
+ * token (jamais `requestAccessToken()` hors geste) — `{needsAuth:true}` si
+ * aucun token valide en cache mémoire, sinon rouvre l'organisation.
+ * `opts.interactive:true` (UNIQUEMENT depuis un geste utilisateur — bouton
+ * « Se reconnecter à Google ») autorise `oauthTokenProvider()` à déclencher
+ * `requestAccessToken()`.
+ * @returns {Promise<null|{needsAuth:true}|{engine:object, adapter:GoogleDriveStorageAdapter, manifest:object, membership:object, rootFolderId:string}>}
+ */
+async function resumeDriveOrg(opts) {
+  const rootFolderId = loadStoredRootFolderId();
+  if (!rootFolderId) return null;
+  const interactive = !!(opts && opts.interactive);
+  let token = cachedTokenOnly();
+  if (!token) {
+    if (!interactive) return { needsAuth: true }; // JAMAIS d'appel interactif hors geste utilisateur.
+    token = await oauthTokenProvider(); // dans le geste (« Se reconnecter à Google ») : interactif autorisé.
+  }
+  return openDriveOrg({ rootFolderId });
+}
+
+/** Invite un futur membre — IDENTIQUE au pont org (invite ne dépend pas du stockage) : délégué tel quel. */
+async function driveInvite(args) {
+  const PO = orgBridge();
+  if (!PO || typeof PO.invite !== "function") {
+    throw new Error("piloteo-drive-bridge: window.PiloteoOrg indisponible (invite) — piloteo-org-bridge.mjs doit être chargé.");
+  }
+  return PO.invite(args);
+}
+/** Révoque un membre — IDENTIQUE au pont org (écrit sur l'adapter générique passé) : délégué tel quel. */
+async function driveRevoke(args) {
+  const PO = orgBridge();
+  if (!PO || typeof PO.revoke !== "function") {
+    throw new Error("piloteo-drive-bridge: window.PiloteoOrg indisponible (revoke) — piloteo-org-bridge.mjs doit être chargé.");
+  }
+  return PO.revoke(args);
+}
+/** Liste les membres d'une organisation Drive ouverte — IDENTIQUE au pont org : délégué tel quel. */
+async function driveListMembers(engine) {
+  const PO = orgBridge();
+  if (!PO || typeof PO.listMembers !== "function") {
+    throw new Error("piloteo-drive-bridge: window.PiloteoOrg indisponible (listMembers) — piloteo-org-bridge.mjs doit être chargé.");
+  }
+  return PO.listMembers(engine);
+}
+
 window.PiloteoDrive = {
   isAvailable: GOOGLE_CLIENT_ID !== null,
   DRIVE_SCOPE,
@@ -323,4 +546,18 @@ window.PiloteoDrive = {
   // par GIS ni par `window.PILOTEO_GOOGLE_CLIENT_ID` — symétrique de
   // `__engineFromHandle`/`__openOrgEngineFromHandle` des autres ponts.
   __engineFromAdapter: buildEngine,
+
+  // --- Onboarding Drive (docs/next/DRIVE_ONBOARDING_CONTRACT.md, lot A) ----
+  createDriveRootFolder,
+  createDriveOrg,
+  openDriveOrg,
+  resumeDriveOrg,
+  invite: driveInvite,
+  revoke: driveRevoke,
+  listMembers: driveListMembers,
+  // Hooks de TEST (symétriques à `__engineFromAdapter`) : exercent la chaîne
+  // d'organisation directement sur un adaptateur Drive déjà construit (ex:
+  // FakeDrive), sans OAuth ni appel réseau réel à Google.
+  __createOrgOnAdapter: createOrgOnAdapter,
+  __openOrgOnAdapter: openOrgOnAdapter,
 };

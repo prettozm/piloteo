@@ -1018,6 +1018,62 @@ export class GoogleDriveStorageAdapter extends StorageAdapter {
   }
 
   /**
+   * CORRECTIF SÉCURITÉ (« DoS gouvernance Drive », round contrariant —
+   * docs/next/DRIVE_ONBOARDING_CONTRACT.md) : renvoie TOUS les blobs candidats
+   * physiques d'un `(kind,id)`, y compris quand ils DIVERGENT — ne lève JAMAIS
+   * `ImmutableConflictError` (contrairement à `get`, ci-dessus, qui reste
+   * inchangée et continue de lever pour tout appelant qui veut UN singleton
+   * fiable). Nécessaire pour `org-folder-store.js#listGovernance` : sur Drive,
+   * deux fichiers PHYSIQUES peuvent porter le même nom (`<memberId>.piloteo`)
+   * — un tiers avec un accès Éditeur brut au dossier (jamais un membre
+   * Pilotéo, jamais une signature) peut y déposer un fichier hostile
+   * divergent SANS jamais passer par `putImmutable`. Avant ce correctif,
+   * `listGovernance` traitait le `ImmutableConflictError` de `get()` comme un
+   * "blob corrompu, best-effort" et abandonnait TOUTE la fiche visée — y
+   * compris la fiche LÉGITIME SIGNÉE, qui disparaissait alors de
+   * `memberRecords` et n'était plus jamais admise par `buildTrustedMembership`
+   * (jusqu'à exclure le OWNER de sa propre organisation — DoS total, un seul
+   * fichier hostile, aucune signature/rôle requis). Le principe correct :
+   * l'AUTHENTICITÉ d'une fiche de gouvernance est décidée par sa SIGNATURE
+   * Ed25519 (`buildTrustedMembership`, déjà correct et non modifié ici),
+   * jamais par l'unicité physique d'un fichier — cette méthode fournit donc
+   * TOUS les candidats à la couche de confiance, qui rejette elle-même le(s)
+   * candidat(s) hostile(s) (signature invalide / joinProof invalide / non
+   * rattaché à la genèse) sans jamais perdre le candidat légitime.
+   *
+   * Best-effort PAR CANDIDAT (jamais un échec global) : un candidat dont le
+   * téléchargement échoue ou dont le contenu n'est pas un JSON valide est
+   * silencieusement exclu du tableau renvoyé (il ne peut de toute façon pas
+   * être vérifié) — jamais propagé comme une exception qui ferait échouer
+   * TOUTE la lecture de gouvernance.
+   * @param {string} kind
+   * @param {string} id
+   * @returns {Promise<Array<object>>} tableau (potentiellement vide) de blobs JSON parsés — un par candidat physique lisible.
+   */
+  async getAllCandidates(kind, id) {
+    assertValidKind(kind);
+    await this.connect();
+    const fileName = fileNameForKind(kind, id);
+    const candidates = await this._findAllFilesByNameInKindSubtree(kind, fileName);
+    const out = [];
+    for (const c of candidates) {
+      let text;
+      try {
+        text = await this._downloadContent(c.id);
+      } catch {
+        continue; // candidat illisible (panne réseau persistante, etc.) : exclu, jamais un échec global.
+      }
+      if (text === null) continue; // disparu entre la recherche et le téléchargement (course rare) : exclu.
+      try {
+        out.push(JSON.parse(text));
+      } catch {
+        continue; // JSON invalide : ce candidat précis ne peut être vérifié, exclu.
+      }
+    }
+    return out;
+  }
+
+  /**
    * `true` si `(kind,id)` a déjà été écrit (recherche par nom, sans télécharger le contenu).
    * Une éventuelle divergence de contenu entre plusieurs candidats N'EST PAS signalée ici
    * (question booléenne « existe-t-il quelque chose ? », pas « quoi ? ») — `get`/
@@ -1100,6 +1156,43 @@ export class GoogleDriveStorageAdapter extends StorageAdapter {
 
     // §9a : ÉNUMÉRATION COMPLÈTE — aucun filtrage par cursor, jamais d'exclusion possible.
     const changes = uniqueFiles.map((f) => ({ kind: "event", id: idFromEventFileName(f.name) }));
+
+    // Fiches "member" (docs/next/ORG_FOLDER_CONTRACT.md §1) — nécessaire pour que
+    // `org-folder-store.js#listGovernance` (générique StorageAdapter §5, réutilisé
+    // tel quel par l'onboarding Drive, docs/next/DRIVE_ONBOARDING_CONTRACT.md §0)
+    // découvre les fiches membres/révocations d'une organisation publiées sur ce
+    // dossier — absent du câblage initial Point 4 (DRIVE_LIVE_CONTRACT.md §1, qui
+    // ne visait que le pipeline event-sourcing solo-store, seul consommateur de
+    // `listChanges` à l'époque). `FolderStorageAdapter.listChanges` énumère déjà
+    // TOUS les kinds (`STORAGE_KINDS`) : cette adjonction aligne `GoogleDriveStorageAdapter`
+    // sur le MÊME contrat générique, pour ce seul kind supplémentaire réellement
+    // consommé via `listChanges` ailleurs dans le dépôt (`workspace`/`license`/`key`
+    // restent lus par `get`/`exists`, jamais découverts par énumération — inchangé,
+    // aucune régression à les laisser hors de cette liste). Un seul niveau
+    // de dossier (pas de sous-dossier mensuel/epoch, cf. `fileNameForKind`) : énumération
+    // DIRECTE, plus simple que pour "event" ci-dessus. Même réconciliation « le plus
+    // ancien gagne » par nom physique (`compareByCreatedTimeThenId`) qu'au-dessus — un
+    // doublon physique inoffensif (retry) ne produit jamais deux entrées logiques.
+    // N'affecte PAS le curseur (`newCursor` ci-dessous, dérivé UNIQUEMENT des events,
+    // comme avant) : les fiches membres ne sont jamais pull()ées via SyncEngine, seul
+    // `listGovernance` les consomme, sans jamais lire `cursor`.
+    const memberTopIds = await this._allTopFolderIds("member");
+    const memberFiles = [];
+    for (const memberTopId of memberTopIds) {
+      const files = await this._listAllFiles(
+        `trashed = false and '${memberTopId}' in parents`,
+        "files(id,name,createdTime)"
+      );
+      memberFiles.push(...files);
+    }
+    const memberByName = new Map();
+    for (const f of memberFiles) {
+      const prev = memberByName.get(f.name);
+      if (!prev || compareByCreatedTimeThenId(f, prev) < 0) memberByName.set(f.name, f);
+    }
+    for (const f of memberByName.values()) {
+      changes.push({ kind: "member", id: idFromEventFileName(f.name) }); // même suffixe ".piloteo" que "event"
+    }
 
     const last = uniqueFiles[uniqueFiles.length - 1];
     const newCursor = last

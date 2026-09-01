@@ -74,9 +74,13 @@ test("org-engine : pont snapshot <-> sync multi-membre — 6 scénarios du contr
     await writeManifest(adapter, org.manifest);
     await writeMemberRecord(adapter, org.memberRecord);
 
+    // Round contrariant 4 (docs/next/ORG_TRUST_HARDENING_CONTRACT.md) :
+    // consultantId est désormais SIGNÉ dans l'invitation (décidé par
+    // l'émetteur, Alice), plus un choix libre à l'acceptation.
     const invitation = await inviteMember({
       workspaceId: org.workspace.workspaceId,
       role: "user",
+      consultantId: "c-bob",
       issuer: { memberId: aliceIdentity.memberId },
       issuerMembership: org.ownerMembership,
       signer: aliceSigner,
@@ -85,7 +89,6 @@ test("org-engine : pont snapshot <-> sync multi-membre — 6 scénarios du contr
     const { memberRecord: bobRecord } = await acceptInvitation({
       invitation,
       identity: bobIdentity,
-      consultantId: "c-bob",
     });
     await writeMemberRecord(adapter, bobRecord);
 

@@ -138,6 +138,33 @@ export async function writeRevocation(adapter, revocation) {
  * les fiches membres et les fiches de révocation — en dispatchant les blobs
  * `kind:"member"` du storage par leur CONTENU (`blob.kind`), pas par leur nom
  * de fichier (§1/§4 du contrat).
+ *
+ * CORRECTIF SÉCURITÉ (« DoS gouvernance Drive », round contrariant,
+ * docs/next/DRIVE_ONBOARDING_CONTRACT.md) — décision 4 RÉVISÉE : sur un
+ * adapter où DEUX fichiers physiques peuvent porter le même nom (Drive : un
+ * tiers avec accès Éditeur brut au dossier, jamais un membre Pilotéo, jamais
+ * une signature, peut y déposer un fichier `<memberId>.piloteo` hostile
+ * divergent SANS passer par `putImmutable`), un ancien comportement
+ * "candidat divergent -> `ImmutableConflictError` -> `continue`" ABANDONNAIT
+ * la fiche VISÉE tout entière — y compris sa version LÉGITIME SIGNÉE, qui
+ * disparaissait alors de `memberRecords` et n'était plus jamais admise par
+ * `buildTrustedMembership` (jusqu'à exclure le OWNER, clé pinnée depuis le
+ * manifeste, de sa PROPRE organisation — DoS total et silencieux, un seul
+ * fichier hostile, aucune signature/rôle requis).
+ *
+ * Principe correct : l'AUTHENTICITÉ d'une fiche de gouvernance est décidée
+ * par sa SIGNATURE Ed25519 (`buildTrustedMembership`, déjà correct, NON
+ * MODIFIÉ ici — il rejette déjà toute fiche mal signée/mal formée/non
+ * rattachée à la genèse), jamais par l'unicité physique d'un fichier. Sur un
+ * adapter qui expose `getAllCandidates(kind,id)` (renvoie TOUS les blobs
+ * candidats, y compris divergents, sans jamais lever — `GoogleDriveStorageAdapter`),
+ * `listGovernance` fournit donc TOUS les candidats de chaque `(kind:"member",id)`
+ * à `buildTrustedMembership`, qui admet le candidat validement signé et
+ * rejette le(s) candidat(s) hostile(s) — la fiche légitime N'EST JAMAIS
+ * perdue à cause d'un fichier hostile. Sur un adapter SANS collision physique
+ * possible (`FolderStorageAdapter` : `putImmutable` write-once garantit UN
+ * SEUL fichier par nom) — donc SANS `getAllCandidates` — comportement
+ * STRICTEMENT INCHANGÉ (repli sur `get()`, un seul candidat, non-régression).
  * @param {import("../storage/storage-adapter.js").StorageAdapter} adapter
  * @returns {Promise<{manifest:object|null, memberRecords:Array<object>, revocations:Array<object>}>}
  */
@@ -150,23 +177,42 @@ export async function listGovernance(adapter) {
 
   for (const change of changes) {
     if (!change || change.kind !== "member") continue; // seul le kind de stockage "member" porte membres+révocations.
-    let blob;
-    try {
-      blob = await adapter.get("member", change.id);
-    } catch {
-      // Blob illisible/corrompu (ex: écriture partielle par un synchroniseur
-      // externe) : ignoré plutôt que de faire échouer toute la lecture de
-      // gouvernance (décision 4).
-      continue;
+    let blobs;
+    if (typeof adapter.getAllCandidates === "function") {
+      // Adapter à collisions physiques possibles (Drive) : TOUS les candidats,
+      // jamais un seul abandonné sur divergence — voir le correctif ci-dessus.
+      try {
+        blobs = await adapter.getAllCandidates("member", change.id);
+      } catch {
+        blobs = []; // best-effort global si même `getAllCandidates` échoue (ex: panne réseau) — inchangé pour ce cas rare.
+      }
+    } else {
+      // Adapter sans collision physique possible (ex: FolderStorageAdapter,
+      // write-once) : comportement HISTORIQUE inchangé (décision 4 d'origine).
+      try {
+        const blob = await adapter.get("member", change.id);
+        blobs = blob ? [blob] : [];
+      } catch {
+        // Blob illisible/corrompu (ex: écriture partielle par un synchroniseur
+        // externe) : ignoré plutôt que de faire échouer toute la lecture de
+        // gouvernance (décision 4 d'origine — s'applique ici à un adapter où
+        // un `ImmutableConflictError` ne peut légitimement signaler qu'une
+        // vraie panne d'E/S, jamais une collision de fichiers physiques).
+        blobs = [];
+      }
     }
-    if (blob && blob.kind === "member") {
-      memberRecords.push(blob);
-    } else if (blob && blob.kind === "revocation") {
-      revocations.push(blob);
+    for (const blob of blobs) {
+      if (blob && blob.kind === "member") {
+        memberRecords.push(blob);
+      } else if (blob && blob.kind === "revocation") {
+        revocations.push(blob);
+      }
+      // Tout autre contenu (kind absent/inattendu, ex: le fichier hostile du
+      // correctif ci-dessus) est ignoré silencieusement ici : ni une fiche
+      // membre, ni une révocation, il n'a rien à faire dans la gouvernance —
+      // mais son EXISTENCE n'empêche plus la fiche légitime homonyme d'être
+      // lue (décision 4, best-effort).
     }
-    // Tout autre contenu (kind absent/inattendu) est ignoré silencieusement :
-    // ni une fiche membre, ni une révocation, il n'a rien à faire dans la
-    // gouvernance (best-effort, décision 4).
   }
 
   return { manifest, memberRecords, revocations };

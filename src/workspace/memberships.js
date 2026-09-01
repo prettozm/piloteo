@@ -38,7 +38,11 @@ export function createMembership({
 } = {}) {
   if (!workspaceId) throw new Error("createMembership: 'workspaceId' requis");
   if (!memberId) throw new Error("createMembership: 'memberId' requis");
-  if (!consultantId) throw new Error("createMembership: 'consultantId' requis");
+  // `null` est une valeur EXPLICITE et valide (« pas encore lié à un profil
+  // consultant Pilotéo » — ex: un membre invité sans consultant cible précisé,
+  // docs/next/ORG_TRUST_HARDENING_CONTRACT.md round 4) ; seul un paramètre
+  // OMIS (`undefined`, oubli de programmation) reste une erreur.
+  if (consultantId === undefined) throw new Error("createMembership: 'consultantId' requis (passer explicitement 'null' si aucun consultant n'est encore lié)");
   if (!VALID_ROLES.has(role)) throw new Error(`createMembership: rôle invalide '${role}'`);
   if (!VALID_STATUSES.has(status)) throw new Error(`createMembership: statut invalide '${status}'`);
   return { workspaceId, memberId, googleSubject, email, consultantId, role, status };
