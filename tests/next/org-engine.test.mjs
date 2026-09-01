@@ -253,3 +253,48 @@ test("org-engine : pont snapshot <-> sync multi-membre — 6 scénarios du contr
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// Régression revue 2c-C1 #B7 : un échec de TRANSPORT au push ne doit JAMAIS
+// passer pour un succès (commit.ok:false, stage:"push") — sinon la donnée est
+// perdue (eventLog en mémoire) avec un accusé de réussite mensonger.
+test("org-engine : échec de push (transport) -> commit.ok=false stage:push (pas de faux succès)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piloteo-orgengine-b7-"));
+  try {
+    // Organisation minimale : Alice owner.
+    const alice = await newMemberIdentity();
+    const org = createOrganization({ name: "Org B7", identity: alice, consultantId: "c-alice" });
+    const base = makeAdapter(root);
+    await base.connect();
+    await writeManifest(base, org.manifest);
+    await writeMemberRecord(base, org.memberRecord);
+
+    // Adaptateur qui échoue uniquement sur putImmutable d'un event (panne réseau).
+    const flaky = makeAdapter(root);
+    const realPut = flaky.putImmutable.bind(flaky);
+    flaky.putImmutable = async (kind, id, blob) => {
+      if (kind === "event") throw new Error("panne réseau simulée au push");
+      return realPut(kind, id, blob);
+    };
+
+    const engine = await openOrgEngine({ adapter: flaky, identity: alice, consultantId: "c-alice" });
+    const next = {
+      consultants: [{ id: "c-alice", nom: "Alice", trigramme: "ALI", statut: "en poste",
+        dateEmbauche: "2026-01-01", dateDepart: null, tjmBase: 0, admin: true, tempsPartiel: [] }],
+      organisations: [], affaires: [], methodes: [], typesTerritoire: [], domainesIntervention: [],
+      categoriesFrais: [], missions: [], factures: [],
+      saisies: [{ id: "sB7", date: "2026-08-30", consultantId: "c-alice", type: "interne",
+        missionId: null, categorie: "adm", dureeH: 1, pctFact: 0, commentaire: "" }],
+      bordereauxFrais: [], notesFrais: [],
+    };
+    const res = await engine.commit(next);
+    assert.equal(res.ok, false, "un push en échec ne doit pas renvoyer ok:true");
+    assert.ok(res.conflicts.some((c) => c.stage === "push"), "l'échec de transport est signalé stage:push");
+
+    // Un membre frais (adaptateur sain) ne voit PAS l'événement (jamais publié).
+    const fresh = await openOrgEngine({ adapter: makeAdapter(root), identity: alice, consultantId: "c-alice" });
+    const seen = await fresh.load();
+    assert.equal(seen.state.saisies.length, 0, "l'événement non publié n'existe nulle part");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -187,8 +187,12 @@ export async function openOrgEngine({ adapter, identity, consultantId } = {}) {
       created.push(event);
     }
 
-    // 3. Publie (signe + écrit sur le dossier).
-    await engine.push();
+    // 3. Publie (signe + écrit sur le dossier). On CAPTURE le résultat : un
+    //    event resté `stillPending` (panne de transport au push) n'atteint jamais
+    //    le dossier ET n'est pas persisté (eventLog en mémoire) — c'est une perte,
+    //    pas un simple retard. Il doit faire échouer le commit (revue 2c-C1 #B7),
+    //    sinon `ok:true` mentirait sur une donnée perdue.
+    const pushResult = await engine.push();
 
     // 4. Repull : redécouvre nos PROPRES événements comme le ferait n'importe
     //    quel autre membre (décision 3) — seul moyen fiable de savoir si la
@@ -220,7 +224,22 @@ export async function openOrgEngine({ adapter, identity, consultantId } = {}) {
       .filter((c) => createdIds.has(c.eventId))
       .map((c) => ({ ...c, stage: "conflict" }));
 
-    const conflicts = [...ownRejections, ...ownConcurrencyConflicts];
+    // Échecs de TRANSPORT au push (revue #B7) : nos events restés pending n'ont
+    // pas été publiés — jamais un succès silencieux.
+    const ownPushFailures = (pushResult.stillPending || [])
+      .filter((p) => p && createdIds.has(p.eventId))
+      .map((p) => {
+        const src = createdById.get(p.eventId);
+        return {
+          eventId: p.eventId,
+          entityType: src?.entityType ?? null,
+          entityId: src?.entityId ?? null,
+          stage: "push",
+          reason: p.error || "publication impossible (transport)",
+        };
+      });
+
+    const conflicts = [...ownRejections, ...ownConcurrencyConflicts, ...ownPushFailures];
 
     return {
       ok: conflicts.length === 0,
