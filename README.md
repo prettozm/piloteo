@@ -1,105 +1,74 @@
-# Pilotéo V1
+# Pilotéo
 
-Pilotéo est un outil de suivi des affaires, du commercial, des temps, des frais et de la facturation pour cabinet de conseil. Il est **white-label** : chaque client le déploie avec son propre nom (`PILOTEO_ORG_NAME`) et son logo, sur une instance isolée.
+Pilotéo est un outil de pilotage de cabinet de conseil : affaires, commercial,
+temps, frais et facturation. C'est une **PWA local-first** — il n'y a pas de
+base de données Pilotéo côté éditeur, et **Pilotéo n'héberge aucune donnée**.
+Les données vivent sur l'appareil de l'utilisateur ou dans l'infrastructure que
+son organisation choisit.
 
-Cette V1 transforme le prototype HTML autonome en **petite application professionnelle multi-utilisateur** sans réécrire son métier : l'interface et les règles fonctionnelles restent dans `index.html`, tandis que `server.py` apporte l'authentification, les droits côté serveur, la persistance SQLite, la synchronisation, l'audit et les sauvegardes.
+## Les trois modes
 
-## Ce que la V1 garantit
+| Mode | Où vivent les données | Prérequis |
+|---|---|---|
+| **Solo** | IndexedDB, sur cet appareil uniquement | n'importe quel navigateur moderne |
+| **Dossier** | Fichiers d'événements dans un dossier choisi (local, ou synchronisé par OneDrive, SharePoint via OneDrive, Google Drive Desktop…) | navigateur Chromium desktop (File System Access) |
+| **Organisation** | Dossier partagé entre membres, événements **signés Ed25519** (dossier de confiance, non chiffré) ; ou Google Drive du client via OAuth (`drive.file`) | dossier partagé accessible à tous les membres, ou compte Google |
 
-- comptes nominatifs avec mot de passe ;
-- session serveur en cookie `HttpOnly`, protection CSRF et limitation des tentatives de connexion ;
-- **les données non autorisées ne sont pas envoyées au navigateur** ;
-- un administrateur voit et maintient le cabinet entier ;
-- un utilisateur voit son périmètre personnel et les affaires qui le concernent ; un pilote voit les données nécessaires au pilotage de ses affaires ;
-- écritures persistées dans SQLite, journal WAL ;
-- synchronisation automatique entre navigateurs, détection des conflits sur une même donnée ;
-- journal d'audit des connexions, comptes et modifications ;
-- sauvegardes automatiques quotidiennes + sauvegarde manuelle ;
-- console support administrateur à `/support` ;
-- aucune ressource web tierce chargée par l'application.
+Aucun de ces modes ne fait transiter de donnée par un serveur Pilotéo. La
+confidentialité repose sur les permissions du support choisi (dossier, compte
+Drive), pas sur Pilotéo. Voir
+[`docs/DONNEES_ET_CONFIDENTIALITE.md`](docs/DONNEES_ET_CONFIDENTIALITE.md).
 
-Ce n'est volontairement **pas** une architecture d'entreprise complexe : pas de microservices, pas de Kubernetes, pas de SSO, pas de Redis. Pour cinq utilisateurs légèrement extensibles, cela ne répondrait à aucun besoin actuel.
+**Le code PIN est un verrou d'appareil, pas un chiffrement** : il évite un
+usage accidentel depuis l'écran de l'appareil, il ne protège pas les données en
+cas d'accès direct au dossier ou au compte qui les porte.
 
-## Démarrage local
+## Auto-hébergement serveur (option)
 
-```bash
-cp .env.example .env
-# éditer .env, surtout le mot de passe administrateur et le consultant associé
-mkdir -p data backups
+Pour une organisation qui préfère un backend classique plutôt que du
+local-first, le serveur historique (`server.py` + SQLite, comptes nominatifs,
+sauvegardes) reste disponible et peut être **auto-hébergé** par le client
+(Docker, Fly.io, VPS OVH ou équivalent) :
 
-docker compose up --build
-```
+- [`docs/deployment/HOSTED_GENERIC.md`](docs/deployment/HOSTED_GENERIC.md) — référence du package hébergé (Docker, variables, sauvegardes, healthcheck) ;
+- [`docs/deployment/FLY.md`](docs/deployment/FLY.md), [`docs/deployment/OVH_VPS.md`](docs/deployment/OVH_VPS.md) — deux cibles d'exemple, même package ;
+- [`docs/DEPLOIEMENT.md`](docs/DEPLOIEMENT.md) — mise en production pas à pas.
 
-Puis ouvrir `http://127.0.0.1:8080` depuis la machine hôte.
-
-Au premier démarrage, aucun mot de passe par défaut n'est accepté. Le serveur exige :
-
-- `PILOTEO_ADMIN_USERNAME` ;
-- `PILOTEO_ADMIN_PASSWORD` (12 caractères minimum) ;
-- `PILOTEO_ADMIN_CONSULTANT_ID` ;
-- `PILOTEO_ADMIN_NAME`.
-
-Le fichier `seed.json` reprend le jeu de données de démonstration du prototype et initialise la base uniquement à sa création. Les données réelles vivent ensuite dans `data/piloteo.sqlite3`, qui est exclu de Git.
-
-## Mise à disposition des collègues
-
-**En production, ne pas publier directement le port HTTP 8080.** Placer Pilotéo derrière le reverse proxy HTTPS déjà utilisé par l'entreprise et passer `PILOTEO_FORCE_HTTPS=1`. `Caddyfile.example` montre le cas minimal si aucun proxy n'existe déjà.
-
-Le proxy doit conserver l'adresse d'origine (`X-Forwarded-For`) et ne doit pas exposer `data/`, `backups/` ou `seed.json`. Le serveur Pilotéo lui-même ne sert que ses fichiers statiques (`index.html`, `app.js`, `support.html`, `support.js`) et les API prévues. Tout le JavaScript vit dans `app.js`/`support.js` (aucun script en ligne), ce qui permet une CSP `script-src 'self'` stricte.
-
-## Administration courante
-
-Un administrateur ouvre **Administration → Support & exploitation** ou directement `/support` pour :
-
-- créer un compte rattaché à un consultant existant ;
-- réinitialiser un mot de passe ;
-- désactiver/réactiver un compte ;
-- accorder/retirer le rôle administrateur ;
-- créer une sauvegarde immédiate ;
-- consulter les 200 dernières traces d'audit.
-
-La fonction existante « Voir sa page » reste disponible pour le support. Une action effectuée dans ce mode reste auditée comme une action de l'administrateur connecté.
-
-## Sauvegarde
-
-- une sauvegarde SQLite cohérente est créée automatiquement au maximum une fois par jour ;
-- les sauvegardes manuelles sont disponibles depuis `/support` ;
-- conservation par défaut : 30 fichiers ;
-- **le dossier `backups/` doit lui-même être copié vers un stockage différent du serveur** (NAS protégé, sauvegarde SI, coffre, etc.). Une copie sur le même disque ne protège pas d'une panne du disque.
-
-Restauration : arrêter Pilotéo, puis :
-
-```bash
-python scripts/restore_backup.py backups/piloteo-YYYYMMDD-HHMMSS-manual.sqlite3
-```
-
-Le script vérifie l'intégrité de la sauvegarde et garde une copie de sécurité de la base remplacée.
+C'est une **option de déploiement**, pas le mode par défaut : Pilotéo ne fait
+aucune promesse de serveur, de localisation géographique ou de comptes
+nominatifs par défaut. Le mode se choisit à l'installation — voir
+[`docs/DEPLOYER_CONTRACT.md`](docs/DEPLOYER_CONTRACT.md) et
+[`docs/deployment/DEPLOYER.md`](docs/deployment/DEPLOYER.md).
 
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -v
-python -m py_compile server.py
+npm run test:next          # tests unitaires (node:test + fake-indexeddb)
+node tests/e2e/smoke.mjs   # e2e Playwright/Chromium (voir tests/e2e/*.mjs pour les autres scénarios)
 ```
-
-Un test réel recommandé avant mise en production : ouvrir deux navigateurs avec deux utilisateurs distincts, saisir un temps de chaque côté, vérifier la synchronisation, puis vérifier qu'un utilisateur ne peut ni ouvrir les vues société ni obtenir leurs données via `/api/state`.
 
 ## Documentation
 
-**Utilisateurs et exploitation :**
+**Pour commencer :**
 
-- [`docs/GUIDE_UTILISATEUR.md`](docs/GUIDE_UTILISATEUR.md) — pour les consultants (connexion, temps, frais, pilotage, synchro) ;
-- [`docs/GUIDE_ADMINISTRATEUR.md`](docs/GUIDE_ADMINISTRATEUR.md) — comptes, référentiels, sauvegardes, audit ;
-- [`docs/DEPLOIEMENT.md`](docs/DEPLOIEMENT.md) — mise en production pas à pas (Docker, reverse proxy HTTPS, checklist) ;
-- [`docs/EXPLOITATION.md`](docs/EXPLOITATION.md) — installation, support, sauvegarde, restauration, incidents.
+- [`docs/manuel-utilisateur/README.md`](docs/manuel-utilisateur/README.md) — manuel utilisateur (démarrer, au quotidien, équipe, licence, sauvegarde, FAQ) ;
+- [`docs/exploitation/README.md`](docs/exploitation/README.md) — installation et exploitation local-first ;
+- [`docs/modes/FOLDER_STORAGE.md`](docs/modes/FOLDER_STORAGE.md) — détail du mode Dossier.
 
-**Conception et reprise (dev / IA), à lire dans cet ordre :**
+**Sécurité et données :**
 
-1. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — point d'entrée pour une autre IA ou un nouveau développeur ;
-2. [`docs/ARCHITECTURE_V1.md`](docs/ARCHITECTURE_V1.md) — composants, données, synchro et droits ;
-3. [`docs/SECURITY.md`](docs/SECURITY.md) — hypothèses de sécurité et niveau attendu ;
-4. [`docs/AUDIT_V1.md`](docs/AUDIT_V1.md) — audit de robustesse et corrections avant production ;
-5. [`docs/cahier-des-charges.md`](docs/cahier-des-charges.md) — référence fonctionnelle ;
-6. [`docs/modele-de-donnees.md`](docs/modele-de-donnees.md) — modèle métier historique.
+- [`docs/SECURITY.md`](docs/SECURITY.md) — hypothèses et niveau de sécurité ;
+- [`docs/DONNEES_ET_CONFIDENTIALITE.md`](docs/DONNEES_ET_CONFIDENTIALITE.md) — quelles données, où, PIN vs chiffrement, export/suppression, responsabilités ;
+- [`docs/architecture/CRYPTO_TRUSTED_VS_ENCRYPTED.md`](docs/architecture/CRYPTO_TRUSTED_VS_ENCRYPTED.md) — modèle de confiance retenu pour le mode Organisation.
 
-Le principe de maintenance est simple : **ne pas refaire le métier dans le serveur**. Le serveur protège, persiste et synchronise ; `index.html` continue de porter les règles métier tant qu'une vraie séparation front/API n'est pas justifiée par la taille ou l'usage.
+**Architecture et conception (dev / IA) :**
+
+- [`CLAUDE.md`](CLAUDE.md) — invariants du projet et protocole de développement ;
+- [`docs/architecture/README.md`](docs/architecture/README.md) — architecture moteur canonique (événements, crypto, sync/stockage, droits, licence) ;
+- [`docs/next/`](docs/next/) — contrats de lot (oracle de chaque évolution) ; le lot en cours documente son contrat et son manuel dans ce dossier ;
+- [`docs/archive/`](docs/archive/) — audits, rapports de passe et cahier des charges initial, conservés pour l'historique.
+
+Le principe de maintenance reste celui d'origine : **ne pas refaire le métier
+ailleurs**. `app.js` porte les règles fonctionnelles, `server.py` reste intact ;
+toute la logique local-first passe par des ponts (`local-backend.js`,
+`piloteo-*-bridge.mjs`) sans jamais modifier ces deux fichiers.
