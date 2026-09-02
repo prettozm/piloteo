@@ -29,19 +29,28 @@
 //     chaînent proprement, sans conflit.
 //
 // Prouve, dans l'ordre :
-//   1. écran d'accueil : DEUX emplacements proposés (dossier + Drive) quand
-//      `window.PiloteoDrive.isAvailable` — UN SEUL (dossier) sinon (module
-//      Drive absent, simulé via `page.route` sur `piloteo-drive-bridge.mjs`) ;
-//   2. créer une organisation Drive (adapter FakeDrive injecté via le hook
+//   1. créer une organisation Drive (adapter FakeDrive injecté via le hook
 //      `__createOrgOnAdapter`, sans OAuth réel) + `_useDriveOrgEngineForTest` :
 //      `/api/me` renvoie role=admin, `/api/state` fonctionne (GET puis PUT) ;
-//   3. reprise via `_retryDriveOrgAuth` (chemin RÉEL du bouton « Se
+//   2. reprise via `_retryDriveOrgAuth` (chemin RÉEL du bouton « Se
 //      reconnecter à Google », OAuth simulé par le stub GIS ci-dessus) :
 //      retrouve la MÊME organisation (même manifeste), `storageMode` bascule
 //      bien en "org-drive", `/api/me`/`/api/state` fonctionnent toujours ;
-//   4. échec de migration (Point 5, `__forceNextVerificationFailure`) lors
+//   3. échec de migration (Point 5, `__forceNextVerificationFailure`) lors
 //      d'une création d'org-drive : jamais de mode org-drive actif, retour à
 //      « cet appareil », données solo intactes.
+//
+// docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 1 : l'ancien scénario 1
+// (« écran d'accueil : deux emplacements dossier/Drive pour Créer une
+// organisation ») a été RETIRÉ ici — cette UI n'existe plus (l'accueil n'a
+// plus que 2 cartes, « Travailler seul »/« Rejoindre », couvert par
+// tests/e2e/org-onboarding.mjs ; « Créer une organisation » devient
+// « Partager cet espace », Lot 2, folder-only pour l'instant — voir le
+// rapport du maker Lot 1/2 pour la justification de cet écart Drive). Les
+// scénarios 1-3 ci-dessous, EUX, n'ont JAMAIS dépendu de cette UI (ils
+// appellent `window.PiloteoDrive`/`window.PiloteoLocal` directement via
+// `page.evaluate`) : intégralement conservés, non-régression complète du
+// câblage Drive.
 //
 // Usage : node tests/e2e/org-onboarding-drive.mjs
 //   PW_CHROMIUM=<chemin> pour piloter un binaire Chromium précis.
@@ -203,76 +212,7 @@ try {
   browser = await chromium.launch({ executablePath: exe, args: ["--no-sandbox"] });
 
   // ==========================================================================
-  // 1a. Écran d'accueil AVEC Google Drive disponible : DEUX emplacements
-  //     proposés (dossier + Drive) pour « Créer une organisation ».
-  // ==========================================================================
-  {
-    const ctx = await browser.newContext();
-    await ctx.addInitScript(initScriptSource);
-    const page = await ctx.newPage();
-    const consoleErrors = [];
-    page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
-    page.on("pageerror", (e) => consoleErrors.push("pageerror: " + e.message));
-
-    await page.goto(`${BASE}/index.html?solo=1`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#piloteo-welcome", { timeout: 10000 });
-    await page.waitForFunction(() => !!(window.PiloteoDrive && window.PiloteoDrive.isAvailable), { timeout: 5000 });
-    // Attend que le RENDU (pas seulement la disponibilité du pont) ait révélé
-    // le radio Drive — `renderWelcomeScreen()` le fait de façon asynchrone
-    // (Promise.all sur waitForPiloteoOrg/waitForPiloteoDrive).
-    await page.waitForFunction(() => {
-      const labels = [...document.querySelectorAll('#piloteo-welcome input[name="piloteo-org-location"]')].map((r) => r.closest("label"));
-      const d = labels.find((l) => l && /Google Drive/i.test(l.textContent));
-      return !!d && !d.hidden;
-    }, { timeout: 5000 });
-
-    const locations = await page.evaluate(() => {
-      const labels = [...document.querySelectorAll('#piloteo-welcome input[name="piloteo-org-location"]')]
-        .map((r) => r.closest("label"))
-        .filter(Boolean);
-      return labels.map((l) => ({ text: l.textContent.trim(), visible: l.offsetParent !== null, hidden: !!l.hidden }));
-    });
-    ok(locations.length === 2, `2 options de localisation dans le DOM (dossier + Drive) — trouvé ${locations.length}`);
-    const driveOption = locations.find((l) => /Google Drive/i.test(l.text));
-    ok(!!driveOption && driveOption.visible && !driveOption.hidden, "l'option « Google Drive » est VISIBLE quand PiloteoDrive.isAvailable");
-
-    await ctx.close();
-  }
-
-  // ==========================================================================
-  // 1b. Écran d'accueil SANS Google Drive (module absent — simulé via
-  //     page.route sur piloteo-drive-bridge.mjs) : UN SEUL emplacement
-  //     (dossier), comportement STRICTEMENT inchangé (garde-fou §2).
-  // ==========================================================================
-  {
-    const ctx = await browser.newContext();
-    await ctx.route("**/piloteo-drive-bridge.mjs", (route) =>
-      route.fulfill({ status: 200, contentType: "application/javascript", body: "// e2e stub : piloteo-drive-bridge.mjs volontairement absent\n" })
-    );
-    const page = await ctx.newPage();
-    await page.goto(`${BASE}/index.html?solo=1`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#piloteo-welcome", { timeout: 10000 });
-    // waitForPiloteoDrive(4000) doit expirer (module stubé, jamais posé) avant
-    // que le radio Drive ne soit révélé — attendre un peu plus que 4000ms.
-    await page.waitForTimeout(4300);
-
-    const locations = await page.evaluate(() => {
-      const labels = [...document.querySelectorAll('#piloteo-welcome input[name="piloteo-org-location"]')]
-        .map((r) => r.closest("label"))
-        .filter(Boolean);
-      return labels.map((l) => ({ text: l.textContent.trim(), visible: l.offsetParent !== null, hidden: !!l.hidden }));
-    });
-    const driveOptionAbsent = locations.find((l) => /Google Drive/i.test(l.text));
-    ok(!driveOptionAbsent || driveOptionAbsent.hidden || !driveOptionAbsent.visible,
-      "sans window.PiloteoDrive, l'option « Google Drive » reste CACHÉE (garde-fou §2 : le reste marche)");
-    const folderOption = locations.find((l) => /Un dossier/i.test(l.text));
-    ok(!!folderOption && folderOption.visible, "l'option « Un dossier » reste visible/utilisable (non-régression)");
-
-    await ctx.close();
-  }
-
-  // ==========================================================================
-  // 2. Créer une organisation Drive (adapter FakeDrive injecté via le hook
+  // 1. Créer une organisation Drive (adapter FakeDrive injecté via le hook
   //    __createOrgOnAdapter, AUCUN OAuth réel à cette étape) + _useDriveOrgEngineForTest :
   //    /api/me renvoie role=admin, /api/state fonctionne (GET puis PUT).
   // ==========================================================================
@@ -350,7 +290,7 @@ try {
   if (consoleErrors.length) consoleErrors.slice(0, 5).forEach((e) => console.log("    console:", e));
 
   // ==========================================================================
-  // 3. Reprise via _retryDriveOrgAuth — chemin RÉEL du clic « Se reconnecter à
+  // 2. Reprise via _retryDriveOrgAuth — chemin RÉEL du clic « Se reconnecter à
   //    Google » (resumeDriveOrg({interactive:true}) -> oauthTokenProvider() ->
   //    GIS stubé -> openDriveOrg -> GoogleDriveStorageAdapter via `fetch`
   //    global, routé vers le MÊME FakeDrive). Simule un rechargement de page
@@ -387,7 +327,7 @@ try {
   if (consoleErrors.length) consoleErrors.slice(0, 5).forEach((e) => console.log("    console:", e));
 
   // ==========================================================================
-  // 4. Échec de migration (Point 5, `__forceNextVerificationFailure`) SUR UN
+  // 3. Échec de migration (Point 5, `__forceNextVerificationFailure`) SUR UN
   //    ENGINE DRIVE, via le hook BAS NIVEAU engine-agnostique
   //    `_runGuardedMigration` (même technique, même hook, que
   //    tests/e2e/migration.mjs scénario 9 pour le mode dossier — ce hook est

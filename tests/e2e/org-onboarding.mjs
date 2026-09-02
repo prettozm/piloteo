@@ -9,8 +9,11 @@
 // tests/e2e/solo-folder.mjs), sans dépendre du sélecteur natif.
 //
 // Prouve, dans l'ordre :
-//   1. l'écran d'accueil (3 cartes) s'affiche au tout premier lancement, ET
-//      le mode classique démarre quand même en dessous (non-régression) ;
+//   1. l'écran d'accueil (2 cartes — docs/next/PARCOURS_IDENTITE_CONTRACT.md,
+//      Lot 1 : « Travailler seul »/« Rejoindre une organisation », « Créer une
+//      organisation » n'est plus une carte d'accueil) s'affiche au tout
+//      premier lancement, ET le mode classique démarre quand même en dessous
+//      (non-régression) ;
 //   2. « créer une organisation » : identité générée + persistée, manifeste
 //      écrit, /api/me renvoie un role admin, /api/state fonctionne ;
 //   3. inviter génère un code non vide ;
@@ -111,9 +114,12 @@ try {
   ok(true, "mode classique (par défaut) démarre toujours (non-régression)");
 
   const welcomeVisible = await page.locator("#piloteo-welcome").isVisible().catch(() => false);
-  ok(welcomeVisible, "écran de premier lancement (3 cartes) affiché");
+  ok(welcomeVisible, "écran de premier lancement (2 cartes) affiché");
   const cardCount = await page.locator("#piloteo-welcome button").count();
-  ok(cardCount >= 3, `au moins 3 actions dans l'écran d'accueil (trouvé ${cardCount})`);
+  ok(cardCount === 2, `exactement 2 actions dans l'écran d'accueil, Lot 1 (trouvé ${cardCount})`);
+  const createCardAbsent = await page.evaluate(() =>
+    !/Créer une organisation/i.test(document.getElementById("piloteo-welcome")?.textContent || ""));
+  ok(createCardAbsent, "« Créer une organisation » absente de l'écran d'accueil (Lot 1)");
 
   // Le pont org a bien chargé.
   await page.waitForFunction(() => !!window.PiloteoOrg, { timeout: 5000 }).catch(() => {});

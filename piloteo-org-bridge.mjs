@@ -85,11 +85,13 @@ import { openOrgEngine } from "./src/workspace/org-engine.js";
 import {
   newMemberIdentity,
   createOrganization,
+  promoteSoloToOrg,
+  planPromotion,
   inviteMember,
   acceptInvitation,
   createRevocation,
 } from "./src/workspace/org-runtime.js";
-import { writeManifest, writeMemberRecord, writeRevocation } from "./src/workspace/org-folder-store.js";
+import { writeManifest, writeMemberRecord, writeRevocation, readManifest } from "./src/workspace/org-folder-store.js";
 import * as cryptoService from "./src/crypto/crypto-service.js";
 
 // ---------------------------------------------------------------------------
@@ -300,6 +302,52 @@ async function activateOrgStorageMode(handle) {
 }
 
 /**
+ * PARCOURS_IDENTITE_CONTRACT.md, Lot 2 — « Partager cet espace » : promeut EN
+ * PLACE un workspace SOLO existant (`workspaceId` fourni par l'appelant —
+ * `local-backend.js`, identité solo FIXE de cet appareil) sur `handle`
+ * (dossier déjà choisi). Symétrique de `createOrg` ci-dessus, avec DEUX
+ * différences volontaires :
+ * 1. `workspace(Id)` N'EST JAMAIS généré ici : c'est CELUI fourni
+ *    (`promoteSoloToOrg`, org-runtime.js) — « W-001 Local -> W-001 Shared »,
+ *    jamais un nouveau workspace/export déguisé.
+ * 2. Un manifeste PEUT déjà exister sur ce dossier (reprise après un premier
+ *    appel réussi, ou après une bascule retournée en solo) : `planPromotion`
+ *    (org-runtime.js, pur) décide AVANT toute écriture —
+ *    `{kind:"promote"}` publie normalement, `{kind:"already-promoted"}` ne
+ *    publie RIEN (no-op sûr, idempotent : jamais un second manifeste ni un
+ *    second owner) et `{kind:"conflict"}` fait lever explicitement, SANS
+ *    écrire quoi que ce soit (dossier étranger, ou owner différent).
+ * Ne bascule PAS `piloteo_storage_mode` (même report qu'`createOrg`, voir sa
+ * décision : `local-backend.js` doit d'abord republier les événements solo
+ * existants — Point 5, `piloteo-migration-bridge.mjs` — et vérifier le
+ * round-trip AVANT `activateOrgStorageMode()`).
+ * @param {{handle:*, workspaceId:string, name:string, consultantId?:string, identity?:object}} params
+ * @returns {Promise<{engine:object, adapter:object, manifest:object, alreadyPromoted:boolean}>}
+ */
+async function promoteToOrg({ handle, workspaceId, name, consultantId, identity } = {}) {
+  if (!handle) throw new Error("promoteToOrg: 'handle' requis (sélecteur de dossier déjà effectué).");
+  if (!workspaceId) throw new Error("promoteToOrg: 'workspaceId' requis (identité solo d'origine à conserver).");
+  const adapter = buildAdapter(handle);
+  await adapter.connect();
+  const id = identity || (await getOrCreateIdentity());
+
+  const existingManifest = await readManifest(adapter);
+  const plan = planPromotion({ existingManifest, workspaceId, identity: id });
+  if (plan.kind === "conflict") {
+    throw new Error(`promoteToOrg: ${plan.reason}`);
+  }
+  if (plan.kind === "promote") {
+    const org = promoteSoloToOrg({ workspaceId, name, identity: id, consultantId });
+    await writeManifest(adapter, org.manifest);
+    await writeMemberRecord(adapter, org.memberRecord);
+  }
+  // plan.kind === "already-promoted" : rien à publier (write-once déjà en
+  // place, même owner) — on rouvre simplement l'organisation existante.
+  const engine = await openOrgEngine({ adapter, identity: id, consultantId });
+  return { engine: withFolderName(engine, handle), adapter, manifest: engine.manifest, alreadyPromoted: plan.kind === "already-promoted" };
+}
+
+/**
  * Rejoint une organisation sur `handle` via un code d'invitation (produit par
  * `invite`) : consomme l'invitation, publie la fiche membre du nouvel
  * arrivant, active le mode org pour ce navigateur. Renvoie
@@ -455,6 +503,7 @@ window.PiloteoOrg = {
   pickDirectory,
   getOrCreateIdentity,
   createOrg,
+  promoteToOrg,
   activateOrgStorageMode,
   joinOrg,
   openOrg,

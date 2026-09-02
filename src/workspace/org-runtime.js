@@ -93,7 +93,7 @@
 import * as cryptoService from "../crypto/crypto-service.js";
 import { createMembership, MembershipStore } from "./memberships.js";
 import { createInvitation, isValid, consume, canonicalPayload as invitationCanonicalPayload } from "./invitations.js";
-import { createTeamWorkspace } from "./workspace.js";
+import { createTeamWorkspace, DEFAULT_SCHEMA_VERSION } from "./workspace.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -175,6 +175,134 @@ export function createOrganization({ name, identity, consultantId } = {}) {
     manifest,
     ownerMembership,
     memberRecord,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Promotion solo -> organisation — docs/next/PARCOURS_IDENTITE_CONTRACT.md
+// Lot 2 (« Partager cet espace »). Symétrique de `createOrganization`
+// ci-dessus, mais CONSERVE un `workspaceId` FOURNI (celui du workspace solo
+// d'origine — `src/integration/solo-store.js` : « un `workspaceId`/`actorId`
+// FIXES, persistés une fois ») au lieu d'en générer un nouveau via
+// `createTeamWorkspace`. « W-001 Local -> W-001 Shared » : PAS de nouveau
+// workspace, PAS un export vers une organisation fraîche — c'est le MÊME
+// espace qui devient partagé. Reste, comme `createOrganization`, une
+// fonction PURE (décision 1 en tête de fichier) : elle ne publie rien
+// elle-même (l'appelant écrit `manifest`/`memberRecord` via
+// `org-folder-store.js#writeManifest`/`writeMemberRecord`, EXACTEMENT comme
+// `createOrganization`) et ne républie pas non plus les événements solo
+// existants — cela reste le rôle du pipeline de migration DÉJÀ committé
+// (`src/integration/migration.js`/`piloteo-migration-bridge.mjs`, Point 5) :
+// une fois le manifeste publié avec CE `workspaceId`, `org-engine.js#commit`
+// diffe (`snapshotToEventsDiff`) sur `manifest.workspaceId` — donc sur le
+// MÊME workspace que le snapshot solo — et republie exactement les entités
+// manquantes (idempotent, `parentEventId` préservé par `snapshotToEventsDiff`,
+// non dupliqué ici).
+// ---------------------------------------------------------------------------
+
+/**
+ * Construit la genèse d'une organisation qui PROMEUT en place un workspace
+ * solo existant (Lot 2) : même forme que `createOrganization` — `{workspace,
+ * manifest, ownerMembership, memberRecord}` — mais `workspace.workspaceId`/
+ * `manifest.workspaceId` valent EXACTEMENT le `workspaceId` fourni, jamais un
+ * UUID frais. Le créateur (`identity`, l'identité solo de cet appareil) en
+ * est le OWNER, ancré write-once dans le manifeste retourné (§5.1, comme
+ * `createOrganization`) — l'appelant est responsable de la publication réelle
+ * (`writeManifest`/`writeMemberRecord`) et de la republication des événements
+ * (voir en-tête ci-dessus).
+ * @param {{workspaceId:string, name:string, identity:{memberId:string, publicKeyJwk:object}, consultantId?:string}} params
+ * @returns {{workspace:{workspaceId:string,name:string,schemaVersion:number}, manifest:object, ownerMembership:object, memberRecord:object}}
+ */
+export function promoteSoloToOrg({ workspaceId, name, identity, consultantId } = {}) {
+  if (!workspaceId || typeof workspaceId !== "string") {
+    throw new Error("promoteSoloToOrg: 'workspaceId' requis (celui de l'espace solo d'origine, à conserver)");
+  }
+  if (!identity || !identity.memberId || !identity.publicKeyJwk) {
+    throw new Error("promoteSoloToOrg: 'identity' invalide (newMemberIdentity() attendu)");
+  }
+
+  const ownerMembership = createMembership({
+    workspaceId,
+    memberId: identity.memberId,
+    consultantId,
+    role: "owner",
+  });
+
+  const manifest = {
+    workspaceId,
+    // Nom d'affichage — même convention que `createOrganization` (non
+    // sécuritaire, cf. sa décision 2 correspondante).
+    name: name || null,
+    ownerMemberId: identity.memberId,
+    ownerPublicKeyJwk: identity.publicKeyJwk,
+    ownerConsultantId: consultantId ?? null,
+    createdAt: nowIso(),
+  };
+
+  const memberRecord = {
+    kind: "member",
+    memberId: identity.memberId,
+    publicKeyJwk: identity.publicKeyJwk,
+    membership: ownerMembership,
+    authorization: { genesis: true },
+  };
+
+  return {
+    workspace: { workspaceId, name: name || null, schemaVersion: DEFAULT_SCHEMA_VERSION },
+    manifest,
+    ownerMembership,
+    memberRecord,
+  };
+}
+
+/**
+ * Décide, SANS AUCUNE E/S (le manifeste éventuellement déjà publié est fourni
+ * par l'appelant — `org-folder-store.js#readManifest` — jamais relu ici), si
+ * une promotion solo -> organisation (`promoteSoloToOrg` ci-dessus) peut avoir
+ * lieu sur le dossier/Drive visé. Trois issues, jamais une quatrième
+ * (garantit qu'une seconde promotion du même workspace ne réécrit JAMAIS le
+ * manifeste ni ne crée un second owner — oracle Lot 2) :
+ * - `{kind:"promote"}` — aucun manifeste publié : l'appelant peut construire
+ *   la genèse (`promoteSoloToOrg`) et la publier normalement.
+ * - `{kind:"already-promoted", manifest}` — un manifeste existe déjà et
+ *   correspond EXACTEMENT à CETTE promotion : MÊME `workspaceId` ET MÊME
+ *   owner (memberId ET clé publique identiques à `identity`). C'est le cas
+ *   nominal d'IDEMPOTENCE (contrat Lot 2) : un second appel de « Partager cet
+ *   espace » par la MÊME personne sur un dossier DÉJÀ promu est un NO-OP sûr
+ *   — l'appelant ne publie RIEN (ni `writeManifest`, ni `writeMemberRecord`,
+ *   déjà write-once de toute façon), il rouvre simplement l'organisation
+ *   existante.
+ * - `{kind:"conflict", reason}` — un manifeste existe mais NE correspond PAS
+ *   (autre `workspaceId` : ce dossier porte déjà une AUTRE organisation ; ou
+ *   même `workspaceId` avec un owner différent — ne devrait jamais se
+ *   produire tant que le write-once du manifeste tient, gardé ici en défense
+ *   en profondeur) : refus explicite, AUCUNE écriture, JAMAIS de double
+ *   genèse ni d'écrasement silencieux d'un owner par un autre.
+ * @param {{existingManifest:object|null, workspaceId:string, identity:{memberId:string, publicKeyJwk:object}}} params
+ * @returns {{kind:"promote"}|{kind:"already-promoted", manifest:object}|{kind:"conflict", reason:string}}
+ */
+export function planPromotion({ existingManifest, workspaceId, identity } = {}) {
+  if (!workspaceId || typeof workspaceId !== "string") {
+    throw new Error("planPromotion: 'workspaceId' requis");
+  }
+  if (!identity || !identity.memberId || !identity.publicKeyJwk) {
+    throw new Error("planPromotion: 'identity' invalide (newMemberIdentity() attendu)");
+  }
+  if (!existingManifest) return { kind: "promote" };
+
+  const sameWorkspace = existingManifest.workspaceId === workspaceId;
+  const sameOwner =
+    existingManifest.ownerMemberId === identity.memberId &&
+    deepEqualJson(existingManifest.ownerPublicKeyJwk, identity.publicKeyJwk);
+
+  if (sameWorkspace && sameOwner) {
+    return { kind: "already-promoted", manifest: existingManifest };
+  }
+  return {
+    kind: "conflict",
+    reason: sameWorkspace
+      ? "un manifeste existe déjà pour cet espace avec un propriétaire différent (jamais réécrit — write-once)"
+      : "ce dossier/Drive contient déjà une organisation différente (jamais écrasée par une promotion)",
   };
 }
 
