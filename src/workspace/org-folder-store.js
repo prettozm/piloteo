@@ -145,6 +145,35 @@ export async function writeMemberRecord(adapter, record) {
 // partagé, CLAUDE.md §4).
 // ---------------------------------------------------------------------------
 
+/**
+ * CORRECTIF SÉCURITÉ (contrariant round 3 — « collision non détectée en
+ * Drive », même repro/axe que le round 2 mais transport différent) : le
+ * catch de `"complete-owner"` (`piloteo-org-bridge.mjs#promoteToOrg`)
+ * reconnaissait une collision write-once UNIQUEMENT via le message
+ * `/write-once/i` — exact pour `FolderStorageAdapter`/`InMemoryStorageAdapter`
+ * (§ leur propre message « write-once violé »), mais `GoogleDriveStorageAdapter
+ * #putImmutable` lève `ImmutableConflictError` (`google-drive-adapter.js`),
+ * dont le message dit `IMMUTABLE_CONFLICT` — SANS jamais le mot « write-once ».
+ * Sans cette fonction, une collision RÉELLE sur Drive n'aurait JAMAIS
+ * déclenché la comparaison de contenu (round 2) : `promoteToOrg` aurait
+ * traité toute collision Drive comme une erreur ordinaire — pas un faux
+ * succès, mais pas non plus le diagnostic « owner contesté » actionnable,
+ * ni la republication idempotente d'une collision légitime (ma propre fiche).
+ * Duck-typée à dessein (jamais un `instanceof` qui obligerait ce module,
+ * storage-agnostique, à importer un adapter concret) : reconnaît le message
+ * `write-once` (Folder/InMemory) ET le NOM d'erreur `ImmutableConflictError`
+ * (Drive) — les deux SEULS signaux de « ce slot est déjà occupé » que les
+ * adapters committés produisent réellement.
+ * @param {*} err
+ * @returns {boolean}
+ */
+export function isWriteOnceCollision(err) {
+  if (!err) return false;
+  if (err.name === "ImmutableConflictError") return true;
+  const msg = String(err.message || err);
+  return /write-once/i.test(msg);
+}
+
 /** Sérialisation canonique (clés d'objet triées récursivement, ordre des
  *  tableaux conservé) — même algorithme que `org-runtime.js#canonicalJsonStringify`/
  *  `google-drive-adapter.js#canonicalStringify`, réimplémentée ICI plutôt

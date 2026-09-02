@@ -804,10 +804,40 @@ export async function verifyRevocation(revocation, { registry } = {}) {
 // vérifiées).
 // ---------------------------------------------------------------------------
 
+/**
+ * CORRECTIF SÉCURITÉ (contrariant round 3, repro `attack-p3-critical-deepequal.mjs`,
+ * CASSÉ->TENU — AUCUN attaquant requis) : compare en CONTENU CANONIQUE (clés
+ * d'objet triées récursivement, via `canonicalJsonStringify` ci-dessous —
+ * DÉJÀ utilisée pour la même raison par la déduplication anti-usurpation
+ * round 1, jamais une 2e implémentation qui pourrait diverger), JAMAIS un
+ * `JSON.stringify` brut (sensible à l'ORDRE d'insertion des clés).
+ *
+ * Sur `GoogleDriveStorageAdapter`, `putImmutable` sérialise via une forme
+ * CANONIQUE (clés triées) AVANT écriture (`google-drive-adapter.js
+ * #canonicalStringify`, §9d) — un `publicKeyJwk` RELU depuis Drive a donc
+ * TOUJOURS ses clés triées alphabétiquement, alors que l'export WebCrypto
+ * natif d'une identité LOCALE (`crypto.subtle.exportKey('jwk', ...)`,
+ * `newMemberIdentity()`), jamais repassée par le stockage, garde son ORDRE
+ * NATIF (ex: `key_ops, ext, alg, crv, x, kty` sous Node) — deux
+ * représentations SÉMANTIQUEMENT identiques de LA MÊME clé, dont le
+ * `JSON.stringify` brut diffère pourtant. `deepEqualJson(a,b)` était donc
+ * `false` pour le PROPRE owner légitime dès qu'un manifeste avait transité
+ * par Drive : `planPromotion` (via `sameOwner`) et `genesisMismatchReason`
+ * (fiche genèse) répondaient toutes deux à tort « propriétaire différent »/
+ * « genèse forgée » — un faux conflit PERMANENT (le manifeste est write-once,
+ * l'ordre de ses clés ne change jamais), sans aucune fiche hostile à retirer
+ * (ce n'est pas une intrusion, seulement un bug de comparaison). Corrigé une
+ * fois ICI : `deepEqualJson` est utilisée par `planPromotion` (`sameOwner`)
+ * ET `genesisMismatchReason` (owner de la fiche genèse) — ce correctif
+ * durcit donc aussi la racine de la chaîne de confiance, pas seulement Lot 2.
+ *
+ * Deux objets réellement DIFFÉRENTS restent différents (le contenu, lui, n'a
+ * pas changé) ; deux objets ÉGAUX à l'ordre des clés près deviennent égaux.
+ * `canonicalJsonStringify` gère déjà correctement `null`/primitives/tableaux
+ * (ordre des TABLEAUX conservé — seul l'ordre des CLÉS D'OBJET est ignoré).
+ */
 function deepEqualJson(a, b) {
-  // Comparaison suffisante ici : publicKeyJwk est un objet JSON "plat" issu
-  // d'un seul export WebCrypto (pas de fonctions/cycles/Map/Set à comparer).
-  return JSON.stringify(a) === JSON.stringify(b);
+  return canonicalJsonStringify(a) === canonicalJsonStringify(b);
 }
 
 /** Registre de confiance interne — expose l'interface `getPublicKey` attendue

@@ -98,6 +98,7 @@ import {
   readManifest,
   loadTrust,
   memberRecordAlreadyPublished,
+  isWriteOnceCollision,
 } from "./src/workspace/org-folder-store.js";
 import * as cryptoService from "./src/crypto/crypto-service.js";
 
@@ -416,6 +417,37 @@ async function promoteToOrg({ handle, workspaceId, name, consultantId, identity 
   if (plan.kind === "promote" || plan.kind === "complete-owner") {
     const org = promoteSoloToOrg({ workspaceId, name, identity: id, consultantId });
     if (plan.kind === "promote") {
+      // CORRECTIF défensif (contrariant round 3) : `readManifest` traite TOUT
+      // échec de lecture — y compris un slot manifeste CONTESTÉ sur Drive
+      // (plusieurs candidats divergents/illisibles, `ImmutableConflictError`)
+      // — comme « aucun manifeste » (décision 3, org-folder-store.js,
+      // délibérément conservée telle quelle : la modifier risquerait de
+      // régresser tout appelant qui dépend de « pas de manifeste -> null »,
+      // ex. `loadTrust`). `plan.kind==="promote"` pourrait donc, à tort,
+      // tenter une écriture sur un slot en réalité déjà occupé : PLUTÔT que
+      // de laisser `writeManifest` échouer avec un message confus (une
+      // collision sur un manifeste qu'on croyait absent), on vérifie
+      // EXPLICITEMENT ici, sur un adapter qui expose `getAllCandidates`
+      // (Drive — seul transport où cette contestation physique est possible ;
+      // `FolderStorageAdapter`/write-once garantit qu'aucun candidat ne peut
+      // exister sans que `readManifest` l'ait vu). Un slot occupé fait lever
+      // AVANT toute tentative d'écriture, avec un message qui NOMME le
+      // problème réel — jamais une écriture confuse vouée à l'échec.
+      if (typeof adapter.getAllCandidates === "function") {
+        let contestedManifestCandidates = [];
+        try {
+          contestedManifestCandidates = await adapter.getAllCandidates("workspace", "manifest");
+        } catch {
+          contestedManifestCandidates = [];
+        }
+        if (contestedManifestCandidates.length > 0) {
+          throw new Error(
+            "promoteToOrg: le slot manifeste de ce dossier est occupé (candidats illisibles ou " +
+            "divergents) alors qu'aucun manifeste exploitable n'a pu être lu — vérifiez le dossier " +
+            "partagé (permissions/contenu) avant de réessayer de partager cet espace."
+          );
+        }
+      }
       await writeManifest(adapter, org.manifest);
     }
     try {
@@ -445,13 +477,17 @@ async function promoteToOrg({ handle, workspaceId, name, consultantId, identity 
       //      `throw` inconditionnel ci-dessous pour ce cas).
       if (plan.kind !== "complete-owner") throw err;
       // Ne tenter la distinction (a)/(b) ci-dessus QUE pour une VRAIE
-      // collision write-once (même détection que `writeManifest` ci-dessus,
-      // `/write-once/i`) : toute AUTRE erreur (panne réseau/FS persistante,
+      // collision write-once — `isWriteOnceCollision` (org-folder-store.js,
+      // CORRECTIF round 3) reconnaît les DEUX signaux réels : le message
+      // `write-once` (`FolderStorageAdapter`/`InMemoryStorageAdapter`) ET le
+      // NOM `ImmutableConflictError` (`GoogleDriveStorageAdapter` — dont le
+      // message dit `IMMUTABLE_CONFLICT`, jamais « write-once » : sans ce
+      // correctif, une collision RÉELLE sur Drive n'aurait jamais déclenché
+      // cette distinction). Toute AUTRE erreur (panne réseau/FS persistante,
       // permission refusée, etc. — rien n'a été écrit, aucun tiers en cause)
       // reste une erreur ORDINAIRE, remontée TELLE QUELLE, jamais reformulée
       // en un faux « owner contesté » qui égarerait l'utilisateur.
-      const msg = String((err && err.message) || err);
-      if (!/write-once/i.test(msg)) throw err;
+      if (!isWriteOnceCollision(err)) throw err;
       const mine = await memberRecordAlreadyPublished(adapter, org.memberRecord);
       if (!mine) {
         throw new Error(

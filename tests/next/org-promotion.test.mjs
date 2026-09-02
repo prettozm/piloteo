@@ -41,10 +41,13 @@ import {
   loadTrust,
   memberRecordAlreadyPublished,
   getMemberCandidates,
+  isWriteOnceCollision,
 } from "../../src/workspace/org-folder-store.js";
 import { openOrgEngine } from "../../src/workspace/org-engine.js";
 import { snapshotToSeedEvents, verifyRoundTrip, diffSnapshots, planMigration } from "../../src/integration/migration.js";
 import { createMembership } from "../../src/workspace/memberships.js";
+import { GoogleDriveStorageAdapter, ImmutableConflictError } from "../../src/storage/google-drive-adapter.js";
+import { FakeDrive } from "./helpers/fake-drive.mjs";
 
 const COLLECTIONS = [
   "consultants", "organisations", "affaires", "methodes", "typesTerritoire",
@@ -122,6 +125,20 @@ async function promoteToOrg({ adapter, workspaceId, name, identity, consultantId
   if (plan.kind === "promote" || plan.kind === "complete-owner") {
     const org = promoteSoloToOrg({ workspaceId, name, identity, consultantId });
     if (plan.kind === "promote") {
+      // CORRECTIF défensif round 3 : sur un adapter qui expose
+      // `getAllCandidates` (Drive), un slot manifeste CONTESTÉ (candidats
+      // divergents/illisibles) fait lever `readManifest` -> `null` (décision
+      // 3 d'org-folder-store.js, volontairement conservée) — vérifié ici
+      // AVANT toute tentative d'écriture, pour ne jamais laisser
+      // `writeManifest` échouer avec un message confus sur un slot qu'on
+      // croyait vide.
+      if (typeof adapter.getAllCandidates === "function") {
+        let contested = [];
+        try { contested = await adapter.getAllCandidates("workspace", "manifest"); } catch { contested = []; }
+        if (contested.length > 0) {
+          throw new Error("promoteToOrg: le slot manifeste de ce dossier est occupé (candidats illisibles ou divergents).");
+        }
+      }
       await writeManifest(adapter, org.manifest);
     }
     try {
@@ -136,10 +153,11 @@ async function promoteToOrg({ adapter, workspaceId, name, identity, consultantId
       // silencieux.
       if (plan.kind !== "complete-owner") throw err;
       // Ne tenter la distinction "ma fiche"/"tierce" QUE pour une VRAIE
-      // collision write-once — toute autre erreur (panne persistante, etc.)
-      // reste remontée TELLE QUELLE, jamais reformulée à tort.
-      const msg = String((err && err.message) || err);
-      if (!/write-once/i.test(msg)) throw err;
+      // collision write-once — `isWriteOnceCollision` (CORRECTIF round 3)
+      // reconnaît les DEUX signaux réels : message `write-once`
+      // (Folder/InMemory) ET nom `ImmutableConflictError` (Drive). Toute
+      // autre erreur (panne persistante, etc.) reste remontée TELLE QUELLE.
+      if (!isWriteOnceCollision(err)) throw err;
       const mine = await memberRecordAlreadyPublished(adapter, org.memberRecord);
       if (!mine) {
         throw new Error(
@@ -713,6 +731,217 @@ test("org-folder-store#memberRecordAlreadyPublished : un slot occupé par un TIE
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// 5quater. CORRECTIF CONTRARIANT ROUND 3 — repro `attack-p3-critical-deepequal.mjs`
+//    (CASSÉ->TENU, AUCUN attaquant) : `deepEqualJson` (org-runtime.js) était
+//    `JSON.stringify(a)===JSON.stringify(b)`, sensible à l'ORDRE des clés.
+//    Sur `GoogleDriveStorageAdapter`, `putImmutable` sérialise en forme
+//    CANONIQUE (clés triées) AVANT écriture : un `ownerPublicKeyJwk` RELU
+//    depuis Drive a TOUJOURS ses clés triées, alors que l'export WebCrypto
+//    natif d'une identité LOCALE garde son ordre natif — même clé, JSON brut
+//    différent. `sameOwner` (planPromotion) et `genesisMismatchReason`
+//    répondaient donc à tort "propriétaire différent"/"genèse forgée" pour
+//    le PROPRE owner légitime dès qu'un manifeste avait transité par Drive —
+//    un faux conflit PERMANENT (le manifeste est write-once), sans aucune
+//    fiche hostile à retirer. Ces tests exercent le VRAI `GoogleDriveStorageAdapter`
+//    (avec `FakeDrive`, jamais un mock de la sérialisation) pour le prouver.
+// ---------------------------------------------------------------------------
+
+function makeDriveAdapter(drive, rootFolderId) {
+  return new GoogleDriveStorageAdapter({
+    oauthTokenProvider: async () => "fake-access-token",
+    rootFolderId,
+    fetchImpl: drive.fetch,
+    sleepFn: async () => {},
+  });
+}
+
+test("CORRECTIF ROUND 3 (deepEqualJson canonique) : manifeste écrit puis RELU depuis Drive (clés triées par canonicalStringify) vs identité locale (ordre natif WebCrypto, non trié) -> planPromotion reconnaît le MÊME owner (complete-owner), JAMAIS un faux conflict", async () => {
+  const drive = new FakeDrive();
+  const root = drive.addFolder("Pilotéo - Cabinet Alice (Drive)", null);
+  const adapter = makeDriveAdapter(drive, root);
+  await adapter.connect();
+
+  const identity = await newMemberIdentity();
+  const workspaceId = soloWorkspaceIdFixture();
+
+  const org = promoteSoloToOrg({ workspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" });
+  await writeManifest(adapter, org.manifest); // réussit (write-once) ; writeMemberRecord PAS appelé (panne simulée).
+
+  const manifestAfterFailure = await readManifest(adapter);
+  assert.ok(manifestAfterFailure, "manifeste relu depuis Drive");
+  // Sanity du repro : même clé SÉMANTIQUEMENT, mais sérialisation brute différente.
+  assert.deepEqual(manifestAfterFailure.ownerPublicKeyJwk, identity.publicKeyJwk);
+  assert.notEqual(JSON.stringify(manifestAfterFailure.ownerPublicKeyJwk), JSON.stringify(identity.publicKeyJwk),
+    "la relecture Drive a bien réordonné les clés (canonicalStringify) — condition du bug");
+
+  const ownerAdmitted = await isOwnerAdmitted(adapter, workspaceId, identity);
+  const plan = planPromotion({ existingManifest: manifestAfterFailure, workspaceId, identity, ownerAdmitted });
+  assert.equal(plan.kind, "complete-owner",
+    `le VRAI owner doit être reconnu comme tel (reçu '${plan.kind}'${plan.reason ? ": " + plan.reason : ""})`);
+
+  // Bout-en-bout : le retry via promoteToOrg répare bien le dossier sur Drive.
+  const { engine } = await promoteToOrg({ adapter, workspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" });
+  const trust = await loadTrust(adapter);
+  const ownerMembership = trust.membershipStore.get(workspaceId, identity.memberId);
+  assert.ok(ownerMembership, "owner admis sur Drive après réparation");
+  assert.equal(ownerMembership.role, "owner");
+  const loaded = await engine.load();
+  const commit = await engine.commit({
+    ...loaded.state,
+    consultants: [...loaded.state.consultants, { id: "c-alice", nom: "Alice", trigramme: "ALI", statut: "en poste", admin: true, tempsPartiel: [] }],
+  });
+  assert.equal(commit.ok, true, "l'owner peut écrire dans son workspace Drive après réparation");
+});
+
+test("CORRECTIF ROUND 3 (deepEqualJson canonique) : genesisMismatchReason (buildTrustedMembership) reconnaît aussi la fiche genèse légitime relue depuis Drive (clés triées), jamais 'genèse forgée' à tort", async () => {
+  const drive = new FakeDrive();
+  const root = drive.addFolder("Pilotéo - Cabinet Bob (Drive)", null);
+  const adapter = makeDriveAdapter(drive, root);
+  await adapter.connect();
+
+  const identity = await newMemberIdentity();
+  const workspaceId = soloWorkspaceIdFixture();
+  const org = promoteSoloToOrg({ workspaceId, name: "Cabinet Bob", identity, consultantId: "c-bob" });
+  await writeManifest(adapter, org.manifest);
+  await writeMemberRecord(adapter, org.memberRecord);
+
+  const trust = await loadTrust(adapter);
+  assert.equal(trust.rejected.length, 0, JSON.stringify(trust.rejected));
+  assert.equal(trust.membershipStore.get(workspaceId, identity.memberId).role, "owner");
+});
+
+test("CORRECTIF ROUND 3 (deepEqualJson canonique) : non-régression — un VRAI conflit (owner RÉELLEMENT différent) reste 'conflict' sur Drive (aucune régression de l'anti-usurpation)", async () => {
+  const drive = new FakeDrive();
+  const root = drive.addFolder("Pilotéo - Cabinet Conflict (Drive)", null);
+  const adapter = makeDriveAdapter(drive, root);
+  await adapter.connect();
+
+  const owner = await newMemberIdentity();
+  const attacker = await newMemberIdentity();
+  const workspaceId = soloWorkspaceIdFixture();
+  const org = promoteSoloToOrg({ workspaceId, name: "X", identity: owner, consultantId: null });
+  await writeManifest(adapter, org.manifest);
+
+  const manifest = await readManifest(adapter);
+  const plan = planPromotion({ existingManifest: manifest, workspaceId, identity: attacker, ownerAdmitted: false });
+  assert.equal(plan.kind, "conflict", "un owner RÉELLEMENT différent (clé différente) reste un conflit, jamais confondu avec le round 3");
+  assert.match(plan.reason, /propriétaire différent/);
+});
+
+// ---------------------------------------------------------------------------
+// 5quinquies. CORRECTIF CONTRARIANT ROUND 3 (faille secondaire) — collision
+//    write-once non détectée en Drive : le catch de "complete-owner" ne
+//    reconnaissait la collision QUE via le message `/write-once/i` (Folder),
+//    jamais via `ImmutableConflictError` (Drive, `google-drive-adapter.js`,
+//    dont le message dit `IMMUTABLE_CONFLICT`) — la distinction "ma fiche"/
+//    "tierce hostile" (round 2) ne se déclenchait donc JAMAIS sur Drive.
+//    `isWriteOnceCollision` (org-folder-store.js) corrige ceci ; ces tests
+//    exercent le round 2 EN MODE DRIVE (axes 3/4 auparavant masqués par le
+//    faux conflict du round 3 principal).
+// ---------------------------------------------------------------------------
+
+test("isWriteOnceCollision : reconnaît ImmutableConflictError (Drive) ET le message 'write-once' (Folder/InMemory), rejette une erreur ordinaire", () => {
+  assert.equal(isWriteOnceCollision(new ImmutableConflictError("member", "m-1")), true,
+    "ImmutableConflictError (Drive) reconnue par son NOM, pas son message (qui dit 'IMMUTABLE_CONFLICT', jamais 'write-once')");
+  assert.doesNotMatch(new ImmutableConflictError("member", "m-1").message, /write-once/i,
+    "sanity round 3 : le message Drive ne contient PAS 'write-once' — d'où le besoin de vérifier .name");
+  assert.equal(isWriteOnceCollision(new Error("FolderStorageAdapter.putImmutable: write-once violé — (member, m-1) existe déjà.")), true,
+    "message 'write-once' (Folder/InMemory) toujours reconnu — non-régression");
+  assert.equal(isWriteOnceCollision(new Error("panne réseau ordinaire")), false,
+    "une erreur SANS rapport (panne réseau) n'est jamais confondue avec une collision");
+  assert.equal(isWriteOnceCollision(null), false);
+});
+
+test("CORRECTIF ROUND 3 (collision Drive) : republier ma PROPRE fiche sur Drive est déjà IDEMPOTENT au niveau du storage (GoogleDriveStorageAdapter#putImmutable, contenu canonique identique -> aucune exception) ; memberRecordAlreadyPublished reste correcte que le slot ait ou non collisionné", async () => {
+  // Découverte notable (non-régression documentée) : contrairement à
+  // Folder/InMemory (qui lèvent TOUJOURS sur toute réécriture, même
+  // identique), `GoogleDriveStorageAdapter#putImmutable` est LUI-MÊME
+  // idempotent pour un contenu canonique IDENTIQUE (§9d/putImmutable,
+  // `existingContent === content -> return {id}`, AUCUNE exception) — le
+  // mécanisme round 2 (`isWriteOnceCollision`/`memberRecordAlreadyPublished`)
+  // n'a donc même pas besoin d'intervenir dans CE cas précis sur Drive : le
+  // `try` de `promoteToOrg` réussit directement, sans jamais atteindre le
+  // `catch`. Le test 21 (ci-dessus) prouve que le `catch` intervient bien
+  // quand Drive lève RÉELLEMENT (contenu DIVERGENT, tiers hostile).
+  const drive = new FakeDrive();
+  const root = drive.addFolder("Pilotéo - Drive Collision Mine", null);
+  const adapter = makeDriveAdapter(drive, root);
+  await adapter.connect();
+
+  const identity = await newMemberIdentity();
+  const workspaceId = soloWorkspaceIdFixture();
+  const org = promoteSoloToOrg({ workspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" });
+  await writeManifest(adapter, org.manifest);
+  await writeMemberRecord(adapter, org.memberRecord);
+
+  // Republier EXACTEMENT le même contenu ne lève PAS sur Drive (idempotence
+  // native du transport) — vérifié explicitement pour ne pas supposer à tort
+  // un comportement uniforme entre adapters.
+  await assert.doesNotReject(() => writeMemberRecord(adapter, org.memberRecord));
+
+  assert.equal(await memberRecordAlreadyPublished(adapter, org.memberRecord), true,
+    "memberRecordAlreadyPublished reste correcte (contenu identique reconnu via getAllCandidates, Drive)");
+
+  // Bout-en-bout, via le VRAI chemin `promoteToOrg` (owner déjà admis dès le
+  // départ ici — cas nominal "already-promoted", non-régression) : aucune
+  // exception, engine ouvrable.
+  const { engine, plan } = await promoteToOrg({ adapter, workspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" });
+  assert.equal(plan.kind, "already-promoted");
+  const trust = await loadTrust(adapter);
+  assert.equal(trust.rejected.length, 0, JSON.stringify(trust.rejected));
+  assert.equal(trust.membershipStore.get(workspaceId, identity.memberId).role, "owner");
+  assert.ok(engine, "engine ouvrable");
+});
+
+test("CORRECTIF ROUND 3 (collision Drive) : un TIERS occupe le slot owner sur Drive (ImmutableConflictError, contenu DIVERGENT) -> erreur EXPLICITE distincte, PUIS récupérable après retrait de la fiche hostile", async () => {
+  const drive = new FakeDrive();
+  const root = drive.addFolder("Pilotéo - Drive Collision Hostile", null);
+  const adapter = makeDriveAdapter(drive, root);
+  await adapter.connect();
+
+  const identity = await newMemberIdentity();
+  const attacker = await newMemberIdentity();
+  const workspaceId = soloWorkspaceIdFixture();
+  const org = promoteSoloToOrg({ workspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" });
+  await writeManifest(adapter, org.manifest);
+
+  // Le TIERS (aucune clé privée requise) occupe le slot AVANT le retry légitime.
+  const hostileMembership = createMembership({ workspaceId, memberId: identity.memberId, consultantId: null, role: "owner" });
+  const hostileRecord = {
+    kind: "member", memberId: identity.memberId, publicKeyJwk: attacker.publicKeyJwk,
+    membership: hostileMembership, authorization: { genesis: true },
+  };
+  await writeMemberRecord(adapter, hostileRecord);
+
+  await assert.rejects(
+    () => promoteToOrg({ adapter, workspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" }),
+    (err) => {
+      assert.match(err.message, /tierce|hostile|contest/i);
+      assert.doesNotMatch(err.message, /n'est pas membre/i);
+      return true;
+    },
+    "la collision Drive (ImmutableConflictError) déclenche bien la distinction round 2, jamais un avalage silencieux"
+  );
+
+  // Récupération : retrait de la fiche hostile côté Drive (permissions du
+  // dossier — ici simulé en retirant directement le nœud du FakeDrive, ce
+  // qu'un accès Drive réel permet identiquement).
+  for (const [nodeId, node] of drive.nodes) {
+    if (node.name === `${identity.memberId}.piloteo` && (node.parents || []).length) {
+      drive.nodes.delete(nodeId);
+    }
+  }
+
+  const { engine, plan } = await promoteToOrg({ adapter, workspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" });
+  assert.equal(plan.kind, "complete-owner", "réparation réussie après retrait de la fiche hostile sur Drive");
+  const trust = await loadTrust(adapter);
+  const ownerMembership = trust.membershipStore.get(workspaceId, identity.memberId);
+  assert.ok(ownerMembership, "owner LÉGITIME admis après retrait de la fiche hostile (Drive)");
+  assert.equal(ownerMembership.role, "owner");
+  assert.ok(engine, "engine ouvrable après réparation");
 });
 
 // ---------------------------------------------------------------------------
