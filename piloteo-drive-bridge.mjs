@@ -77,6 +77,17 @@ import { normalizeConfig } from "./src/config/runtime-config.js";
 import { openOrgEngine } from "./src/workspace/org-engine.js";
 import { createOrganization } from "./src/workspace/org-runtime.js";
 import { writeManifest, writeMemberRecord } from "./src/workspace/org-folder-store.js";
+// Lot 5 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : « Partager cet espace »
+// vers Google Drive — promotion EN PLACE d'un workspace solo EXISTANT.
+// `promoteAdapterToOrg` est le cœur ADAPTER-AGNOSTIQUE du Lot 2 (durci par 3
+// rounds contrariant : promotion interrompue/`complete-owner`, collision de
+// slot owner par un tiers, comparaison canonique), factorisé dans
+// `piloteo-org-bridge.mjs` précisément pour être réutilisé ICI SANS dupliquer
+// `planPromotion`/la gestion de collision/la garde manifeste — import ES
+// direct (le module est déjà chargé une seule fois par `index.html`, AVANT
+// celui-ci ; l'import ES est dédupliqué par le loader, aucune double
+// exécution/identité). Voir `promoteDriveOrg` plus bas.
+import { promoteAdapterToOrg } from "./piloteo-org-bridge.mjs";
 
 // ---------------------------------------------------------------------------
 // Gating (docs/next/DRIVE_LIVE_CONTRACT.md §5, storage-factory.js §10) :
@@ -452,6 +463,79 @@ async function openOrgOnAdapter({ adapter, consultantId, identity } = {}) {
 }
 
 /**
+ * PARCOURS_IDENTITE_CONTRACT.md, Lot 5 — cœur de promotion Drive sur un
+ * `GoogleDriveStorageAdapter` DÉJÀ CONSTRUIT — hook de TEST public
+ * (`__promoteOrgOnAdapter`, symétrique de `__createOrgOnAdapter`/
+ * `__openOrgOnAdapter` ci-dessus) ET brique interne de `promoteDriveOrg`
+ * ci-dessous. Délègue INTÉGRALEMENT au cœur ADAPTER-AGNOSTIQUE
+ * `promoteAdapterToOrg` (importé de `piloteo-org-bridge.mjs`, Lot 2 durci par
+ * 3 rounds contrariant) : AUCUNE logique de décision (`planPromotion`) ni de
+ * gestion de collision n'est dupliquée ICI — `complete-owner`, collision de
+ * slot owner par un tiers (erreur explicite récupérable), comparaison
+ * canonique des clés, garde manifeste (`getAllCandidates`) s'appliquent donc
+ * de façon STRICTEMENT IDENTIQUE en Drive qu'en Dossier. Identité PARTAGÉE
+ * (contrat §1 de l'onboarding Drive, décision déjà en vigueur pour
+ * `createOrgOnAdapter`/`openOrgOnAdapter`) : jamais une 2e identité fabriquée
+ * ici.
+ */
+async function promoteOrgOnAdapter({ adapter, workspaceId, name, consultantId, identity } = {}) {
+  if (!adapter) throw new Error("promoteOrgOnAdapter: 'adapter' requis.");
+  const id = identity || (await getSharedIdentity());
+  const result = await promoteAdapterToOrg({ adapter, workspaceId, name, consultantId, identity: id });
+  result.engine.folderName = "Google Drive";
+  return result;
+}
+
+/**
+ * PARCOURS_IDENTITE_CONTRACT.md, Lot 5 — « Partager cet espace » vers Google
+ * Drive : SYMÉTRIQUE de `createDriveOrg` ci-dessous, mais PROMEUT EN PLACE un
+ * workspace SOLO EXISTANT (`workspaceId` FOURNI par l'appelant —
+ * `local-backend.js#activateShareSpaceDrive`, calculé via
+ * `getOrCreateSoloWorkspaceId()` — jamais généré ici) au lieu d'en créer un
+ * nouveau. Réutilise EXACTEMENT le même cœur de promotion que le mode Dossier
+ * (`promoteOrgOnAdapter` ci-dessus -> `promoteAdapterToOrg`,
+ * `piloteo-org-bridge.mjs`) : toute la robustesse du Lot 2 (durcie par 3
+ * rounds contrariant) s'applique donc IDENTIQUE ici, sans la moindre
+ * duplication de `planPromotion`/de la gestion de collision.
+ *
+ * ORDRE OAuth-first (préserve l'activation utilisateur transitoire — même
+ * contrainte, même raisonnement que `createDriveOrg` ci-dessous, cf. son
+ * en-tête) : `oauthTokenProvider()` est le PREMIER `await` de cette fonction,
+ * AVANT `createDriveRootFolder`/toute autre E/S. L'appelant
+ * (`local-backend.js#activateShareSpaceDrive`) appelle LUI AUSSI
+ * `oauthTokenProvider()` en tout premier (AVANT de calculer le workspaceId
+ * solo via IndexedDB) — le second appel fait ICI retombe sur le token déjà en
+ * cache MÉMOIRE, aucune 2e popup (même schéma que `createDriveOrg`/
+ * `activateCreateOrgDrive`).
+ *
+ * Persistance (même choix qu'`createDriveOrg`, pour que le rollback de
+ * l'appelant — `local-backend.js#activateShareSpaceDrive` — puisse réutiliser
+ * TEL QUEL le mécanisme déjà éprouvé d'`activateCreateOrgDrive` : nettoyer
+ * `piloteo_storage_mode`/`piloteo_drive_root_folder_id` si la republication
+ * des événements solo — Point 5, `verifyRoundTrip` — échoue ENSUITE) :
+ * `persistDriveOrgMode(rootFolderId)` est appelée ICI dès la promotion
+ * publiée avec succès (write-once, déjà irréversible côté Drive à ce stade) —
+ * PAS une activation définitive du navigateur (`local-backend.js` ne bascule
+ * son `storageMode` JS/l'affichage qu'APRÈS avoir vérifié le round-trip).
+ * @param {{workspaceId:string, name:string, consultantId?:string, identity?:object}} params
+ * @returns {Promise<{engine:object, adapter:GoogleDriveStorageAdapter, manifest:object, identity:object, alreadyPromoted:boolean, completedOwnerRecord:boolean, rootFolderId:string, webViewLink:string|null}>}
+ */
+async function promoteDriveOrg({ workspaceId, name, consultantId, identity } = {}) {
+  if (!GOOGLE_CLIENT_ID) {
+    throw new Error("promoteDriveOrg: mode Google Drive indisponible (GOOGLE_CLIENT_ID absent de la configuration runtime).");
+  }
+  if (typeof workspaceId !== "string" || workspaceId.length === 0) {
+    throw new Error("promoteDriveOrg: 'workspaceId' requis (identité solo d'origine à conserver).");
+  }
+  await oauthTokenProvider(); // PREMIER await (voir en-tête) — consomme le geste, avant toute autre E/S.
+  const { rootFolderId, webViewLink } = await createDriveRootFolder(name);
+  const adapter = new GoogleDriveStorageAdapter({ oauthTokenProvider, rootFolderId });
+  const result = await promoteOrgOnAdapter({ adapter, workspaceId, name, consultantId, identity });
+  persistDriveOrgMode(rootFolderId);
+  return Object.assign({}, result, { rootFolderId, webViewLink });
+}
+
+/**
  * Crée une organisation sur un dossier Drive FRAÎCHEMENT CRÉÉ (contrat §1) :
  * `oauthTokenProvider()` (déclenche le consentement si besoin, DANS le geste
  * utilisateur qui a appelé cette fonction) → `createDriveRootFolder(name)` →
@@ -560,4 +644,12 @@ window.PiloteoDrive = {
   // FakeDrive), sans OAuth ni appel réseau réel à Google.
   __createOrgOnAdapter: createOrgOnAdapter,
   __openOrgOnAdapter: openOrgOnAdapter,
+
+  // --- Lot 5 (PARCOURS_IDENTITE_CONTRACT.md) : « Partager cet espace » vers
+  // Google Drive (promotion en place, mobile) --------------------------------
+  promoteDriveOrg,
+  // Hook de TEST : symétrique de `__createOrgOnAdapter`/`__openOrgOnAdapter`
+  // — exerce le cœur de promotion directement sur un adaptateur Drive déjà
+  // construit (FakeDrive), sans OAuth ni appel réseau réel à Google.
+  __promoteOrgOnAdapter: promoteOrgOnAdapter,
 };
