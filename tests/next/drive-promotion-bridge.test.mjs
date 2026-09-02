@@ -271,7 +271,10 @@ test("promoteAdapterToOrg (Drive, code RÉEL) : CORRECTIF Lot 2 (slot owner empo
   await assert.rejects(
     () => promoteAdapterToOrg({ adapter, workspaceId, name: "Cabinet Empoisonné", consultantId: "c-alice", identity }),
     (err) => {
-      assert.match(err.message, /tierce|hostile|contest/i);
+      // Message explicite et DISTINCT (améliuration UX : désigne le vrai
+      // problème — une autre identité occupe le slot owner — et l'action :
+      // choisir un dossier vide), jamais confondu avec « n'est pas membre ».
+      assert.match(err.message, /AUTRE identité|dossier VIDE|déjà une organisation/i);
       assert.doesNotMatch(err.message, /n'est pas membre/i);
       return true;
     }

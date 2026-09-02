@@ -502,9 +502,10 @@ export async function promoteAdapterToOrg({ adapter, workspaceId, name, consulta
       const mine = await memberRecordAlreadyPublished(adapter, org.memberRecord);
       if (!mine) {
         throw new Error(
-          "promoteAdapterToOrg: le slot owner de ce dossier est occupé par une fiche tierce/hostile " +
-          "(memberId owner contesté). Retirez cette fiche du dossier partagé (permissions du " +
-          "dossier) avant de réessayer de partager cet espace."
+          "Ce dossier contient déjà une organisation créée avec une AUTRE identité (le fichier " +
+          "« propriétaire » n'est pas le vôtre). Choisissez un dossier VIDE pour partager cet espace, " +
+          "ou videz celui-ci d'abord. (Astuce : si vous aviez déjà tenté un partage ici, supprimez le " +
+          "sous-dossier « members » ou repartez d'un nouveau dossier.)"
         );
       }
       // (a) : collision légitime, déjà publiée — no-op, on continue vers la
