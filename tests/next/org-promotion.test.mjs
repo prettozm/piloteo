@@ -66,22 +66,59 @@ function soloWorkspaceIdFixture() {
 }
 
 /**
- * Réimplémentation FIDÈLE de la séquence prévue pour
- * `piloteo-org-bridge.mjs#promoteToOrg` (Lot 2) : lit le manifeste déjà
- * publié (s'il existe), délègue la DÉCISION à `planPromotion` (pure), et
- * n'écrit QUE si la décision l'autorise. Ne construit/ouvre l'engine QUE si
- * la promotion n'est pas un conflit.
+ * Vérifie que l'owner (`identity`) visé par le manifeste PUBLIÉ sur `adapter`
+ * est RÉELLEMENT admis dans `membershipStore` (rôle owner, statut actif) —
+ * via la chaîne de confiance COMPLÈTE (`loadTrust` = `listGovernance` +
+ * `buildTrustedMembership`), JAMAIS une simple présence de fichier. Réimplémente
+ * FIDÈLEMENT `piloteo-org-bridge.mjs#isOwnerAdmitted` (CORRECTIF contrariant
+ * « promotion interrompue qui brique le dossier à vie »).
+ */
+async function isOwnerAdmitted(adapter, workspaceId, identity) {
+  try {
+    const trust = await loadTrust(adapter);
+    if (trust.manifest.workspaceId !== workspaceId) return false;
+    const membership = trust.membershipStore.get(workspaceId, identity.memberId);
+    return !!(membership && membership.role === "owner" && membership.status === "active");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Réimplémentation FIDÈLE de la séquence CORRIGÉE de
+ * `piloteo-org-bridge.mjs#promoteToOrg` (Lot 2 + correctif contrariant
+ * « promotion interrompue qui brique le dossier à vie ») : lit le manifeste
+ * déjà publié (s'il existe), calcule l'admission RÉELLE de l'owner
+ * (`isOwnerAdmitted`, jamais déduite d'une simple présence de fichier),
+ * délègue la DÉCISION à `planPromotion` (pure), et n'écrit QUE si la
+ * décision l'autorise — `"promote"` publie manifeste + fiche owner,
+ * `"complete-owner"` republie UNIQUEMENT la fiche owner manquante (JAMAIS un
+ * second manifeste), `"already-promoted"` ne publie rien. Ne construit/ouvre
+ * l'engine QUE si la promotion n'est pas un conflit ; `openOrgEngine` sert de
+ * VÉRIFICATION FINALE (il échoue explicitement si l'owner n'est toujours pas
+ * membre) avant de considérer la promotion réussie.
  */
 async function promoteToOrg({ adapter, workspaceId, name, identity, consultantId }) {
   const existingManifest = await readManifest(adapter);
-  const plan = planPromotion({ existingManifest, workspaceId, identity });
+  const ownerAdmitted = existingManifest ? await isOwnerAdmitted(adapter, workspaceId, identity) : false;
+  const plan = planPromotion({ existingManifest, workspaceId, identity, ownerAdmitted });
   if (plan.kind === "conflict") {
     throw new Error(`promoteToOrg: ${plan.reason}`);
   }
-  if (plan.kind === "promote") {
+  if (plan.kind === "promote" || plan.kind === "complete-owner") {
     const org = promoteSoloToOrg({ workspaceId, name, identity, consultantId });
-    await writeManifest(adapter, org.manifest);
-    await writeMemberRecord(adapter, org.memberRecord);
+    if (plan.kind === "promote") {
+      await writeManifest(adapter, org.manifest);
+    }
+    try {
+      await writeMemberRecord(adapter, org.memberRecord);
+    } catch (err) {
+      // "complete-owner" seulement : une collision write-once ici peut être
+      // légitime (fiche déjà publiée par une tentative précédente dont seule
+      // la confirmation réseau avait été perdue) — `openOrgEngine` ci-dessous
+      // reste l'arbitre final, jamais un succès silencieux masqué.
+      if (plan.kind !== "complete-owner") throw err;
+    }
   }
   // plan.kind === "already-promoted" : NO-OP volontaire, rien n'est publié.
   const engine = await openOrgEngine({ adapter, identity, consultantId });
@@ -131,13 +168,31 @@ test("planPromotion : aucun manifeste existant -> 'promote'", async () => {
   assert.equal(plan.kind, "promote");
 });
 
-test("planPromotion : manifeste existant, MÊME workspaceId ET MÊME owner -> 'already-promoted' (idempotence)", async () => {
+test("planPromotion : manifeste existant, MÊME workspaceId ET MÊME owner, owner RÉELLEMENT admis -> 'already-promoted' (idempotence)", async () => {
   const identity = await newMemberIdentity();
   const workspaceId = soloWorkspaceIdFixture();
   const org = promoteSoloToOrg({ workspaceId, name: "X", identity, consultantId: null });
-  const plan = planPromotion({ existingManifest: org.manifest, workspaceId, identity });
+  const plan = planPromotion({ existingManifest: org.manifest, workspaceId, identity, ownerAdmitted: true });
   assert.equal(plan.kind, "already-promoted");
   assert.deepEqual(plan.manifest, org.manifest);
+});
+
+test("planPromotion : CORRECTIF (promotion interrompue) — manifeste existant, MÊME workspaceId/owner, mais owner PAS ADMIS -> 'complete-owner' (JAMAIS un no-op qui masque l'owner manquant)", async () => {
+  const identity = await newMemberIdentity();
+  const workspaceId = soloWorkspaceIdFixture();
+  const org = promoteSoloToOrg({ workspaceId, name: "X", identity, consultantId: null });
+
+  // ownerAdmitted explicitement false : la fiche membre owner n'a jamais été
+  // (ou plus) publiée/admise (ex. panne réseau entre writeManifest et
+  // writeMemberRecord) — jamais confondu avec un dossier déjà fonctionnel.
+  const planExplicit = planPromotion({ existingManifest: org.manifest, workspaceId, identity, ownerAdmitted: false });
+  assert.equal(planExplicit.kind, "complete-owner");
+  assert.deepEqual(planExplicit.manifest, org.manifest);
+
+  // Défaut SÛR : `ownerAdmitted` omis -> traité comme "pas admis" (jamais un
+  // faux "already-promoted" par défaut permissif).
+  const planDefault = planPromotion({ existingManifest: org.manifest, workspaceId, identity });
+  assert.equal(planDefault.kind, "complete-owner");
 });
 
 test("planPromotion : manifeste existant pour un AUTRE workspaceId -> 'conflict' (jamais un no-op silencieux ni une écrasement)", async () => {
@@ -327,6 +382,136 @@ test("écriture directe : un 2e writeManifest sur le MÊME dossier (contournant 
 
     const trust = await loadTrust(adapter);
     assert.equal(trust.manifest.ownerMemberId, identity.memberId, "l'attaquant n'a jamais pris la genèse (write-once)");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 5bis. CORRECTIF CONTRARIANT — repro `attack1-interrupted-promotion.mjs`
+//    (CASSÉ->TENU) : promotion interrompue EXACTEMENT entre `writeManifest`
+//    et `writeMemberRecord` (panne réseau/permission FS révoquée/dossier
+//    synchronisé déconnecté). Avant le correctif, `planPromotion` décidait
+//    "already-promoted" sur la seule PRÉSENCE du manifeste : le retry normal
+//    (même utilisateur, même dossier, réseau revenu) ne republiait JAMAIS la
+//    fiche membre owner manquante -> `buildTrustedMembership`/`membershipStore`
+//    n'admettaient jamais l'owner -> `openOrgSync` levait "n'est pas membre
+//    de ce workspace" À VIE, sans aucun chemin de réparation. Ce test prouve
+//    que le retry RÉPARE désormais le dossier : owner admis, engine
+//    ouvrable, écriture possible, un seul manifeste et une seule fiche
+//    membre au total (jamais un doublon), workspaceId préservé.
+// ---------------------------------------------------------------------------
+
+test("CORRECTIF (promotion interrompue) : panne EXACTEMENT entre writeManifest et writeMemberRecord, puis retry normal -> le dossier est RÉPARÉ (owner admis, engine ouvrable, écriture possible)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piloteo-org-promotion-interrupted-"));
+  try {
+    const adapter = new FolderStorageAdapter({ fsPort: new NodeFsPort(root), label: "promotion-interrupted-test" });
+    await adapter.connect();
+    const identity = await newMemberIdentity();
+    const soloWorkspaceId = soloWorkspaceIdFixture();
+
+    // --- Tentative 1 : panne simulée EXACTEMENT entre writeManifest (réussit,
+    // write-once irréversible) et writeMemberRecord (échoue) -------------
+    const realPutImmutable = adapter.putImmutable.bind(adapter);
+    adapter.putImmutable = (kind, id, blob) => {
+      if (kind === "member") return Promise.reject(new Error("panne réseau simulée (coupure pendant la republication de la fiche owner)"));
+      return realPutImmutable(kind, id, blob);
+    };
+
+    await assert.rejects(
+      () => promoteToOrg({ adapter, workspaceId: soloWorkspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" }),
+      /panne réseau simulée/,
+      "la tentative 1 échoue bien (writeMemberRecord a levé)"
+    );
+
+    const manifestAfterFailure = await readManifest(adapter);
+    assert.ok(manifestAfterFailure, "le manifeste EST publié malgré l'échec (write-once, écrit AVANT la panne)");
+    assert.equal(manifestAfterFailure.workspaceId, soloWorkspaceId);
+    assert.equal(manifestAfterFailure.ownerMemberId, identity.memberId);
+
+    // Confirme l'état CASSÉ intermédiaire (avant réparation) : owner PAS admis.
+    const trustAfterFailure = await loadTrust(adapter);
+    assert.equal(trustAfterFailure.membershipStore.get(soloWorkspaceId, identity.memberId), null,
+      "juste après la panne, l'owner n'est PAS (encore) admis — c'est exactement ce que le correctif doit réparer");
+
+    // --- Réseau revenu : retry NORMAL (même utilisateur, même dossier) ---
+    adapter.putImmutable = realPutImmutable;
+
+    const { engine, plan } = await promoteToOrg({
+      adapter, workspaceId: soloWorkspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice",
+    });
+    assert.equal(plan.kind, "complete-owner", "le retry détecte l'owner manquant et republie SEULEMENT sa fiche");
+    assert.equal(engine.manifest.workspaceId, soloWorkspaceId, "workspaceId préservé à travers la réparation");
+
+    // Owner RÉELLEMENT admis + engine ouvrable + écriture possible.
+    const trustAfterRepair = await loadTrust(adapter);
+    assert.equal(trustAfterRepair.rejected.length, 0, JSON.stringify(trustAfterRepair.rejected));
+    const ownerMembership = trustAfterRepair.membershipStore.get(soloWorkspaceId, identity.memberId);
+    assert.ok(ownerMembership, "l'owner est maintenant admis dans membershipStore");
+    assert.equal(ownerMembership.role, "owner");
+    assert.equal(ownerMembership.status, "active");
+
+    const loaded = await engine.load();
+    const commit = await engine.commit({
+      ...loaded.state,
+      consultants: [...loaded.state.consultants, { id: "c-alice", nom: "Alice", trigramme: "ALI", statut: "en poste", admin: true, tempsPartiel: [] }],
+    });
+    assert.equal(commit.ok, true, "l'owner réparé peut désormais ÉCRIRE dans son propre workspace");
+    assert.equal(commit.applied.count, 1);
+
+    // --- Un 3e appel (déjà réparé) est un NO-OP already-promoted, jamais une
+    // 2e réparation ni une 2e écriture. --------------------------------
+    const third = await promoteToOrg({ adapter, workspaceId: soloWorkspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" });
+    assert.equal(third.plan.kind, "already-promoted", "une fois réparé, un appel supplémentaire est un NO-OP sûr");
+
+    // Exactement UN manifeste et UNE fiche membre publiés au total (jamais un
+    // doublon/second owner à travers les 3 appels).
+    const { changes } = await adapter.listChanges();
+    assert.equal(changes.filter((c) => c.kind === "workspace").length, 1, "UN SEUL manifeste publié au total");
+    const memberBlobs = [];
+    for (const c of changes) { if (c.kind === "member") memberBlobs.push(await adapter.get("member", c.id)); }
+    assert.equal(memberBlobs.length, 1, "UNE SEULE fiche membre publiée au total (jamais un doublon)");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CORRECTIF (promotion interrompue) : la collision write-once pendant 'complete-owner' n'est PAS masquée si le contenu existant diverge (jamais un succès silencieux sur un memberId contesté)", async () => {
+  // Défense en profondeur : si `writeMemberRecord` échoue pour une AUTRE
+  // raison qu'une republication légitime (ex: une fiche DIVERGENTE existe
+  // déjà sous ce memberId — cas qui ne devrait jamais se produire via cette
+  // API, mais gardé en ceinture-bretelles), `openOrgEngine` reste l'arbitre
+  // final : si l'owner n'est toujours pas admis après la tentative de
+  // réparation, l'erreur remonte — jamais un succès annoncé à tort.
+  const root = await mkdtemp(join(tmpdir(), "piloteo-org-promotion-interrupted-divergent-"));
+  try {
+    const adapter = new FolderStorageAdapter({ fsPort: new NodeFsPort(root), label: "promotion-interrupted-divergent-test" });
+    await adapter.connect();
+    const identity = await newMemberIdentity();
+    const soloWorkspaceId = soloWorkspaceIdFixture();
+
+    // Manifeste seul publié (simule la panne), puis un writeMemberRecord qui
+    // échoue TOUJOURS (panne persistante, pas juste "une fois") : la
+    // réparation doit rester en échec explicite, jamais un faux succès.
+    const org = promoteSoloToOrg({ workspaceId: soloWorkspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" });
+    await writeManifest(adapter, org.manifest);
+
+    const realPutImmutable = adapter.putImmutable.bind(adapter);
+    adapter.putImmutable = (kind, id, blob) => {
+      if (kind === "member") return Promise.reject(new Error("panne réseau PERSISTANTE (jamais résolue)"));
+      return realPutImmutable(kind, id, blob);
+    };
+
+    await assert.rejects(
+      () => promoteToOrg({ adapter, workspaceId: soloWorkspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" }),
+      /panne réseau PERSISTANTE|n'est pas membre/,
+      "une panne persistante (jamais résolue) reste un échec EXPLICITE, jamais un succès silencieux"
+    );
+
+    adapter.putImmutable = realPutImmutable;
+    const trust = await loadTrust(adapter);
+    assert.equal(trust.membershipStore.get(soloWorkspaceId, identity.memberId), null,
+      "l'owner reste non admis tant que sa fiche n'a pas été RÉELLEMENT publiée");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

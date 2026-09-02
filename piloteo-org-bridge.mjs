@@ -91,7 +91,7 @@ import {
   acceptInvitation,
   createRevocation,
 } from "./src/workspace/org-runtime.js";
-import { writeManifest, writeMemberRecord, writeRevocation, readManifest } from "./src/workspace/org-folder-store.js";
+import { writeManifest, writeMemberRecord, writeRevocation, readManifest, loadTrust } from "./src/workspace/org-folder-store.js";
 import * as cryptoService from "./src/crypto/crypto-service.js";
 
 // ---------------------------------------------------------------------------
@@ -302,6 +302,32 @@ async function activateOrgStorageMode(handle) {
 }
 
 /**
+ * CORRECTIF SÉCURITÉ (contrariant, « promotion interrompue qui brique le
+ * dossier à vie », repro `attack1-interrupted-promotion.mjs`) — vérifie que
+ * l'owner (`identity`) visé par `manifest` est RÉELLEMENT admis dans
+ * `membershipStore` (rôle `owner`, statut `active`), via la chaîne de
+ * confiance COMPLÈTE (`org-folder-store.js#loadTrust`, qui compose
+ * `listGovernance` + `buildTrustedMembership` — aucune logique de confiance
+ * dupliquée ici). PAS une simple présence de fichier : `buildTrustedMembership`
+ * doit avoir effectivement admis la fiche genèse (elle peut être absente,
+ * ou publiée mais invalide — `genesisMismatchReason`). Ne lève jamais :
+ * `false` sur toute erreur (dossier illisible, pas encore de gouvernance),
+ * ce qui est le choix SÛR ici (pousse vers `"complete-owner"`/republication,
+ * jamais vers un faux `"already-promoted"`).
+ * @returns {Promise<boolean>}
+ */
+async function isOwnerAdmitted(adapter, workspaceId, identity) {
+  try {
+    const trust = await loadTrust(adapter);
+    if (trust.manifest.workspaceId !== workspaceId) return false;
+    const membership = trust.membershipStore.get(workspaceId, identity.memberId);
+    return !!(membership && membership.role === "owner" && membership.status === "active");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * PARCOURS_IDENTITE_CONTRACT.md, Lot 2 — « Partager cet espace » : promeut EN
  * PLACE un workspace SOLO existant (`workspaceId` fourni par l'appelant —
  * `local-backend.js`, identité solo FIXE de cet appareil) sur `handle`
@@ -311,18 +337,40 @@ async function activateOrgStorageMode(handle) {
  *    (`promoteSoloToOrg`, org-runtime.js) — « W-001 Local -> W-001 Shared »,
  *    jamais un nouveau workspace/export déguisé.
  * 2. Un manifeste PEUT déjà exister sur ce dossier (reprise après un premier
- *    appel réussi, ou après une bascule retournée en solo) : `planPromotion`
- *    (org-runtime.js, pur) décide AVANT toute écriture —
- *    `{kind:"promote"}` publie normalement, `{kind:"already-promoted"}` ne
- *    publie RIEN (no-op sûr, idempotent : jamais un second manifeste ni un
- *    second owner) et `{kind:"conflict"}` fait lever explicitement, SANS
- *    écrire quoi que ce soit (dossier étranger, ou owner différent).
+ *    appel réussi, une promotion INTERROMPUE en cours de route, ou après une
+ *    bascule retournée en solo) : `planPromotion` (org-runtime.js, pur)
+ *    décide AVANT toute écriture, à partir du manifeste ET de l'admission
+ *    RÉELLE de l'owner (`isOwnerAdmitted` ci-dessus, jamais une simple
+ *    présence de fichier — CORRECTIF ci-dessus) :
+ *    - `{kind:"promote"}` : aucun manifeste -> publie manifeste + fiche owner.
+ *    - `{kind:"complete-owner"}` : manifeste présent (même workspace/owner)
+ *      mais owner PAS ADMIS (ex: `writeMemberRecord` avait échoué lors d'un
+ *      appel précédent, APRÈS que `writeManifest`, lui, avait réussi —
+ *      write-once, irréversible) -> republie UNIQUEMENT la fiche owner
+ *      (JAMAIS un second manifeste) : la fiche est déterministe
+ *      (`promoteSoloToOrg` est pure, mêmes entrées -> même sortie), la
+ *      republier répare le dossier sans jamais le corrompre.
+ *    - `{kind:"already-promoted"}` : manifeste présent, MÊME owner, ET déjà
+ *      RÉELLEMENT admis -> NO-OP sûr (rien n'est publié).
+ *    - `{kind:"conflict"}` : dossier étranger ou owner différent -> lève
+ *      AVANT toute écriture (inchangé, anti-usurpation non affectée par ce
+ *      correctif : `ownerAdmitted` n'intervient QUE quand workspace/owner
+ *      correspondent déjà).
+ * Ordre D'ÉCRITURE robuste et volontairement figé : `writeManifest` est
+ * TOUJOURS la toute première écriture d'une genèse (jamais l'inverse — une
+ * fiche membre sans manifeste n'a aucun sens, `writeMemberRecord` exige une
+ * genèse déjà ancrée) ; une réparation ne fait donc QUE rejouer la SECONDE
+ * moitié (`writeMemberRecord`), jamais retoucher au manifeste déjà publié.
+ * Après (re)publication, `openOrgEngine` (qui échoue explicitement si
+ * l'owner n'est toujours pas membre) sert de VÉRIFICATION FINALE avant de
+ * considérer la promotion réussie — jamais un succès annoncé sans un engine
+ * réellement ouvrable.
  * Ne bascule PAS `piloteo_storage_mode` (même report qu'`createOrg`, voir sa
  * décision : `local-backend.js` doit d'abord republier les événements solo
  * existants — Point 5, `piloteo-migration-bridge.mjs` — et vérifier le
  * round-trip AVANT `activateOrgStorageMode()`).
  * @param {{handle:*, workspaceId:string, name:string, consultantId?:string, identity?:object}} params
- * @returns {Promise<{engine:object, adapter:object, manifest:object, alreadyPromoted:boolean}>}
+ * @returns {Promise<{engine:object, adapter:object, manifest:object, alreadyPromoted:boolean, completedOwnerRecord:boolean}>}
  */
 async function promoteToOrg({ handle, workspaceId, name, consultantId, identity } = {}) {
   if (!handle) throw new Error("promoteToOrg: 'handle' requis (sélecteur de dossier déjà effectué).");
@@ -332,19 +380,45 @@ async function promoteToOrg({ handle, workspaceId, name, consultantId, identity 
   const id = identity || (await getOrCreateIdentity());
 
   const existingManifest = await readManifest(adapter);
-  const plan = planPromotion({ existingManifest, workspaceId, identity: id });
+  // `isOwnerAdmitted` n'a de sens (et n'a besoin d'être calculé) QUE si un
+  // manifeste existe déjà — sur un dossier vierge, `ownerAdmitted` reste à
+  // son défaut sûr (`false`, ignoré de toute façon par `planPromotion` quand
+  // `existingManifest` est `null`).
+  const ownerAdmitted = existingManifest ? await isOwnerAdmitted(adapter, workspaceId, id) : false;
+  const plan = planPromotion({ existingManifest, workspaceId, identity: id, ownerAdmitted });
   if (plan.kind === "conflict") {
     throw new Error(`promoteToOrg: ${plan.reason}`);
   }
-  if (plan.kind === "promote") {
+  if (plan.kind === "promote" || plan.kind === "complete-owner") {
     const org = promoteSoloToOrg({ workspaceId, name, identity: id, consultantId });
-    await writeManifest(adapter, org.manifest);
-    await writeMemberRecord(adapter, org.memberRecord);
+    if (plan.kind === "promote") {
+      await writeManifest(adapter, org.manifest);
+    }
+    try {
+      await writeMemberRecord(adapter, org.memberRecord);
+    } catch (err) {
+      // "complete-owner" seulement : une collision write-once ICI peut être
+      // legitime (la fiche a en réalité déjà été publiée par une tentative
+      // précédente dont seule la CONFIRMATION réseau avait été perdue — cas
+      // exactement symétrique de celui que ce correctif répare). On ne
+      // masque JAMAIS une vraie erreur : `openOrgEngine` juste après reste
+      // l'arbitre final (si l'owner n'est toujours pas admis, il lève, et
+      // CETTE erreur — pas celle-ci — remonte). Pour "promote" (fiche fraîche
+      // sur un manifeste tout juste écrit PAR CET APPEL), une collision est
+      // en revanche TOUJOURS anormale : ne jamais l'avaler.
+      if (plan.kind !== "complete-owner") throw err;
+    }
   }
   // plan.kind === "already-promoted" : rien à publier (write-once déjà en
-  // place, même owner) — on rouvre simplement l'organisation existante.
+  // place, owner déjà admis) — on rouvre simplement l'organisation existante.
   const engine = await openOrgEngine({ adapter, identity: id, consultantId });
-  return { engine: withFolderName(engine, handle), adapter, manifest: engine.manifest, alreadyPromoted: plan.kind === "already-promoted" };
+  return {
+    engine: withFolderName(engine, handle),
+    adapter,
+    manifest: engine.manifest,
+    alreadyPromoted: plan.kind === "already-promoted",
+    completedOwnerRecord: plan.kind === "complete-owner",
+  };
 }
 
 /**

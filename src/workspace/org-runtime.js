@@ -256,32 +256,76 @@ export function promoteSoloToOrg({ workspaceId, name, identity, consultantId } =
 }
 
 /**
- * Décide, SANS AUCUNE E/S (le manifeste éventuellement déjà publié est fourni
- * par l'appelant — `org-folder-store.js#readManifest` — jamais relu ici), si
- * une promotion solo -> organisation (`promoteSoloToOrg` ci-dessus) peut avoir
- * lieu sur le dossier/Drive visé. Trois issues, jamais une quatrième
- * (garantit qu'une seconde promotion du même workspace ne réécrit JAMAIS le
- * manifeste ni ne crée un second owner — oracle Lot 2) :
+ * Décide, SANS AUCUNE E/S (le manifeste éventuellement déjà publié ET l'état
+ * d'admission RÉEL de l'owner sont fournis par l'appelant — `promoteToOrg`,
+ * `piloteo-org-bridge.mjs`, via `readManifest`/`buildTrustedMembership` —
+ * jamais relus ici), si une promotion solo -> organisation
+ * (`promoteSoloToOrg` ci-dessus) peut avoir lieu sur le dossier/Drive visé.
+ *
+ * CORRECTIF SÉCURITÉ (attaque contrariant « promotion interrompue qui brique
+ * le dossier à vie », repro `attack1-interrupted-promotion.mjs`, CASSÉ→TENU) —
+ * avant ce correctif, une SEULE écriture manquante après un manifeste déjà
+ * publié (panne réseau/permission FS révoquée EXACTEMENT entre
+ * `writeManifest` et `writeMemberRecord`, cf. `promoteToOrg`) faisait
+ * décider `"already-promoted"` sur la seule PRÉSENCE du manifeste — un NO-OP
+ * qui ne republie JAMAIS la fiche membre owner manquante. Or
+ * `buildTrustedMembership`/`membershipStore` n'admettent l'owner QUE si sa
+ * fiche `kind:"member"` (genèse) est effectivement publiée ET valide (le
+ * manifeste seul ancre la clé/le rôle pour VÉRIFIER les fiches des AUTRES
+ * membres, cf. `buildTrustedMembership` décision « racine de confiance
+ * préexistante » — il ne suffit jamais, à lui seul, à admettre l'owner dans
+ * `membershipStore`/`openOrgSync`) : le dossier restait bloqué à vie
+ * (`openOrgSync` : « n'est pas membre de ce workspace »), sans AUCUN chemin
+ * de réparation — un second clic « Partager cet espace » (même utilisateur,
+ * même dossier) ne réparait rien. Ce correctif ajoute un paramètre
+ * `ownerAdmitted` (booléen, calculé par l'appelant via
+ * `buildTrustedMembership`/`org-folder-store.js#loadTrust` — PAS déduit
+ * d'une simple présence de fichier) : la décision `"already-promoted"`
+ * EXIGE désormais que l'owner soit RÉELLEMENT admis, jamais seulement que le
+ * manifeste existe.
+ *
+ * QUATRE issues, jamais une cinquième (garantit qu'une seconde promotion du
+ * même workspace ne réécrit JAMAIS le manifeste ni ne crée un second owner —
+ * oracle Lot 2 — TOUT EN restant réparable après une panne partielle) :
  * - `{kind:"promote"}` — aucun manifeste publié : l'appelant peut construire
- *   la genèse (`promoteSoloToOrg`) et la publier normalement.
- * - `{kind:"already-promoted", manifest}` — un manifeste existe déjà et
- *   correspond EXACTEMENT à CETTE promotion : MÊME `workspaceId` ET MÊME
- *   owner (memberId ET clé publique identiques à `identity`). C'est le cas
- *   nominal d'IDEMPOTENCE (contrat Lot 2) : un second appel de « Partager cet
- *   espace » par la MÊME personne sur un dossier DÉJÀ promu est un NO-OP sûr
- *   — l'appelant ne publie RIEN (ni `writeManifest`, ni `writeMemberRecord`,
- *   déjà write-once de toute façon), il rouvre simplement l'organisation
- *   existante.
+ *   la genèse (`promoteSoloToOrg`) et publier manifeste + fiche owner.
+ * - `{kind:"complete-owner", manifest}` — un manifeste existe déjà, MÊME
+ *   `workspaceId` ET MÊME owner (memberId + clé publique), mais l'owner
+ *   N'EST PAS (encore/plus) admis par `buildTrustedMembership` — cas d'une
+ *   promotion interrompue APRÈS `writeManifest` mais AVANT (ou pendant)
+ *   `writeMemberRecord`. L'appelant republie UNIQUEMENT la fiche membre
+ *   owner (`writeMemberRecord`), JAMAIS un second manifeste (`writeManifest`
+ *   n'est PAS rappelée — le manifeste, déjà write-once et déjà correct pour
+ *   CET owner/CE workspace, n'a besoin d'aucune réécriture). La fiche owner
+ *   étant déterministe (mêmes `workspaceId`/`identity`/`consultantId` ->
+ *   même contenu, `promoteSoloToOrg` est pure), la républier est sûre.
+ * - `{kind:"already-promoted", manifest}` — un manifeste existe déjà,
+ *   correspond EXACTEMENT à CETTE promotion (même `workspaceId`, même
+ *   owner), ET l'owner est RÉELLEMENT admis (`ownerAdmitted:true`). C'est le
+ *   cas nominal d'IDEMPOTENCE (contrat Lot 2) : un second appel de
+ *   « Partager cet espace » par la MÊME personne sur un dossier DÉJÀ promu
+ *   ET DÉJÀ FONCTIONNEL est un NO-OP sûr — l'appelant ne publie RIEN,
+ *   il rouvre simplement l'organisation existante.
  * - `{kind:"conflict", reason}` — un manifeste existe mais NE correspond PAS
  *   (autre `workspaceId` : ce dossier porte déjà une AUTRE organisation ; ou
  *   même `workspaceId` avec un owner différent — ne devrait jamais se
  *   produire tant que le write-once du manifeste tient, gardé ici en défense
  *   en profondeur) : refus explicite, AUCUNE écriture, JAMAIS de double
- *   genèse ni d'écrasement silencieux d'un owner par un autre.
- * @param {{existingManifest:object|null, workspaceId:string, identity:{memberId:string, publicKeyJwk:object}}} params
- * @returns {{kind:"promote"}|{kind:"already-promoted", manifest:object}|{kind:"conflict", reason:string}}
+ *   genèse ni d'écrasement silencieux d'un owner par un autre. INCHANGÉ par
+ *   ce correctif : `ownerAdmitted` n'intervient QUE quand `workspaceId`/owner
+ *   correspondent déjà — un conflit reste un conflit AVANT toute écriture,
+ *   qu'il y ait ou non une fiche owner admise pour un AUTRE `(workspaceId,
+ *   owner)` (aucune régression sur l'anti-usurpation).
+ * @param {{existingManifest:object|null, workspaceId:string, identity:{memberId:string, publicKeyJwk:object}, ownerAdmitted?:boolean}} params
+ *   `ownerAdmitted` : requis dès que `existingManifest` correspond à CETTE
+ *   promotion (même workspace/owner) — DOIT venir d'une vérification RÉELLE
+ *   (`buildTrustedMembership`/`loadTrust`), jamais d'une simple présence de
+ *   fichier. Absent/`false` par défaut (choix sûr : au pire une republication
+ *   de fiche owner redondante mais idempotente, JAMAIS un no-op qui masque
+ *   un owner non admis).
+ * @returns {{kind:"promote"}|{kind:"complete-owner", manifest:object}|{kind:"already-promoted", manifest:object}|{kind:"conflict", reason:string}}
  */
-export function planPromotion({ existingManifest, workspaceId, identity } = {}) {
+export function planPromotion({ existingManifest, workspaceId, identity, ownerAdmitted = false } = {}) {
   if (!workspaceId || typeof workspaceId !== "string") {
     throw new Error("planPromotion: 'workspaceId' requis");
   }
@@ -296,7 +340,9 @@ export function planPromotion({ existingManifest, workspaceId, identity } = {}) 
     deepEqualJson(existingManifest.ownerPublicKeyJwk, identity.publicKeyJwk);
 
   if (sameWorkspace && sameOwner) {
-    return { kind: "already-promoted", manifest: existingManifest };
+    return ownerAdmitted === true
+      ? { kind: "already-promoted", manifest: existingManifest }
+      : { kind: "complete-owner", manifest: existingManifest };
   }
   return {
     kind: "conflict",
