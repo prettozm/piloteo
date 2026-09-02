@@ -929,6 +929,37 @@
     _driveOrgReady = Promise.resolve();
   }
 
+  // Réinitialisation « appareil » : efface TOUTES les données locales de Pilotéo
+  // DANS CE NAVIGATEUR (données solo, identité de membre, dossiers/Drive
+  // mémorisés). N'affecte JAMAIS les données déjà écrites dans un dossier
+  // partagé ou sur Google Drive (elles sont seulement OUBLIÉES ici) — c'est
+  // cohérent avec le modèle « le stockage détermine l'accès physique »
+  // (PARCOURS_IDENTITE_CONTRACT.md). Best-effort, jamais bloquant : un store
+  // absent/verrouillé n'empêche pas les autres d'être nettoyés.
+  var LOCAL_IDB_NAMES = ["piloteo-solo", "piloteo-org-identity", "piloteo-fsaccess"];
+  function resetAllLocalData() {
+    try { deactivateOrg(); } catch (e) {}
+    // localStorage : toutes les clés Pilotéo (préfixe piloteo/PILOTEO).
+    try {
+      var toRemove = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && /piloteo/i.test(k)) toRemove.push(k);
+      }
+      toRemove.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) {} });
+    } catch (e) {}
+    // IndexedDB : supprimer les bases connues.
+    function delDb(name) {
+      return new Promise(function (resolve) {
+        try {
+          var req = indexedDB.deleteDatabase(name);
+          req.onsuccess = req.onerror = req.onblocked = function () { resolve(); };
+        } catch (e) { resolve(); }
+      });
+    }
+    return Promise.all(LOCAL_IDB_NAMES.map(delDb));
+  }
+
   // Re-demande la permission sur le dossier de l'organisation mémorisée.
   // À appeler depuis un VRAI geste utilisateur (clic), comme
   // `retryFolderPermission`.
@@ -995,7 +1026,7 @@
   var _migrationStepEl = null;
   function ensureMigrationStepEl() {
     if (_migrationStepEl && document.body && document.body.contains(_migrationStepEl)) return _migrationStepEl;
-    var ov = el("div", "position:fixed;inset:0;z-index:2147483005;background:rgba(8,14,18,.65);" +
+    var ov = el("div", "position:fixed;inset:0;z-index:2147483012;background:rgba(8,14,18,.65);" +
       "display:flex;align-items:center;justify-content:center;padding:20px;" +
       "font:400 14px/1.45 system-ui,-apple-system,sans-serif;");
     ov.id = "piloteo-migration-step";
@@ -1258,7 +1289,7 @@
       var bar = document.createElement("div");
       bar.id = "piloteo-folder-banner";
       bar.setAttribute("role", "alert");
-      bar.setAttribute("style", "position:fixed;left:0;right:0;top:0;z-index:2147483003;" +
+      bar.setAttribute("style", "position:fixed;left:0;right:0;top:0;z-index:2147483013;" +
         "background:#8a6d1f;color:#fff;font:500 13px/1.4 system-ui,-apple-system,sans-serif;" +
         "padding:10px 14px;display:flex;gap:12px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.25);");
       var txt = document.createElement("span");
@@ -1443,10 +1474,18 @@
         // `activateShareSpaceDrive` consomme elle-même ce geste EN TOUT
         // PREMIER (voir son en-tête).
         var activation = useDrive ? activateShareSpaceDrive(name) : activateShareSpace(name);
+        // Fermer CE dialogue tout de suite : sinon l'étape de migration
+        // (« Continuer », plein écran) et la barre de progression s'affichent
+        // DERRIÈRE lui et l'utilisateur reste bloqué sur « Sélection du
+        // dossier… »/« Connexion à Google… ». L'activation a déjà été lancée
+        // (ci-dessus, SYNCHRONE dans le clic — l'OAuth garde son geste) ; la
+        // popup Google / le sélecteur de dossier / l'étape de migration
+        // prennent le relais visuel. Les erreurs passent par `alert`.
+        close();
         activation.then(function () {
           alert("Espace partagé. L'application va se recharger.");
           location.reload();
-        }).catch(function (e) { msg.style.color = "#8a3b2f"; msg.textContent = "Échec : " + ((e && e.message) || e); });
+        }).catch(function (e) { alert("Partage impossible : " + ((e && e.message) || e)); });
       }, true));
       box.appendChild(actions);
       box.appendChild(msg);
@@ -1474,10 +1513,12 @@
         if (!code) { msg.style.color = "#8a3b2f"; msg.textContent = "Collez le code d'invitation reçu."; return; }
         msg.style.color = "#5b6b76";
         msg.textContent = "Sélection du dossier…";
-        activateJoinOrg(code).then(function () {
+        var joining = activateJoinOrg(code);
+        close(); // même raison que « Partager » : ne pas masquer le sélecteur / une éventuelle étape.
+        joining.then(function () {
           alert("Vous avez rejoint l'organisation. L'application va se recharger.");
           location.reload();
-        }).catch(function (e) { msg.style.color = "#8a3b2f"; msg.textContent = "Échec : " + ((e && e.message) || e); });
+        }).catch(function (e) { alert("Impossible de rejoindre : " + ((e && e.message) || e)); });
       }, true));
       box.appendChild(actions);
       box.appendChild(msg);
@@ -2464,6 +2505,29 @@
           "possible). « Changer d'identité » l'oublie définitivement sur cet appareil."));
       }
 
+      // Section — Réinitialiser cet appareil (destructif, local seulement).
+      body.appendChild(el("div", "height:1px;background:#f1f4f6;margin:14px 0;"));
+      body.appendChild(sectionTitle("Réinitialiser cet appareil"));
+      body.appendChild(el("p", "margin:2px 0 8px;font-size:12.5px;color:#5b6b76;",
+        "Efface toutes les données de Pilotéo dans CE navigateur (données locales, identité de membre, " +
+        "dossiers/Drive mémorisés) et repart de l'écran d'accueil. Les données déjà écrites dans un dossier " +
+        "partagé ou sur Google Drive ne sont PAS supprimées — elles sont seulement oubliées ici. Exportez " +
+        "d'abord une sauvegarde si besoin."));
+      var resetRow = el("div", "display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;");
+      var resetBtn = mkBtn("Réinitialiser…", function () {
+        if (!window.confirm("Réinitialiser Pilotéo sur cet appareil ?\n\n" +
+          "Toutes les données locales, votre identité de membre et les dossiers/Drive mémorisés seront " +
+          "effacés de CE navigateur. Les données déjà écrites dans un dossier partagé ou sur Drive ne sont " +
+          "pas supprimées.\n\nCette action est irréversible ici. Continuer ?")) return;
+        resetBtn.disabled = true; resetBtn.textContent = "Réinitialisation…";
+        resetAllLocalData().then(function () {
+          alert("Pilotéo a été réinitialisé sur cet appareil. L'application va se recharger.");
+          location.reload();
+        });
+      });
+      resetRow.appendChild(resetBtn);
+      body.appendChild(resetRow);
+
       function close() { var p = document.getElementById("piloteo-reglages"); if (p) p.remove(); }
     }
   }
@@ -2686,6 +2750,9 @@
     // panneau Réglages — permet de prouver le refus explicite d'un backup à
     // identités dupliquées.
     _importBackupText: importBackupText,
+    // Réinitialisation « appareil » (Réglages) : efface les données locales de
+    // CE navigateur (data solo, identité, handles) — jamais le dossier/Drive distant.
+    _resetLocalData: resetAllLocalData,
     // Route vers le stockage ACTIF (dossier si actif), cf. correctifs revue 1b.
     _putState: putStateUnified,
     _stateKey: STATE_KEY,
