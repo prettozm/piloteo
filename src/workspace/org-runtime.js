@@ -203,10 +203,24 @@ export function createOrganization({ name, identity, consultantId } = {}) {
  * néanmoins la classe de faille immédiatement (un accepteur ne peut plus
  * jamais choisir librement un `consultantId` usurpant un tiers, qu'un
  * `consultantId` cible ait été précisé à l'émission ou non).
+ * `scope` (docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 3) : le marqueur
+ * "utilisateur global" — SIGNÉ dans l'invitation (`invitations.js#canonicalPayload`),
+ * exactement comme `consultantId` l'a été au round 4 ci-dessus. Seul un
+ * émetteur owner/admin peut le poser à l'émission ; `acceptInvitation` et
+ * `buildTrustedMembership` n'admettent JAMAIS un `scope` fourni librement par
+ * l'accepteur ou déclaré sur une fiche membre — la seule source de confiance
+ * est CETTE invitation vérifiée. `role:"user"` + `scope:"global"` = non-admin
+ * (ne gère pas les membres de l'organisation, cf. `inviteMember`/`createRevocation`
+ * qui restent gardés par `issuerMembership.role in {owner,admin}`) mais voit/
+ * écrit les données MÉTIER sans restriction de `consultantId`
+ * (`core/permissions.js#isGlobalUser`). Optionnel (défaut : absent, "non
+ * global") — n'a de sens qu'avec `role:"user"` (un `role:"admin"` voit déjà
+ * tout ; poser `scope` dessus est accepté mais sans effet, `isAdmin` court-
+ * circuite `isGlobalUser`).
  * @param {{workspaceId:string, role?:"owner"|"admin"|"user", expectedGoogleId?:string|null,
  *          issuer:{memberId:string}, issuerMembership:object, signer:Function, ttlMs?:number,
- *          consultantId?:string|null}} params
- * @returns {Promise<object>} invitation, avec `issuerId`/`consultantId` en plus (§5.2 / round 4)
+ *          consultantId?:string|null, scope?:"global"}} params
+ * @returns {Promise<object>} invitation, avec `issuerId`/`consultantId`/`scope` en plus (§5.2 / round 4 / Lot 3)
  */
 export async function inviteMember({
   workspaceId,
@@ -217,6 +231,7 @@ export async function inviteMember({
   signer,
   ttlMs,
   consultantId = null,
+  scope,
 } = {}) {
   if (!workspaceId) throw new Error("inviteMember: 'workspaceId' requis");
   if (typeof signer !== "function") {
@@ -248,7 +263,7 @@ export async function inviteMember({
   // émetteur↔proof est structurel, pas seulement une conséquence de la
   // logique de `verifyInvitation`) — toute modification d'`issuerId` après
   // signature invalide donc le proof.
-  const invitation = await createInvitation({ workspaceId, expectedGoogleId, role, ttlMs, signer, issuerId: issuer.memberId, consultantId });
+  const invitation = await createInvitation({ workspaceId, expectedGoogleId, role, ttlMs, signer, issuerId: issuer.memberId, consultantId, scope });
   return invitation;
 }
 
@@ -303,6 +318,11 @@ export async function verifyInvitation(invitation, { registry } = {}) {
     // pour `consultantId` — recomposé depuis l'invitation ANNONCÉE ; s'il a
     // été modifié après signature, le `proof` recomposé ne correspondra plus.
     consultantId: invitation.consultantId,
+    // Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : IDEM pour `scope` —
+    // recomposé depuis l'invitation ANNONCÉE ; s'il a été ajouté/modifié après
+    // signature (ex: pour s'auto-promouvoir "global"), le `proof` recomposé ne
+    // correspondra plus.
+    scope: invitation.scope,
   });
   const bytes = new TextEncoder().encode(canonical);
   let sigOk = false;
@@ -401,6 +421,11 @@ export async function acceptInvitation({ invitation, identity, consultantId: _ig
   // Round 4 : SEULE source de confiance pour `consultantId` — JAMAIS le
   // paramètre `consultantId` reçu par cette fonction (voir en-tête).
   const verifiedConsultantId = invitation.consultantId ?? null;
+  // Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : IDEM pour `scope` —
+  // SEULE source de confiance est l'invitation elle-même (elle sera revérifiée
+  // cryptographiquement par `buildTrustedMembership`/`verifyInvitation` en
+  // aval ; ici on ne fait que la propager telle quelle, comme `consultantId`).
+  const verifiedScope = invitation.scope === "global" ? "global" : null;
 
   const membership = createMembership({
     workspaceId: invitation.workspaceId,
@@ -408,6 +433,7 @@ export async function acceptInvitation({ invitation, identity, consultantId: _ig
     consultantId: verifiedConsultantId,
     role: invitation.role,
     googleSubject: googleId,
+    scope: verifiedScope,
   });
 
   const joinBytes = new TextEncoder().encode(
@@ -1229,6 +1255,31 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
     const verifiedConsultantId = isGenesis
       ? (manifest.ownerConsultantId ?? null)
       : (record.authorization.invitation.consultantId ?? null);
+    // Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) — MÊME LISTE BLANCHE
+    // que `consultantId` juste au-dessus, pour EXACTEMENT la même raison :
+    // `scope` (marqueur "utilisateur global") ne doit JAMAIS venir de
+    // `record.membership.scope` (auto-déclaré par l'accepteur, non couvert
+    // par `joinProof`) — sinon n'importe quel membre invité comme simple
+    // `user` rattaché à un consultant pourrait publier une fiche avec
+    // `membership.scope:"global"` et obtenir la vue/écriture métier complète
+    // sans jamais avoir été invité comme tel (escalade de privilège).
+    //   - genèse   : jamais "global" — le owner est déjà admin (super-ensemble
+    //     de "global"), aucun manifeste n'ancre de scope pour lui, et un
+    //     scope inventé sur une fiche genèse divergente n'a de toute façon
+    //     aucune incidence (le rôle "owner" court-circuite `isGlobalUser`).
+    //   - sinon    : EXCLUSIVEMENT `record.authorization.invitation.scope`,
+    //     tel qu'ANNONCÉ par l'invitation dont l'authenticité (émetteur
+    //     owner/admin actif, `proof` couvrant `scope` depuis
+    //     `invitations.js#canonicalPayload`) a déjà été établie par
+    //     `verifyInvitation` plus haut dans la BFS (passe 1) — un `scope`
+    //     modifié après signature invaliderait déjà `invCheck.ok` et la
+    //     fiche entière serait rejetée avant d'atteindre ce point. `null`
+    //     ("non global") si l'invitation n'en portait pas, ou toute valeur
+    //     différente de la seule valeur reconnue "global" (défense en
+    //     profondeur : jamais le plus permissif par défaut).
+    const verifiedScope = isGenesis
+      ? null
+      : (record.authorization.invitation.scope === "global" ? "global" : null);
     const status = revokedSet.has(record.memberId) ? "revoked" : "active";
     registry._add(record.memberId, record.publicKeyJwk, verifiedRole, status);
     membershipStore.add({
@@ -1236,6 +1287,7 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
       memberId: record.memberId,
       role: verifiedRole,
       consultantId: verifiedConsultantId,
+      scope: verifiedScope,
       status,
       // Champs non sécuritaires (jamais consultés par une décision — voir ci-dessus) :
       googleSubject: record.membership.googleSubject ?? null,

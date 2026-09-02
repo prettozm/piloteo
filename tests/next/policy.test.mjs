@@ -11,6 +11,7 @@ import {
   evaluate,
   affairIdsForUser,
   filterProjectionForRole,
+  isGlobalUser,
 } from "../../src/core/permissions.js";
 
 // ---------------------------------------------------------------------------
@@ -71,6 +72,13 @@ const userC1 = { workspaceId: "w1", memberId: "mem-c1", consultantId: "c1", role
 const revokedC1 = { ...userC1, memberId: "mem-c1-rev", status: "revoked" };
 const adminMember = { workspaceId: "w1", memberId: "mem-adm", consultantId: "admin1", role: "admin", status: "active" };
 const ownerMember = { workspaceId: "w1", memberId: "mem-own", consultantId: "own1", role: "owner", status: "active" };
+// Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : « utilisateur global »,
+// représentation `role:"user"` + `scope:"global"`, `consultantId:null` (non
+// rattaché à un profil consultant précis — voir org-runtime.js/scope-hardening
+// pour la provenance signée réelle ; ici on teste le moteur de droits en aval,
+// sur un membership DÉJÀ construit avec cette forme).
+const globalUserMember = { workspaceId: "w1", memberId: "mem-glob", consultantId: null, role: "user", scope: "global", status: "active" };
+const revokedGlobalUserMember = { ...globalUserMember, memberId: "mem-glob-rev", status: "revoked" };
 
 // ---------------------------------------------------------------------------
 // saisies
@@ -122,6 +130,86 @@ test("admin modifie n'importe quoi (y compris ADMIN_ONLY) => accept", () => {
   const payload2 = { id: "a3", nom: "Nouvelle affaire", pilote: "c2" };
   assert.equal(evaluate({ actorMembership: adminMember, projection, event: event2, payload: payload2 }), "accept");
   assert.equal(evaluate({ actorMembership: ownerMember, projection, event: event2, payload: payload2 }), "accept");
+});
+
+// ---------------------------------------------------------------------------
+// Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) — « utilisateur global »
+// (role:"user" + scope:"global") : mêmes droits qu'un admin sur les données
+// MÉTIER (y compris ADMIN_ONLY — "éditer les données de référence n'est pas
+// de l'administration au sens de ce modèle"), sans restriction de
+// consultantId contrairement à un user rattaché.
+
+test("isGlobalUser: ne reconnaît QUE role:user + scope:global — jamais un admin/owner, jamais un user sans scope ou avec un scope différent", () => {
+  assert.equal(isGlobalUser(globalUserMember), true);
+  assert.equal(isGlobalUser(userC1), false, "user rattaché (pas de scope) n'est pas global");
+  assert.equal(isGlobalUser(adminMember), false, "un admin n'est pas 'global' au sens de ce marqueur (isAdmin le couvre déjà)");
+  assert.equal(isGlobalUser(ownerMember), false);
+  assert.equal(isGlobalUser({ ...userC1, scope: "GLOBAL" }), false, "casse/valeur non exacte => pas global");
+  assert.equal(isGlobalUser({ ...userC1, scope: "consultant" }), false, "toute autre valeur de scope => pas global");
+  assert.equal(isGlobalUser(null), false);
+});
+
+test("user global : écrit une entité ADMIN_ONLY (consultants) => accept, comme un admin", () => {
+  const projection = buildProjection();
+  const event = { entityType: "consultants", operation: "update", entityId: "c2" };
+  const payload = { ...projection.consultants.c2, tjmBase: 999 };
+  assert.equal(evaluate({ actorMembership: globalUserMember, projection, event, payload }), "accept");
+});
+
+test("user global : crée une affaire et en change le pilote (réservé admin pour un user rattaché) => accept", () => {
+  const projection = buildProjection();
+  const event = { entityType: "affaires", operation: "create", entityId: "a3" };
+  const payload = { id: "a3", nom: "Nouvelle affaire", pilote: "c2" };
+  assert.equal(evaluate({ actorMembership: globalUserMember, projection, event, payload }), "accept");
+
+  const event2 = { entityType: "affaires", operation: "update", entityId: "a2" };
+  const payload2 = { ...projection.affaires.a2, pilote: "c1" };
+  assert.equal(evaluate({ actorMembership: globalUserMember, projection, event: event2, payload: payload2 }), "accept");
+});
+
+test("user global : modifie une saisie/note de frais d'un consultant qui n'est PAS lui (aucune restriction de consultantId, contrairement à un user rattaché) => accept", () => {
+  const projection = buildProjection();
+  // userC1 (rattaché à c1) ne peut PAS toucher s2 (c2) — non-régression déjà
+  // couverte plus haut. Le user global, lui, le peut : aucune notion de
+  // consultantId ne le limite (comme un admin).
+  const event = { entityType: "saisies", operation: "update", entityId: "s2" };
+  const payload = { ...projection.saisies.s2, dureeH: 3 };
+  assert.equal(evaluate({ actorMembership: globalUserMember, projection, event, payload }), "accept");
+
+  const eventBordereau = { entityType: "bordereauxFrais", operation: "update", entityId: "B1" };
+  const payloadBordereau = { ...projection.bordereauxFrais.B1, statut: "payée" };
+  assert.equal(
+    evaluate({ actorMembership: globalUserMember, projection, event: eventBordereau, payload: payloadBordereau }),
+    "accept",
+    "le paiement d'un bordereau, réservé admin pour un user rattaché, est admis pour un user global"
+  );
+});
+
+test("user global révoqué => reject d'office, comme n'importe quel membre révoqué", () => {
+  const projection = buildProjection();
+  const event = { entityType: "consultants", operation: "update", entityId: "c2" };
+  const payload = { ...projection.consultants.c2, tjmBase: 999 };
+  assert.equal(evaluate({ actorMembership: revokedGlobalUserMember, projection, event, payload }), "reject");
+});
+
+test("filterProjectionForRole: user global voit TOUTE la projection métier (y compris affaires/consultants hors de son périmètre 'consultant')", () => {
+  const projection = buildProjection();
+  const view = filterProjectionForRole(projection, globalUserMember);
+  assert.ok(view.affaires.a1 && view.affaires.a2, "les deux affaires (piloté par c1 ET par c2) sont visibles");
+  assert.deepEqual(view.consultants.c2, projection.consultants.c2, "profil consultant COMPLET (tjmBase inclus), pas la forme minimale d'un user rattaché");
+  assert.deepEqual(view.saisies, projection.saisies);
+  assert.deepEqual(view.bordereauxFrais, projection.bordereauxFrais);
+  assert.deepEqual(view.notesFrais, projection.notesFrais);
+});
+
+test("filterProjectionForRole: user rattaché reste limité à son consultant (non-régression, comparaison directe avec un user global)", () => {
+  const projection = buildProjection();
+  const restrictedView = filterProjectionForRole(projection, userC1);
+  const globalView = filterProjectionForRole(projection, globalUserMember);
+  assert.equal(restrictedView.affaires.a2, undefined, "user rattaché : a2 (hors périmètre) invisible");
+  assert.ok(globalView.affaires.a2, "user global : a2 visible");
+  assert.notDeepEqual(restrictedView.consultants.c2, projection.consultants.c2, "vue restreinte = forme minimale (tjmBase masqué), pas le profil complet");
+  assert.equal(restrictedView.consultants.c2.tjmBase, 0, "user rattaché : tjmBase masqué pour un tiers");
 });
 
 // ---------------------------------------------------------------------------

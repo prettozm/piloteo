@@ -35,6 +35,7 @@ export function createMembership({
   consultantId,
   role = "user",
   status = "active",
+  scope = null,
 } = {}) {
   if (!workspaceId) throw new Error("createMembership: 'workspaceId' requis");
   if (!memberId) throw new Error("createMembership: 'memberId' requis");
@@ -45,7 +46,16 @@ export function createMembership({
   if (consultantId === undefined) throw new Error("createMembership: 'consultantId' requis (passer explicitement 'null' si aucun consultant n'est encore lié)");
   if (!VALID_ROLES.has(role)) throw new Error(`createMembership: rôle invalide '${role}'`);
   if (!VALID_STATUSES.has(status)) throw new Error(`createMembership: statut invalide '${status}'`);
-  return { workspaceId, memberId, googleSubject, email, consultantId, role, status };
+  // Lot 3 (PARCOURS_IDENTITE_CONTRACT.md) : `scope` porte le marqueur
+  // "utilisateur global" (`"global"` ou `null`, jamais autre chose) — la
+  // valeur de CONFIANCE ne vient jamais de ce constructeur lui-même (une
+  // simple structure de données, sans notion de preuve) mais UNIQUEMENT de
+  // `org-runtime.js#buildTrustedMembership`, qui ne l'alimente que depuis
+  // l'invitation SIGNÉE vérifiée (jamais une fiche membre auto-déclarée).
+  if (scope !== null && scope !== "global") {
+    throw new Error(`createMembership: scope invalide '${scope}' (seule 'global' ou null est supportée)`);
+  }
+  return { workspaceId, memberId, googleSubject, email, consultantId, role, status, scope };
 }
 
 /**

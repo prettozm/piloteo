@@ -67,7 +67,7 @@ function toBase64Url(bytes) {
 // l'émetteur, seulement à sa clé publique + l'invitation reçue) — plutôt que
 // de dupliquer cette sérialisation (source de bug si les deux divergent un
 // jour), on l'exporte telle quelle. Signalé au contrat comme acceptable.
-export function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce, issuerId, consultantId }) {
+export function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce, issuerId, consultantId, scope }) {
   // Sérialisation déterministe (ordre de clés fixe) — pas de JSON.stringify
   // direct sur un objet dont l'ordre des clés serait accidentel.
   // docs/next/ORG_REVOCATION_CONTRACT.md §3 : `issuerId` est ajouté EN FIN de
@@ -86,9 +86,20 @@ export function canonicalPayload({ workspaceId, invitationId, expectedGoogleId, 
   // (l'émetteur, owner/admin) décide désormais explicitement à quel
   // consultant l'invitation est destinée ; `org-runtime.js#acceptInvitation`
   // n'utilise plus jamais un `consultantId` fourni librement par l'accepteur.
+  //
+  // docs/next/PARCOURS_IDENTITE_CONTRACT.md (Lot 3) : `scope` (marqueur
+  // "utilisateur global") est ajouté selon EXACTEMENT le même principe (append
+  // conditionnel, `!== undefined`), APRÈS `consultantId` — c'est le SEUL moyen
+  // pour un `role:"user"` d'obtenir l'accès métier complet (sans restriction
+  // de `consultantId`) : sans être couvert par la signature, n'importe quel
+  // accepteur pourrait déclarer `scope:"global"` sur SA PROPRE fiche membre et
+  // s'auto-promouvoir (classe de faille identique à celle fermée pour
+  // `consultantId` au round 4). Le signer (l'émetteur, owner/admin) décide
+  // désormais explicitement si CE futur membre est "global" ou non.
   const fields = [workspaceId, invitationId, expectedGoogleId, role, createdAt, expiresAt, nonce];
   if (issuerId !== undefined) fields.push(issuerId);
   if (consultantId !== undefined) fields.push(consultantId);
+  if (scope !== undefined) fields.push(scope);
   return JSON.stringify(fields);
 }
 
@@ -115,10 +126,17 @@ export async function createInvitation({
   signer = null,
   issuerId,
   consultantId,
+  scope,
 } = {}) {
   if (!workspaceId) throw new Error("createInvitation: 'workspaceId' requis");
   if (!["owner", "admin", "user"].includes(role)) {
     throw new Error(`createInvitation: rôle invalide '${role}'`);
+  }
+  // Lot 3 (PARCOURS_IDENTITE_CONTRACT.md) : la seule valeur de `scope`
+  // reconnue est "global" (le marqueur "utilisateur global") — tout autre
+  // paramètre serait une valeur non modélisée, jamais interprétée nulle part.
+  if (scope !== undefined && scope !== "global") {
+    throw new Error(`createInvitation: scope invalide '${scope}' (seule 'global' est supportée)`);
   }
 
   const invitationId = uuid();
@@ -136,6 +154,7 @@ export async function createInvitation({
     nonce,
     issuerId,
     consultantId,
+    scope,
   });
 
   const proof = signer
@@ -154,6 +173,7 @@ export async function createInvitation({
     status: "pending",
     ...(issuerId !== undefined ? { issuerId } : {}),
     ...(consultantId !== undefined ? { consultantId } : {}),
+    ...(scope !== undefined ? { scope } : {}),
   };
 }
 

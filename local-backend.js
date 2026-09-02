@@ -1429,7 +1429,22 @@
     // (même forme d'`activeEngine.membership`, seul le stockage sous-jacent change).
     if ((storageMode === "org" || storageMode === "org-drive") && activeEngine && activeEngine.membership) {
       var m = activeEngine.membership;
-      role = (m.role === "owner" || m.role === "admin") ? "admin" : "user";
+      // Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md, mapping ARRÊTÉ) : un
+      // « utilisateur global » (rôle org RÉEL "user" + scope:"global", venant
+      // EXCLUSIVEMENT de l'invitation signée vérifiée par
+      // `buildTrustedMembership` — jamais d'une fiche falsifiable) est
+      // présenté à app.js avec role:"admin" pour que sa navigation métier soit
+      // complète (app.js:627 n'a qu'une visibilité binaire admin/non-admin —
+      // vérifié, non modifié, cf. rapport du maker). C'est un choix
+      // D'AFFICHAGE UNIQUEMENT : la seule enforcement réelle des droits reste
+      // `src/core/permissions.js` (chaque écriture passe par /api/state ->
+      // moteur org -> `evaluate()`), qui lit le VRAI rôle org
+      // (`activeEngine.membership.role/scope`), jamais ce mapping. La
+      // gouvernance d'organisation (Réglages > Membres, ~1884/1910 ci-dessous)
+      // lit elle aussi `orgEngineRef.membership.role` (le vrai rôle, "user"
+      // pour un global) — PAS `/api/me` — donc un utilisateur global n'y voit
+      // ni Inviter ni Révoquer, exactement comme un user rattaché.
+      role = (m.role === "owner" || m.role === "admin" || (m.role === "user" && m.scope === "global")) ? "admin" : "user";
       if (m.consultantId && consultants.some(function (c) { return c && c.id === m.consultantId; })) {
         consultantId = m.consultantId;
       }
