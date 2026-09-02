@@ -258,6 +258,13 @@ export async function openOrgEngine({ adapter, identity, consultantId } = {}) {
       consultantId: m.consultantId,
       role: m.role,
       status: m.status,
+      // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : exposés pour l'UI
+      // Réglages > Membres (distinction "rattaché"/"global" + libellé) —
+      // déjà VÉRIFIÉS pour `scope` (buildTrustedMembership, liste blanche) ou
+      // purement d'affichage pour `displayName` (jamais une décision de
+      // sécurité, voir memberships.js/org-runtime.js).
+      scope: m.scope,
+      displayName: m.displayName,
     }));
   }
 

@@ -391,10 +391,19 @@ export function planPromotion({ existingManifest, workspaceId, identity, ownerAd
  * global") — n'a de sens qu'avec `role:"user"` (un `role:"admin"` voit déjà
  * tout ; poser `scope` dessus est accepté mais sans effet, `isAdmin` court-
  * circuite `isGlobalUser`).
+ * `displayName` (docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 4) : le nom
+ * saisi par l'émetteur (owner/admin) pour le FUTUR membre au moment de
+ * l'invitation — pur LIBELLÉ D'AFFICHAGE (comme `email`/`googleSubject`,
+ * memberships.js), jamais couvert par `proof` (PAS ajouté à
+ * `invitations.js#canonicalPayload` : ce n'est délibérément PAS un privilège
+ * à prouver, contrairement à `consultantId`/`scope`) et jamais lu par
+ * `core/permissions.js`. Attaché à l'objet invitation APRÈS signature,
+ * uniquement pour voyager avec elle (code d'invitation) jusqu'à
+ * `acceptInvitation`, qui le reprend sur la fiche membre du nouvel arrivant.
  * @param {{workspaceId:string, role?:"owner"|"admin"|"user", expectedGoogleId?:string|null,
  *          issuer:{memberId:string}, issuerMembership:object, signer:Function, ttlMs?:number,
- *          consultantId?:string|null, scope?:"global"}} params
- * @returns {Promise<object>} invitation, avec `issuerId`/`consultantId`/`scope` en plus (§5.2 / round 4 / Lot 3)
+ *          consultantId?:string|null, scope?:"global", displayName?:string|null}} params
+ * @returns {Promise<object>} invitation, avec `issuerId`/`consultantId`/`scope`/`displayName` en plus (§5.2 / round 4 / Lot 3 / Lot 4)
  */
 export async function inviteMember({
   workspaceId,
@@ -406,6 +415,7 @@ export async function inviteMember({
   ttlMs,
   consultantId = null,
   scope,
+  displayName,
 } = {}) {
   if (!workspaceId) throw new Error("inviteMember: 'workspaceId' requis");
   if (typeof signer !== "function") {
@@ -438,6 +448,11 @@ export async function inviteMember({
   // logique de `verifyInvitation`) — toute modification d'`issuerId` après
   // signature invalide donc le proof.
   const invitation = await createInvitation({ workspaceId, expectedGoogleId, role, ttlMs, signer, issuerId: issuer.memberId, consultantId, scope });
+  // Lot 4 : `displayName` n'entre PAS dans les octets signés (voir doc
+  // ci-dessus) — attaché après coup, purement pour transport avec le code
+  // d'invitation. `undefined` (non fourni) -> absent de l'objet, pas de
+  // régression des invitations existantes (mêmes clés qu'avant ce lot).
+  if (displayName !== undefined) invitation.displayName = displayName;
   return invitation;
 }
 
@@ -600,6 +615,12 @@ export async function acceptInvitation({ invitation, identity, consultantId: _ig
   // cryptographiquement par `buildTrustedMembership`/`verifyInvitation` en
   // aval ; ici on ne fait que la propager telle quelle, comme `consultantId`).
   const verifiedScope = invitation.scope === "global" ? "global" : null;
+  // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : `displayName` repris
+  // TEL QUEL depuis l'invitation (non signé, non vérifié — comme
+  // `email`/`googleSubject`, JAMAIS une décision de sécurité, voir
+  // `inviteMember`/`memberships.js`) : un simple libellé choisi par
+  // l'émetteur à l'invitation, qui voyage avec elle jusqu'à la fiche membre.
+  const displayName = invitation.displayName ?? null;
 
   const membership = createMembership({
     workspaceId: invitation.workspaceId,
@@ -607,6 +628,7 @@ export async function acceptInvitation({ invitation, identity, consultantId: _ig
     consultantId: verifiedConsultantId,
     role: invitation.role,
     googleSubject: googleId,
+    displayName,
     scope: verifiedScope,
   });
 
@@ -1496,6 +1518,11 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
       // Champs non sécuritaires (jamais consultés par une décision — voir ci-dessus) :
       googleSubject: record.membership.googleSubject ?? null,
       email: record.membership.email ?? null,
+      // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : IDEM pour
+      // `displayName` — simple libellé auto-déclaré par l'accepteur (recopié
+      // depuis l'invitation reçue, elle-même non signée sur ce champ), au
+      // même titre que `googleSubject`/`email` juste au-dessus.
+      displayName: record.membership.displayName ?? null,
     });
   }
 

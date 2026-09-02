@@ -581,8 +581,15 @@ async function resumeOrg(opts) {
  * Invite un futur membre (owner/admin uniquement — `inviteMember` lève sinon).
  * Ne publie RIEN sur le dossier (voir en-tête) : renvoie `{invitation, code}`,
  * `code` étant le JSON base64url à transmettre hors bande (copier-coller/lien).
+ *
+ * Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : `consultantId`/`scope`
+ * (SIGNÉS dans l'invitation, `org-runtime.js#inviteMember`) et `displayName`
+ * (libellé d'affichage, NON signé — voir `inviteMember`) transitent tels
+ * quels jusqu'à `inviteMember`, qui reste l'unique porte d'entrée/de décision
+ * (autorité de l'émetteur, unicité du rôle "owner", etc.) — ce pont n'ajoute
+ * aucune logique.
  */
-async function invite({ engine, adapter, role, ttlDays, identity } = {}) {
+async function invite({ engine, adapter, role, ttlDays, identity, consultantId, scope, displayName } = {}) {
   if (!engine || !engine.manifest || !engine.membership) {
     throw new Error("invite: 'engine' invalide (openOrgEngine attendu).");
   }
@@ -594,6 +601,9 @@ async function invite({ engine, adapter, role, ttlDays, identity } = {}) {
     issuerMembership: engine.membership,
     signer: makeSigner(id),
     ttlMs: ttlDays ? ttlDays * 24 * 60 * 60 * 1000 : undefined,
+    consultantId,
+    scope,
+    displayName,
   });
   return { invitation, code: encodeInvitationCode(invitation) };
 }

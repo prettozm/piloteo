@@ -142,8 +142,11 @@ test("org-engine : pont snapshot <-> sync multi-membre — 6 scénarios du contr
     assertSameSet(
       members2,
       [
-        { memberId: aliceIdentity.memberId, consultantId: "c-alice", role: "owner", status: "active" },
-        { memberId: bobIdentity.memberId, consultantId: "c-bob", role: "user", status: "active" },
+        // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : `members()` expose
+        // désormais aussi `scope`/`displayName` (affichage Réglages > Membres) —
+        // `null` ici (aucun des deux n'a été invité "global" ni nommé).
+        { memberId: aliceIdentity.memberId, consultantId: "c-alice", role: "owner", status: "active", scope: null, displayName: null },
+        { memberId: bobIdentity.memberId, consultantId: "c-bob", role: "user", status: "active", scope: null, displayName: null },
       ],
       "memberId",
       "members() après invitation"

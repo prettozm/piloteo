@@ -2003,15 +2003,52 @@
         body.appendChild(membersBox);
         membersBox.appendChild(el("div", "font-size:12.5px;color:#5b6b76;", "Chargement des membres…"));
 
+        // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : consultants de la
+        // PROJECTION org courante (state.consultants du dossier/Drive actif,
+        // même chemin de lecture que `getIdentity`/`stateRecord` ailleurs
+        // dans ce fichier) — utilisés (a) pour peupler le sélecteur
+        // « Rattaché à un consultant » de l'invite UI, (b) pour afficher un
+        // nom lisible plutôt qu'un id brut dans la liste des membres.
+        // PUREMENT pour l'affichage : ne participe à AUCUNE décision de
+        // sécurité (la portée réelle d'un membre vient de son `membership`,
+        // vérifié — `consultantId`/`scope`, jamais de cette liste).
+        function loadConsultants() {
+          return orgEngineRef.load().then(function (rec) {
+            return (rec.state && rec.state.consultants) || [];
+          }).catch(function () { return []; });
+        }
+        function consultantLabel(id, list) {
+          var c = (list || []).find(function (x) { return x && x.id === id; });
+          return (c && (c.nom || c.trigramme)) || id;
+        }
+        // Libellé rôle/portée (Lot 3 mapping ARRÊTÉ + Lot 4) : distingue
+        // Administrateur / Utilisateur (consultant X) / Utilisateur (accès
+        // global) — lit `m.role`/`m.scope`/`m.consultantId` TELS QUE renvoyés
+        // par `engine.members()` (eux-mêmes issus du membership VÉRIFIÉ,
+        // `buildTrustedMembership`), jamais d'un champ auto-déclaré non couvert.
+        function memberRoleLabel(m, consultantsList) {
+          if (m.role === "owner") return "Propriétaire";
+          if (m.role === "admin") return "Administrateur";
+          if (m.role === "user" && m.scope === "global") return "Utilisateur (accès global)";
+          if (m.role === "user" && m.consultantId) return "Utilisateur (consultant " + consultantLabel(m.consultantId, consultantsList) + ")";
+          return "Utilisateur";
+        }
         function renderMembers(myMemberId) {
-          orgEngineRef.members().then(function (members) {
+          Promise.all([orgEngineRef.members(), loadConsultants()]).then(function (r) {
+            var members = r[0], consultantsList = r[1];
             membersBox.innerHTML = "";
             members.forEach(function (m) {
               var row = el("div", "display:flex;align-items:center;gap:8px;font-size:.85rem;padding:7px 9px;" +
                 "border:1px solid #eef1f3;border-radius:8px;margin-bottom:6px;flex-wrap:wrap;");
-              row.appendChild(el("span", "flex:1;min-width:120px;", (m.consultantId || m.memberId) + (m.memberId === myMemberId ? " (vous)" : "")));
+              // `m.displayName` (Lot 4) : LIBELLÉ saisi par l'émetteur à
+              // l'invitation, jamais vérifié, purement informatif — affiché À
+              // CÔTÉ de l'identifiant technique (consultantId/memberId),
+              // jamais À LA PLACE (pour ne rien perdre en cas d'homonymie).
+              var idLabel = (m.consultantId || m.memberId) + (m.memberId === myMemberId ? " (vous)" : "");
+              var nameLabel = m.displayName ? (m.displayName + " — " + idLabel) : idLabel;
+              row.appendChild(el("span", "flex:1;min-width:120px;", nameLabel));
               row.appendChild(el("span", "font-size:.72rem;color:#5b6b76;text-transform:uppercase;letter-spacing:.03em;",
-                m.role === "owner" ? "Propriétaire" : m.role === "admin" ? "Administrateur" : "Membre"));
+                memberRoleLabel(m, consultantsList)));
               row.appendChild(el("span", "font-size:.7rem;font-weight:700;color:" + (m.status === "revoked" ? "#8a3b2f" : "#137a3f") + ";",
                 m.status === "revoked" ? "Révoqué" : "Actif"));
               var canRevoke = (myRole === "owner" || myRole === "admin") && m.status === "active" && m.memberId !== myMemberId;
@@ -2042,26 +2079,79 @@
         }
 
         if (myRole === "owner" || myRole === "admin") {
+          // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : invite UI
+          // enrichie — Nom (affichage), Rôle (Administrateur/Utilisateur),
+          // et pour un Utilisateur : Rattaché à un consultant OU Accès
+          // global (XOR — jamais les deux, jamais pour un Administrateur).
+          var GLOBAL_VALUE = "__global__";
           var inviteRow = el("div", "display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0;");
+
+          var nameIn = document.createElement("input");
+          nameIn.type = "text"; nameIn.id = "piloteo-invite-name"; nameIn.placeholder = "Nom (facultatif)";
+          nameIn.setAttribute("style", "padding:8px 10px;border:1px solid #d5dde2;border-radius:8px;font:inherit;background:#fff;color:#14212b;flex:1;min-width:120px;");
+          inviteRow.appendChild(nameIn);
+
           var roleSel = document.createElement("select");
+          roleSel.id = "piloteo-invite-role";
           roleSel.setAttribute("style", "padding:8px 10px;border:1px solid #d5dde2;border-radius:8px;font:inherit;background:#fff;color:#14212b;");
-          [["user", "Membre"], ["admin", "Administrateur"]].forEach(function (pair) {
+          [["user", "Utilisateur"], ["admin", "Administrateur"]].forEach(function (pair) {
             var o = document.createElement("option"); o.value = pair[0]; o.textContent = pair[1]; roleSel.appendChild(o);
           });
           inviteRow.appendChild(roleSel);
+
+          // Sélecteur consultant/global : visible SEULEMENT pour "Utilisateur"
+          // (un "Administrateur" n'a ni l'un ni l'autre, cf. contrat).
+          // Peuplé de façon asynchrone depuis la projection courante ;
+          // n'influence AUCUNE décision de sécurité (affichage/choix source,
+          // la valeur choisie devient `consultantId`/`scope` — VÉRIFIÉS et
+          // SIGNÉS côté `inviteMember`/`invitations.js`, pas ce menu lui-même).
+          var targetSel = document.createElement("select");
+          targetSel.id = "piloteo-invite-target";
+          targetSel.setAttribute("style", "padding:8px 10px;border:1px solid #d5dde2;border-radius:8px;font:inherit;background:#fff;color:#14212b;");
+          inviteRow.appendChild(targetSel);
+          function updateTargetVisibility() { targetSel.style.display = roleSel.value === "user" ? "" : "none"; }
+          roleSel.addEventListener("change", updateTargetVisibility);
+          updateTargetVisibility();
+          loadConsultants().then(function (list) {
+            list.forEach(function (c) {
+              if (!c || !c.id) return;
+              var o = document.createElement("option"); o.value = c.id; o.textContent = c.nom || c.trigramme || c.id;
+              targetSel.appendChild(o);
+            });
+            var go = document.createElement("option");
+            go.value = GLOBAL_VALUE; go.textContent = "Accès global";
+            targetSel.appendChild(go);
+          });
+
           var inviteMsg = el("div", "font-size:12.5px;color:#5b6b76;flex-basis:100%;min-height:16px;");
-          inviteRow.appendChild(mkBtn("Inviter", function () {
+          var inviteBtn = mkBtn("Inviter", function () {
             inviteMsg.textContent = "Génération du code…";
-            window.PiloteoOrg.invite({ engine: orgEngineRef, adapter: orgAdapterRef, role: roleSel.value, ttlDays: 14 }).then(function (r) {
+            var role = roleSel.value;
+            var params = { engine: orgEngineRef, adapter: orgAdapterRef, role: role, ttlDays: 14 };
+            var name = nameIn.value.trim();
+            if (name) params.displayName = name;
+            // XOR consultant/global : uniquement pour "Utilisateur" ;
+            // "Administrateur" (role !== "user") ne pose ni l'un ni l'autre.
+            if (role === "user") {
+              if (targetSel.value === GLOBAL_VALUE) {
+                params.scope = "global";
+              } else if (targetSel.value) {
+                params.consultantId = targetSel.value;
+              }
+            }
+            window.PiloteoOrg.invite(params).then(function (r) {
               inviteMsg.textContent = "Code généré (valable 14 jours) — à transmettre au futur membre :";
               var ta = document.createElement("textarea");
-              ta.readOnly = true; ta.value = r.code;
+              ta.readOnly = true; ta.value = r.code; ta.id = "piloteo-invite-code";
               ta.setAttribute("style", "width:100%;box-sizing:border-box;min-height:70px;margin-top:6px;font-family:ui-monospace,monospace;" +
                 "font-size:11px;padding:8px;border:1px solid #d5dde2;border-radius:8px;");
               inviteRow.appendChild(ta);
               ta.addEventListener("click", function () { ta.select(); });
             }).catch(function (e) { inviteMsg.textContent = "Échec : " + ((e && e.message) || e); });
-          }, true));
+          }, true);
+          inviteBtn.id = "piloteo-invite-btn";
+          inviteRow.appendChild(inviteBtn);
+          inviteRow.appendChild(inviteMsg);
           body.appendChild(inviteRow);
         }
 
