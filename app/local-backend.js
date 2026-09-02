@@ -662,13 +662,34 @@
   // les cibles « folder/org/drive ») : SANS migration, l'organisation Drive
   // fraîchement créée démarrerait avec zéro consultant et app.js refuserait le
   // démarrage (« compte non rattaché ») — comme pour le mode dossier, on migre
-  // donc l'état solo existant AVANT d'activer le mode localement. Un échec
-  // (vérification en échec) ne laisse jamais ce navigateur actif sur une
-  // organisation Drive non fiable : le drapeau `piloteo_storage_mode` déjà
-  // posé par `createDriveOrg` (contrat §1) est alors explicitement annulé ;
-  // l'organisation elle-même reste créée sur Drive (genèse write-once, comme
-  // pour le dossier) mais ce navigateur retourne à « cet appareil », données
-  // intactes.
+  // donc l'état solo existant AVANT d'activer le mode localement.
+  //
+  // CORRECTIF contrariant (axe 4, « persist-avant-vérif », repro
+  // attack-persist-before-verify-drive-create.mjs, CASSÉ->TENU — appliqué ici
+  // en second temps après le même correctif sur `activateShareSpaceDrive`,
+  // décision : le défaut était IDENTIQUE sur ce chemin, un chemin LIVE testé
+  // sur mobile) : `createDriveOrg` (piloteo-drive-bridge.mjs) NE persiste PLUS
+  // `piloteo_storage_mode`/`piloteo_drive_root_folder_id` — cette fonction est
+  // désormais la SEULE à le faire, et UNIQUEMENT dans le `.then` FINAL
+  // ci-dessous, APRÈS que `decideAndRunMigration` a réussi (round-trip
+  // vérifié). EXACTEMENT le même ordre qu'`activateShareSpaceDrive`/
+  // `activateShareSpace` : `decideAndRunMigration` affiche
+  // `showMigrationIntroStep`, qui ATTEND un clic utilisateur (« Continuer »)
+  // avant de republier le moindre event solo — un rechargement/une fermeture
+  // d'onglet PENDANT cette attente tue le JS AVANT que le `.catch` ci-dessous
+  // ne s'exécute. Si le drapeau de mode avait déjà été posé à ce moment-là
+  // (comme c'était le cas avant ce correctif), le reboot suivant aurait
+  // rouvert une organisation Drive VIDE (events jamais republiés) et `app.js`
+  // aurait refusé le démarrage avec un message SANS RAPPORT (« Compte non
+  // rattaché à un consultant »). En ne posant le drapeau QU'ICI, un tel
+  // rechargement laisse `piloteo_storage_mode` INCHANGÉ (toujours solo/
+  // absent) : le reboot suivant reste solo, données solo intactes — la
+  // genèse Drive déjà écrite (write-once, irréversible) reste ORPHELINE mais
+  // INOFFENSIVE (un nouveau « Créer une organisation » recommence proprement
+  // sur un nouveau dossier racine). Le `.catch` qui nettoie
+  // `piloteo_storage_mode`/`piloteo_drive_root_folder_id` reste en place
+  // comme SÉCURITÉ SECONDAIRE (défense en profondeur si un appelant futur les
+  // posait plus tôt), mais n'est plus la garantie principale.
   function activateCreateOrgDrive(name) {
     if (!window.PiloteoDrive) return Promise.reject(new Error("Le pont Google Drive n'a pas chargé (rechargez la page)."));
     if (!window.PiloteoDrive.isAvailable) return Promise.reject(new Error("Google Drive n'est pas disponible (configuration Google absente)."));
@@ -685,12 +706,14 @@
           return decideAndRunMigration(result.engine, solo, targetLabel).then(function (migration) {
             return { result: result, migration: migration };
           }).catch(function (e) {
-            // Migration non vérifiée : jamais de mode org-drive actif dans ce cas
-            // (contrat §1/§2 point 4, symétrique du mode dossier) — on annule le
-            // drapeau déjà posé par createDriveOrg (ET le rootFolderId associé,
-            // qui resterait sinon orphelin en localStorage sans que le mode
-            // "org-drive" ne pointe plus dessus) ; l'organisation reste créée
-            // sur Drive (write-once) mais n'est pas activée sur cet appareil.
+            // Migration non vérifiée : jamais de mode org-drive actif dans ce
+            // cas (contrat §1/§2 point 4, symétrique du mode dossier).
+            // Sécurité SECONDAIRE (voir en-tête) : le drapeau n'a normalement
+            // PAS encore été posé à ce stade (posé UNIQUEMENT dans le `.then`
+            // final, après ce catch) — ce nettoyage n'a donc rien à faire en
+            // temps normal, mais reste en défense en profondeur. L'organisation
+            // reste créée sur Drive (write-once) mais n'est pas activée sur
+            // cet appareil.
             try { localStorage.removeItem(STORAGE_MODE_KEY); } catch (e2) {}
             try { localStorage.removeItem("piloteo_drive_root_folder_id"); } catch (e2) {}
             throw new Error(((e && e.message) || "Migration impossible.") +
@@ -704,7 +727,11 @@
       activeOrgAdapter = result.adapter || null;
       orgDriveNeedsAuth = false;
       storageMode = "org-drive";
+      // SEUL point où le mode org-drive est activé (voir en-tête) : APRÈS
+      // decideAndRunMigration réussi (round-trip vérifié) — `rootFolderId`
+      // vient de `createDriveOrg` (qui ne le persiste plus lui-même).
       try { localStorage.setItem(STORAGE_MODE_KEY, "org-drive"); } catch (e) {}
+      try { localStorage.setItem("piloteo_drive_root_folder_id", result.rootFolderId); } catch (e) {}
       try { if (name) localStorage.setItem(ORG_NAME_KEY, name); } catch (e) {}
       _driveOrgReady = Promise.resolve();
       _lastMigrationResult = migration;
@@ -768,6 +795,95 @@
         _lastMigrationResult = migration;
         return Object.assign({}, result, { migration: migration });
       });
+    });
+  }
+
+  // Lot 5 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : « Partager cet espace »
+  // VERS GOOGLE DRIVE — promotion EN PLACE (MÊME workspaceId), symétrique
+  // d'`activateShareSpace` ci-dessus (mode Dossier) ET d'`activateCreateOrgDrive`
+  // ci-dessus (org Drive NEUVE), avec la MÊME différence qu'`activateShareSpace`
+  // par rapport à `activateCreateOrg` : `window.PiloteoDrive.promoteDriveOrg(...)`
+  // reçoit le `workspaceId` FIXE de cet appareil (`getOrCreateSoloWorkspaceId`)
+  // au lieu de laisser `createDriveOrg` en générer un nouveau.
+  //
+  // ORDRE CRITIQUE (IDENTIQUE à `activateCreateOrgDrive`, voir son en-tête) :
+  // `window.PiloteoDrive.oauthTokenProvider()` DOIT être le TOUT PREMIER
+  // `await` de cette fonction — AVANT `getOrCreateSoloWorkspaceId()` (accès
+  // IndexedDB) ET `stateRecord()` (idem) — pour ne jamais consommer
+  // l'activation utilisateur transitoire du clic avant que la popup OAuth ne
+  // s'ouvre (Safari/WebKit, mobile — précisément la cible de ce lot).
+  //
+  // CORRECTIF contrariant (axe 4, « persist-avant-vérif », repro
+  // attack-persist-before-verify-drive.mjs, CASSÉ->TENU) : `promoteDriveOrg`
+  // (piloteo-drive-bridge.mjs) NE persiste PLUS `piloteo_storage_mode`/
+  // `piloteo_drive_root_folder_id` — cette fonction est désormais la SEULE à
+  // le faire, et UNIQUEMENT dans le `.then` FINAL ci-dessous, APRÈS que
+  // `decideAndRunMigration` a réussi (round-trip vérifié). EXACTEMENT le même
+  // ordre qu'`activateShareSpace` (mode Dossier) : `decideAndRunMigration`
+  // affiche `showMigrationIntroStep`, qui ATTEND un clic utilisateur
+  // (« Continuer ») avant de republier le moindre event solo — un
+  // rechargement/une fermeture d'onglet PENDANT cette attente tue le JS AVANT
+  // que le `.catch` ci-dessous ne s'exécute. Si le drapeau de mode avait déjà
+  // été posé à ce moment-là (comme c'était le cas avant ce correctif), le
+  // reboot suivant aurait rouvert un espace-org-drive VIDE (events jamais
+  // republiés) et `app.js` aurait refusé le démarrage avec un message SANS
+  // RAPPORT (« Compte non rattaché à un consultant »). En ne posant le
+  // drapeau QU'ICI, un tel rechargement laisse `piloteo_storage_mode`
+  // INCHANGÉ (toujours solo/absent) : le reboot suivant reste solo, données
+  // solo intactes — la genèse Drive déjà écrite (write-once, irréversible)
+  // reste ORPHELINE mais INOFFENSIVE (un nouveau « Partager » sur le MÊME
+  // dossier la répare via `complete-owner`/`already-promoted` ; un nouveau
+  // dossier racine est tout aussi acceptable). Le `.catch` qui nettoie
+  // `piloteo_storage_mode`/`piloteo_drive_root_folder_id` reste en place
+  // comme SÉCURITÉ SECONDAIRE (défense en profondeur si un appelant futur les
+  // posait plus tôt), mais n'est plus la garantie principale.
+  function activateShareSpaceDrive(name) {
+    if (!window.PiloteoDrive) return Promise.reject(new Error("Le pont Google Drive n'a pas chargé (rechargez la page)."));
+    if (!window.PiloteoDrive.isAvailable) return Promise.reject(new Error("Google Drive n'est pas disponible (configuration Google absente)."));
+    // PREMIER await de la fonction (voir commentaire ci-dessus).
+    return window.PiloteoDrive.oauthTokenProvider().then(function () {
+      return getOrCreateSoloWorkspaceId().then(function (soloWorkspaceId) {
+        return stateRecord().then(function (rec) {
+          var solo = ensureUsable(rec.state);
+          var cs = solo.consultants || [];
+          var i = adminConsultantIndex(cs);
+          var consultantId = i >= 0 ? cs[i].id : null;
+          var targetLabel = "l'espace partagé" + (name ? " « " + name + " »" : "") + " (Google Drive)";
+          return window.PiloteoDrive.promoteDriveOrg({ workspaceId: soloWorkspaceId, name: name, consultantId: consultantId }).then(function (result) {
+            return decideAndRunMigration(result.engine, solo, targetLabel).then(function (migration) {
+              return { result: result, migration: migration };
+            }).catch(function (e) {
+              // Jamais de mode org-drive actif si la migration n'a pas été
+              // vérifiée (contrat §1/§2 point 4, symétrique du mode dossier).
+              // Sécurité SECONDAIRE (voir en-tête) : le drapeau n'a normalement
+              // PAS encore été posé à ce stade (posé UNIQUEMENT dans le `.then`
+              // final, après ce catch) — ce nettoyage n'a donc rien à faire en
+              // temps normal, mais reste en défense en profondeur. La genèse
+              // reste publiée sur Drive (write-once, comme pour le dossier)
+              // mais n'est pas activée sur cet appareil.
+              try { localStorage.removeItem(STORAGE_MODE_KEY); } catch (e2) {}
+              try { localStorage.removeItem("piloteo_drive_root_folder_id"); } catch (e2) {}
+              throw new Error(((e && e.message) || "Migration impossible.") +
+                " Retour à cet appareil : vos données ne sont pas perdues.");
+            });
+          });
+        });
+      });
+    }).then(function (r) {
+      var result = r.result, migration = r.migration;
+      activeEngine = result.engine;
+      activeOrgAdapter = result.adapter || null;
+      orgDriveNeedsAuth = false;
+      storageMode = "org-drive";
+      // SEUL point où le mode org-drive est activé (voir en-tête) : APRÈS
+      // decideAndRunMigration réussi (round-trip vérifié) — `rootFolderId`
+      // vient de `promoteDriveOrg` (qui ne le persiste plus lui-même).
+      try { localStorage.setItem(STORAGE_MODE_KEY, "org-drive"); } catch (e) {}
+      try { localStorage.setItem("piloteo_drive_root_folder_id", result.rootFolderId); } catch (e) {}
+      try { if (name) localStorage.setItem(ORG_NAME_KEY, name); } catch (e) {}
+      _driveOrgReady = Promise.resolve();
+      _lastMigrationResult = migration;
+      return Object.assign({}, result, { migration: migration });
     });
   }
 
@@ -1272,9 +1388,13 @@
     return ov;
   }
 
-  // docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 2 — dialogue Réglages
-  // « Partager cet espace » : nom + choix du dossier, appelle
-  // `activateShareSpace` (promotion en place, workspaceId conservé).
+  // docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 2 (+ Lot 5, câblage Drive) —
+  // dialogue Réglages « Partager cet espace » : nom + choix de l'emplacement
+  // (Dossier OU Google Drive, quand `window.PiloteoDrive.isAvailable`), appelle
+  // `activateShareSpace` (dossier) ou `activateShareSpaceDrive` (Drive) —
+  // promotion EN PLACE, workspaceId conservé DANS LES DEUX CAS. Même patron
+  // que l'ancien onboarding « Créer une organisation » (radio dossier/Drive,
+  // Drive révélée seulement si disponible) — voir `activateCreateOrgDrive`.
   function renderShareSpaceDialog() {
     renderSmallDialog("piloteo-share-space", "Partager cet espace", function (box, close) {
       box.appendChild(el("p", "margin:0 0 14px;font-size:.86rem;color:#5b6b76;",
@@ -1282,15 +1402,48 @@
         "(ou Google Drive) que vous choisissez. Vous en resterez propriétaire."));
       var nameIn = fieldInput("Nom de l'organisation", "text");
       box.appendChild(nameIn.wrap);
+
+      // Emplacement : Dossier (existant, File System Access) ou Google Drive
+      // (recommandé sur mobile, Lot 5) — radio Drive révélée UNIQUEMENT si
+      // `window.PiloteoDrive.isAvailable` (module chargé + GOOGLE_CLIENT_ID
+      // configuré), jamais supposée disponible d'entrée.
+      var locWrap = el("div", "display:flex;flex-direction:column;gap:7px;margin:2px 0 6px;");
+      function locOption(value, label, checked) {
+        var lab = document.createElement("label");
+        lab.setAttribute("style", "display:flex;align-items:center;gap:8px;font-size:.84rem;cursor:pointer;color:#14212b;");
+        var radio = document.createElement("input");
+        radio.type = "radio"; radio.name = "piloteo-share-space-location"; radio.value = value; radio.checked = !!checked;
+        lab.appendChild(radio);
+        lab.appendChild(document.createTextNode(label));
+        locWrap.appendChild(lab);
+        return { wrap: lab, radio: radio };
+      }
+      var locFolder = locOption("folder", "Un dossier (ordinateur)", true);
+      var locDrive = locOption("drive", "Google Drive (recommandé sur mobile)", false);
+      locDrive.wrap.hidden = true; // révélée plus bas SI window.PiloteoDrive.isAvailable
+      box.appendChild(locWrap);
+      waitForPiloteoDrive(4000).then(function (PD) {
+        if (PD && PD.isAvailable) locDrive.wrap.hidden = false;
+      });
+
       var msg = el("div", "font-size:12.5px;color:#5b6b76;min-height:16px;margin-top:8px;");
       var actions = el("div", "display:flex;gap:8px;margin-top:10px;justify-content:flex-end;");
       actions.appendChild(mkBtn("Annuler", close));
       actions.appendChild(mkBtn("Partager", function () {
         var name = nameIn.input.value.trim();
         if (!name) { msg.style.color = "#8a3b2f"; msg.textContent = "Indiquez un nom d'organisation."; return; }
+        // Radio Drive cachée (indisponible) -> jamais retenue comme choix,
+        // même si elle était restée cochée avant sa disparition (garde-fou).
+        var useDrive = locDrive.radio.checked && !locDrive.wrap.hidden;
         msg.style.color = "#5b6b76";
-        msg.textContent = "Sélection du dossier…";
-        activateShareSpace(name).then(function () {
+        msg.textContent = useDrive ? "Connexion à Google…" : "Sélection du dossier…";
+        // IMPORTANT (comme l'ancien onboarding « Créer une organisation ») :
+        // appelé SYNCHRONEMENT dans ce clic (jamais différé après un `await`)
+        // — l'OAuth Google exige une activation utilisateur transitoire ;
+        // `activateShareSpaceDrive` consomme elle-même ce geste EN TOUT
+        // PREMIER (voir son en-tête).
+        var activation = useDrive ? activateShareSpaceDrive(name) : activateShareSpace(name);
+        activation.then(function () {
           alert("Espace partagé. L'application va se recharger.");
           location.reload();
         }).catch(function (e) { msg.style.color = "#8a3b2f"; msg.textContent = "Échec : " + ((e && e.message) || e); });
@@ -2558,6 +2711,12 @@
     // e2e puisse l'observer AVANT la promotion et vérifier qu'elle est
     // exactement celle portée par le manifeste APRÈS (workspaceId inchangé).
     _shareSpace: activateShareSpace,
+    // Lot 5 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : symétrique de
+    // `_shareSpace` ci-dessus, pour « Partager cet espace » VERS GOOGLE DRIVE
+    // — exerce le chemin complet (OAuth -> créer le dossier racine Drive ->
+    // promouvoir EN PLACE -> migrer -> vérifier -> activer) sans passer par
+    // le dialogue Réglages.
+    _shareSpaceDrive: activateShareSpaceDrive,
     _getSoloWorkspaceId: getOrCreateSoloWorkspaceId,
     // `_runGuardedMigration(engine, soloSnapshot)` : accès DIRECT à
     // l'orchestration de migration (sauvegarde -> plan -> seed -> vérification),

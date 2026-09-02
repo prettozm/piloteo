@@ -336,11 +336,21 @@ async function isOwnerAdmitted(adapter, workspaceId, identity) {
 }
 
 /**
- * PARCOURS_IDENTITE_CONTRACT.md, Lot 2 — « Partager cet espace » : promeut EN
- * PLACE un workspace SOLO existant (`workspaceId` fourni par l'appelant —
- * `local-backend.js`, identité solo FIXE de cet appareil) sur `handle`
- * (dossier déjà choisi). Symétrique de `createOrg` ci-dessus, avec DEUX
- * différences volontaires :
+ * PARCOURS_IDENTITE_CONTRACT.md, Lot 2 (+ Lot 5, câblage Drive) — cœur
+ * ADAPTER-AGNOSTIQUE de « Partager cet espace » : promeut EN PLACE un
+ * workspace SOLO existant (`workspaceId` fourni par l'appelant —
+ * `local-backend.js`, identité solo FIXE de cet appareil) sur un `adapter`
+ * (StorageAdapter) DÉJÀ CONSTRUIT — `FolderStorageAdapter` (mode Dossier,
+ * `promoteToOrg` ci-dessous) OU `GoogleDriveStorageAdapter` (mode Drive,
+ * `piloteo-drive-bridge.mjs#promoteDriveOrg`, Lot 5). EXPORTÉE (export ES
+ * nommé) précisément pour que `piloteo-drive-bridge.mjs` l'appelle SANS
+ * dupliquer la moindre logique de décision (`planPromotion`) ni de gestion de
+ * collision (`isWriteOnceCollision`/`memberRecordAlreadyPublished`/garde
+ * manifeste `getAllCandidates`) : toute la robustesse Lot 2 (durcie par 3
+ * rounds contrariant — promotion interrompue, slot owner empoisonné,
+ * comparaison canonique) s'applique donc IDENTIQUE en Drive, au lieu d'être
+ * ré-implémentée à côté (et donc susceptible de diverger/s'affaiblir).
+ * Symétrique de `createOrg` ci-dessus, avec DEUX différences volontaires :
  * 1. `workspace(Id)` N'EST JAMAIS généré ici : c'est CELUI fourni
  *    (`promoteSoloToOrg`, org-runtime.js) — « W-001 Local -> W-001 Shared »,
  *    jamais un nouveau workspace/export déguisé.
@@ -391,16 +401,17 @@ async function isOwnerAdmitted(adapter, workspaceId, identity) {
  * VÉRIFICATION FINALE avant de considérer la promotion réussie — jamais un
  * succès annoncé sans un engine réellement ouvrable.
  * Ne bascule PAS `piloteo_storage_mode` (même report qu'`createOrg`, voir sa
- * décision : `local-backend.js` doit d'abord republier les événements solo
- * existants — Point 5, `piloteo-migration-bridge.mjs` — et vérifier le
- * round-trip AVANT `activateOrgStorageMode()`).
- * @param {{handle:*, workspaceId:string, name:string, consultantId?:string, identity?:object}} params
- * @returns {Promise<{engine:object, adapter:object, manifest:object, alreadyPromoted:boolean, completedOwnerRecord:boolean}>}
+ * décision : l'appelant (`local-backend.js`) doit d'abord republier les
+ * événements solo existants — Point 5, `piloteo-migration-bridge.mjs` — et
+ * vérifier le round-trip AVANT d'activer le mode définitivement ;
+ * `activateOrgStorageMode()` ci-dessous pour le mode Dossier,
+ * `persistDriveOrgMode()`/`activateShareSpaceDrive` (Lot 5) pour Drive).
+ * @param {{adapter:object, workspaceId:string, name:string, consultantId?:string, identity?:object}} params
+ * @returns {Promise<{engine:object, adapter:object, manifest:object, identity:object, alreadyPromoted:boolean, completedOwnerRecord:boolean}>}
  */
-async function promoteToOrg({ handle, workspaceId, name, consultantId, identity } = {}) {
-  if (!handle) throw new Error("promoteToOrg: 'handle' requis (sélecteur de dossier déjà effectué).");
-  if (!workspaceId) throw new Error("promoteToOrg: 'workspaceId' requis (identité solo d'origine à conserver).");
-  const adapter = buildAdapter(handle);
+export async function promoteAdapterToOrg({ adapter, workspaceId, name, consultantId, identity } = {}) {
+  if (!adapter) throw new Error("promoteAdapterToOrg: 'adapter' requis (StorageAdapter déjà construit).");
+  if (!workspaceId) throw new Error("promoteAdapterToOrg: 'workspaceId' requis (identité solo d'origine à conserver).");
   await adapter.connect();
   const id = identity || (await getOrCreateIdentity());
 
@@ -412,7 +423,7 @@ async function promoteToOrg({ handle, workspaceId, name, consultantId, identity 
   const ownerAdmitted = existingManifest ? await isOwnerAdmitted(adapter, workspaceId, id) : false;
   const plan = planPromotion({ existingManifest, workspaceId, identity: id, ownerAdmitted });
   if (plan.kind === "conflict") {
-    throw new Error(`promoteToOrg: ${plan.reason}`);
+    throw new Error(`promoteAdapterToOrg: ${plan.reason}`);
   }
   if (plan.kind === "promote" || plan.kind === "complete-owner") {
     const org = promoteSoloToOrg({ workspaceId, name, identity: id, consultantId });
@@ -442,7 +453,7 @@ async function promoteToOrg({ handle, workspaceId, name, consultantId, identity 
         }
         if (contestedManifestCandidates.length > 0) {
           throw new Error(
-            "promoteToOrg: le slot manifeste de ce dossier est occupé (candidats illisibles ou " +
+            "promoteAdapterToOrg: le slot manifeste de ce dossier est occupé (candidats illisibles ou " +
             "divergents) alors qu'aucun manifeste exploitable n'a pu être lu — vérifiez le dossier " +
             "partagé (permissions/contenu) avant de réessayer de partager cet espace."
           );
@@ -491,7 +502,7 @@ async function promoteToOrg({ handle, workspaceId, name, consultantId, identity 
       const mine = await memberRecordAlreadyPublished(adapter, org.memberRecord);
       if (!mine) {
         throw new Error(
-          "promoteToOrg: le slot owner de ce dossier est occupé par une fiche tierce/hostile " +
+          "promoteAdapterToOrg: le slot owner de ce dossier est occupé par une fiche tierce/hostile " +
           "(memberId owner contesté). Retirez cette fiche du dossier partagé (permissions du " +
           "dossier) avant de réessayer de partager cet espace."
         );
@@ -504,12 +515,32 @@ async function promoteToOrg({ handle, workspaceId, name, consultantId, identity 
   // place, owner déjà admis) — on rouvre simplement l'organisation existante.
   const engine = await openOrgEngine({ adapter, identity: id, consultantId });
   return {
-    engine: withFolderName(engine, handle),
+    engine,
     adapter,
     manifest: engine.manifest,
+    identity: id,
     alreadyPromoted: plan.kind === "already-promoted",
     completedOwnerRecord: plan.kind === "complete-owner",
   };
+}
+
+/**
+ * PARCOURS_IDENTITE_CONTRACT.md, Lot 2 — « Partager cet espace » en mode
+ * DOSSIER : mince enrobage de `promoteAdapterToOrg` ci-dessus qui construit le
+ * `FolderStorageAdapter` depuis `handle` (sélecteur natif déjà effectué) et
+ * ajoute `engine.folderName` pour l'affichage Réglages — AUCUNE logique de
+ * décision/collision ici (tout est dans le cœur adapter-agnostique). Le
+ * pendant Drive (Lot 5) est `piloteo-drive-bridge.mjs#promoteDriveOrg`, qui
+ * construit un `GoogleDriveStorageAdapter` puis appelle EXACTEMENT le même
+ * `promoteAdapterToOrg` (import ES direct, jamais dupliqué).
+ * @param {{handle:*, workspaceId:string, name:string, consultantId?:string, identity?:object}} params
+ * @returns {Promise<{engine:object, adapter:object, manifest:object, alreadyPromoted:boolean, completedOwnerRecord:boolean}>}
+ */
+async function promoteToOrg({ handle, workspaceId, name, consultantId, identity } = {}) {
+  if (!handle) throw new Error("promoteToOrg: 'handle' requis (sélecteur de dossier déjà effectué).");
+  const adapter = buildAdapter(handle);
+  const result = await promoteAdapterToOrg({ adapter, workspaceId, name, consultantId, identity });
+  return Object.assign({}, result, { engine: withFolderName(result.engine, handle) });
 }
 
 /**
