@@ -93,7 +93,7 @@
 import * as cryptoService from "../crypto/crypto-service.js";
 import { createMembership, MembershipStore } from "./memberships.js";
 import { createInvitation, isValid, consume, canonicalPayload as invitationCanonicalPayload } from "./invitations.js";
-import { createTeamWorkspace } from "./workspace.js";
+import { createTeamWorkspace, DEFAULT_SCHEMA_VERSION } from "./workspace.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -179,6 +179,180 @@ export function createOrganization({ name, identity, consultantId } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Promotion solo -> organisation — docs/next/PARCOURS_IDENTITE_CONTRACT.md
+// Lot 2 (« Partager cet espace »). Symétrique de `createOrganization`
+// ci-dessus, mais CONSERVE un `workspaceId` FOURNI (celui du workspace solo
+// d'origine — `src/integration/solo-store.js` : « un `workspaceId`/`actorId`
+// FIXES, persistés une fois ») au lieu d'en générer un nouveau via
+// `createTeamWorkspace`. « W-001 Local -> W-001 Shared » : PAS de nouveau
+// workspace, PAS un export vers une organisation fraîche — c'est le MÊME
+// espace qui devient partagé. Reste, comme `createOrganization`, une
+// fonction PURE (décision 1 en tête de fichier) : elle ne publie rien
+// elle-même (l'appelant écrit `manifest`/`memberRecord` via
+// `org-folder-store.js#writeManifest`/`writeMemberRecord`, EXACTEMENT comme
+// `createOrganization`) et ne républie pas non plus les événements solo
+// existants — cela reste le rôle du pipeline de migration DÉJÀ committé
+// (`src/integration/migration.js`/`piloteo-migration-bridge.mjs`, Point 5) :
+// une fois le manifeste publié avec CE `workspaceId`, `org-engine.js#commit`
+// diffe (`snapshotToEventsDiff`) sur `manifest.workspaceId` — donc sur le
+// MÊME workspace que le snapshot solo — et republie exactement les entités
+// manquantes (idempotent, `parentEventId` préservé par `snapshotToEventsDiff`,
+// non dupliqué ici).
+// ---------------------------------------------------------------------------
+
+/**
+ * Construit la genèse d'une organisation qui PROMEUT en place un workspace
+ * solo existant (Lot 2) : même forme que `createOrganization` — `{workspace,
+ * manifest, ownerMembership, memberRecord}` — mais `workspace.workspaceId`/
+ * `manifest.workspaceId` valent EXACTEMENT le `workspaceId` fourni, jamais un
+ * UUID frais. Le créateur (`identity`, l'identité solo de cet appareil) en
+ * est le OWNER, ancré write-once dans le manifeste retourné (§5.1, comme
+ * `createOrganization`) — l'appelant est responsable de la publication réelle
+ * (`writeManifest`/`writeMemberRecord`) et de la republication des événements
+ * (voir en-tête ci-dessus).
+ * @param {{workspaceId:string, name:string, identity:{memberId:string, publicKeyJwk:object}, consultantId?:string}} params
+ * @returns {{workspace:{workspaceId:string,name:string,schemaVersion:number}, manifest:object, ownerMembership:object, memberRecord:object}}
+ */
+export function promoteSoloToOrg({ workspaceId, name, identity, consultantId } = {}) {
+  if (!workspaceId || typeof workspaceId !== "string") {
+    throw new Error("promoteSoloToOrg: 'workspaceId' requis (celui de l'espace solo d'origine, à conserver)");
+  }
+  if (!identity || !identity.memberId || !identity.publicKeyJwk) {
+    throw new Error("promoteSoloToOrg: 'identity' invalide (newMemberIdentity() attendu)");
+  }
+
+  const ownerMembership = createMembership({
+    workspaceId,
+    memberId: identity.memberId,
+    consultantId,
+    role: "owner",
+  });
+
+  const manifest = {
+    workspaceId,
+    // Nom d'affichage — même convention que `createOrganization` (non
+    // sécuritaire, cf. sa décision 2 correspondante).
+    name: name || null,
+    ownerMemberId: identity.memberId,
+    ownerPublicKeyJwk: identity.publicKeyJwk,
+    ownerConsultantId: consultantId ?? null,
+    createdAt: nowIso(),
+  };
+
+  const memberRecord = {
+    kind: "member",
+    memberId: identity.memberId,
+    publicKeyJwk: identity.publicKeyJwk,
+    membership: ownerMembership,
+    authorization: { genesis: true },
+  };
+
+  return {
+    workspace: { workspaceId, name: name || null, schemaVersion: DEFAULT_SCHEMA_VERSION },
+    manifest,
+    ownerMembership,
+    memberRecord,
+  };
+}
+
+/**
+ * Décide, SANS AUCUNE E/S (le manifeste éventuellement déjà publié ET l'état
+ * d'admission RÉEL de l'owner sont fournis par l'appelant — `promoteToOrg`,
+ * `piloteo-org-bridge.mjs`, via `readManifest`/`buildTrustedMembership` —
+ * jamais relus ici), si une promotion solo -> organisation
+ * (`promoteSoloToOrg` ci-dessus) peut avoir lieu sur le dossier/Drive visé.
+ *
+ * CORRECTIF SÉCURITÉ (attaque contrariant « promotion interrompue qui brique
+ * le dossier à vie », repro `attack1-interrupted-promotion.mjs`, CASSÉ→TENU) —
+ * avant ce correctif, une SEULE écriture manquante après un manifeste déjà
+ * publié (panne réseau/permission FS révoquée EXACTEMENT entre
+ * `writeManifest` et `writeMemberRecord`, cf. `promoteToOrg`) faisait
+ * décider `"already-promoted"` sur la seule PRÉSENCE du manifeste — un NO-OP
+ * qui ne republie JAMAIS la fiche membre owner manquante. Or
+ * `buildTrustedMembership`/`membershipStore` n'admettent l'owner QUE si sa
+ * fiche `kind:"member"` (genèse) est effectivement publiée ET valide (le
+ * manifeste seul ancre la clé/le rôle pour VÉRIFIER les fiches des AUTRES
+ * membres, cf. `buildTrustedMembership` décision « racine de confiance
+ * préexistante » — il ne suffit jamais, à lui seul, à admettre l'owner dans
+ * `membershipStore`/`openOrgSync`) : le dossier restait bloqué à vie
+ * (`openOrgSync` : « n'est pas membre de ce workspace »), sans AUCUN chemin
+ * de réparation — un second clic « Partager cet espace » (même utilisateur,
+ * même dossier) ne réparait rien. Ce correctif ajoute un paramètre
+ * `ownerAdmitted` (booléen, calculé par l'appelant via
+ * `buildTrustedMembership`/`org-folder-store.js#loadTrust` — PAS déduit
+ * d'une simple présence de fichier) : la décision `"already-promoted"`
+ * EXIGE désormais que l'owner soit RÉELLEMENT admis, jamais seulement que le
+ * manifeste existe.
+ *
+ * QUATRE issues, jamais une cinquième (garantit qu'une seconde promotion du
+ * même workspace ne réécrit JAMAIS le manifeste ni ne crée un second owner —
+ * oracle Lot 2 — TOUT EN restant réparable après une panne partielle) :
+ * - `{kind:"promote"}` — aucun manifeste publié : l'appelant peut construire
+ *   la genèse (`promoteSoloToOrg`) et publier manifeste + fiche owner.
+ * - `{kind:"complete-owner", manifest}` — un manifeste existe déjà, MÊME
+ *   `workspaceId` ET MÊME owner (memberId + clé publique), mais l'owner
+ *   N'EST PAS (encore/plus) admis par `buildTrustedMembership` — cas d'une
+ *   promotion interrompue APRÈS `writeManifest` mais AVANT (ou pendant)
+ *   `writeMemberRecord`. L'appelant republie UNIQUEMENT la fiche membre
+ *   owner (`writeMemberRecord`), JAMAIS un second manifeste (`writeManifest`
+ *   n'est PAS rappelée — le manifeste, déjà write-once et déjà correct pour
+ *   CET owner/CE workspace, n'a besoin d'aucune réécriture). La fiche owner
+ *   étant déterministe (mêmes `workspaceId`/`identity`/`consultantId` ->
+ *   même contenu, `promoteSoloToOrg` est pure), la républier est sûre.
+ * - `{kind:"already-promoted", manifest}` — un manifeste existe déjà,
+ *   correspond EXACTEMENT à CETTE promotion (même `workspaceId`, même
+ *   owner), ET l'owner est RÉELLEMENT admis (`ownerAdmitted:true`). C'est le
+ *   cas nominal d'IDEMPOTENCE (contrat Lot 2) : un second appel de
+ *   « Partager cet espace » par la MÊME personne sur un dossier DÉJÀ promu
+ *   ET DÉJÀ FONCTIONNEL est un NO-OP sûr — l'appelant ne publie RIEN,
+ *   il rouvre simplement l'organisation existante.
+ * - `{kind:"conflict", reason}` — un manifeste existe mais NE correspond PAS
+ *   (autre `workspaceId` : ce dossier porte déjà une AUTRE organisation ; ou
+ *   même `workspaceId` avec un owner différent — ne devrait jamais se
+ *   produire tant que le write-once du manifeste tient, gardé ici en défense
+ *   en profondeur) : refus explicite, AUCUNE écriture, JAMAIS de double
+ *   genèse ni d'écrasement silencieux d'un owner par un autre. INCHANGÉ par
+ *   ce correctif : `ownerAdmitted` n'intervient QUE quand `workspaceId`/owner
+ *   correspondent déjà — un conflit reste un conflit AVANT toute écriture,
+ *   qu'il y ait ou non une fiche owner admise pour un AUTRE `(workspaceId,
+ *   owner)` (aucune régression sur l'anti-usurpation).
+ * @param {{existingManifest:object|null, workspaceId:string, identity:{memberId:string, publicKeyJwk:object}, ownerAdmitted?:boolean}} params
+ *   `ownerAdmitted` : requis dès que `existingManifest` correspond à CETTE
+ *   promotion (même workspace/owner) — DOIT venir d'une vérification RÉELLE
+ *   (`buildTrustedMembership`/`loadTrust`), jamais d'une simple présence de
+ *   fichier. Absent/`false` par défaut (choix sûr : au pire une republication
+ *   de fiche owner redondante mais idempotente, JAMAIS un no-op qui masque
+ *   un owner non admis).
+ * @returns {{kind:"promote"}|{kind:"complete-owner", manifest:object}|{kind:"already-promoted", manifest:object}|{kind:"conflict", reason:string}}
+ */
+export function planPromotion({ existingManifest, workspaceId, identity, ownerAdmitted = false } = {}) {
+  if (!workspaceId || typeof workspaceId !== "string") {
+    throw new Error("planPromotion: 'workspaceId' requis");
+  }
+  if (!identity || !identity.memberId || !identity.publicKeyJwk) {
+    throw new Error("planPromotion: 'identity' invalide (newMemberIdentity() attendu)");
+  }
+  if (!existingManifest) return { kind: "promote" };
+
+  const sameWorkspace = existingManifest.workspaceId === workspaceId;
+  const sameOwner =
+    existingManifest.ownerMemberId === identity.memberId &&
+    deepEqualJson(existingManifest.ownerPublicKeyJwk, identity.publicKeyJwk);
+
+  if (sameWorkspace && sameOwner) {
+    return ownerAdmitted === true
+      ? { kind: "already-promoted", manifest: existingManifest }
+      : { kind: "complete-owner", manifest: existingManifest };
+  }
+  return {
+    kind: "conflict",
+    reason: sameWorkspace
+      ? "un manifeste existe déjà pour cet espace avec un propriétaire différent (jamais réécrit — write-once)"
+      : "ce dossier/Drive contient déjà une organisation différente (jamais écrasée par une promotion)",
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Invitations — §5.2 : signées, autorité de l'émetteur vérifiée à l'émission
 // ---------------------------------------------------------------------------
 
@@ -203,10 +377,33 @@ export function createOrganization({ name, identity, consultantId } = {}) {
  * néanmoins la classe de faille immédiatement (un accepteur ne peut plus
  * jamais choisir librement un `consultantId` usurpant un tiers, qu'un
  * `consultantId` cible ait été précisé à l'émission ou non).
+ * `scope` (docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 3) : le marqueur
+ * "utilisateur global" — SIGNÉ dans l'invitation (`invitations.js#canonicalPayload`),
+ * exactement comme `consultantId` l'a été au round 4 ci-dessus. Seul un
+ * émetteur owner/admin peut le poser à l'émission ; `acceptInvitation` et
+ * `buildTrustedMembership` n'admettent JAMAIS un `scope` fourni librement par
+ * l'accepteur ou déclaré sur une fiche membre — la seule source de confiance
+ * est CETTE invitation vérifiée. `role:"user"` + `scope:"global"` = non-admin
+ * (ne gère pas les membres de l'organisation, cf. `inviteMember`/`createRevocation`
+ * qui restent gardés par `issuerMembership.role in {owner,admin}`) mais voit/
+ * écrit les données MÉTIER sans restriction de `consultantId`
+ * (`core/permissions.js#isGlobalUser`). Optionnel (défaut : absent, "non
+ * global") — n'a de sens qu'avec `role:"user"` (un `role:"admin"` voit déjà
+ * tout ; poser `scope` dessus est accepté mais sans effet, `isAdmin` court-
+ * circuite `isGlobalUser`).
+ * `displayName` (docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 4) : le nom
+ * saisi par l'émetteur (owner/admin) pour le FUTUR membre au moment de
+ * l'invitation — pur LIBELLÉ D'AFFICHAGE (comme `email`/`googleSubject`,
+ * memberships.js), jamais couvert par `proof` (PAS ajouté à
+ * `invitations.js#canonicalPayload` : ce n'est délibérément PAS un privilège
+ * à prouver, contrairement à `consultantId`/`scope`) et jamais lu par
+ * `core/permissions.js`. Attaché à l'objet invitation APRÈS signature,
+ * uniquement pour voyager avec elle (code d'invitation) jusqu'à
+ * `acceptInvitation`, qui le reprend sur la fiche membre du nouvel arrivant.
  * @param {{workspaceId:string, role?:"owner"|"admin"|"user", expectedGoogleId?:string|null,
  *          issuer:{memberId:string}, issuerMembership:object, signer:Function, ttlMs?:number,
- *          consultantId?:string|null}} params
- * @returns {Promise<object>} invitation, avec `issuerId`/`consultantId` en plus (§5.2 / round 4)
+ *          consultantId?:string|null, scope?:"global", displayName?:string|null}} params
+ * @returns {Promise<object>} invitation, avec `issuerId`/`consultantId`/`scope`/`displayName` en plus (§5.2 / round 4 / Lot 3 / Lot 4)
  */
 export async function inviteMember({
   workspaceId,
@@ -217,6 +414,8 @@ export async function inviteMember({
   signer,
   ttlMs,
   consultantId = null,
+  scope,
+  displayName,
 } = {}) {
   if (!workspaceId) throw new Error("inviteMember: 'workspaceId' requis");
   if (typeof signer !== "function") {
@@ -248,7 +447,12 @@ export async function inviteMember({
   // émetteur↔proof est structurel, pas seulement une conséquence de la
   // logique de `verifyInvitation`) — toute modification d'`issuerId` après
   // signature invalide donc le proof.
-  const invitation = await createInvitation({ workspaceId, expectedGoogleId, role, ttlMs, signer, issuerId: issuer.memberId, consultantId });
+  const invitation = await createInvitation({ workspaceId, expectedGoogleId, role, ttlMs, signer, issuerId: issuer.memberId, consultantId, scope });
+  // Lot 4 : `displayName` n'entre PAS dans les octets signés (voir doc
+  // ci-dessus) — attaché après coup, purement pour transport avec le code
+  // d'invitation. `undefined` (non fourni) -> absent de l'objet, pas de
+  // régression des invitations existantes (mêmes clés qu'avant ce lot).
+  if (displayName !== undefined) invitation.displayName = displayName;
   return invitation;
 }
 
@@ -303,6 +507,11 @@ export async function verifyInvitation(invitation, { registry } = {}) {
     // pour `consultantId` — recomposé depuis l'invitation ANNONCÉE ; s'il a
     // été modifié après signature, le `proof` recomposé ne correspondra plus.
     consultantId: invitation.consultantId,
+    // Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : IDEM pour `scope` —
+    // recomposé depuis l'invitation ANNONCÉE ; s'il a été ajouté/modifié après
+    // signature (ex: pour s'auto-promouvoir "global"), le `proof` recomposé ne
+    // correspondra plus.
+    scope: invitation.scope,
   });
   const bytes = new TextEncoder().encode(canonical);
   let sigOk = false;
@@ -401,6 +610,17 @@ export async function acceptInvitation({ invitation, identity, consultantId: _ig
   // Round 4 : SEULE source de confiance pour `consultantId` — JAMAIS le
   // paramètre `consultantId` reçu par cette fonction (voir en-tête).
   const verifiedConsultantId = invitation.consultantId ?? null;
+  // Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : IDEM pour `scope` —
+  // SEULE source de confiance est l'invitation elle-même (elle sera revérifiée
+  // cryptographiquement par `buildTrustedMembership`/`verifyInvitation` en
+  // aval ; ici on ne fait que la propager telle quelle, comme `consultantId`).
+  const verifiedScope = invitation.scope === "global" ? "global" : null;
+  // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : `displayName` repris
+  // TEL QUEL depuis l'invitation (non signé, non vérifié — comme
+  // `email`/`googleSubject`, JAMAIS une décision de sécurité, voir
+  // `inviteMember`/`memberships.js`) : un simple libellé choisi par
+  // l'émetteur à l'invitation, qui voyage avec elle jusqu'à la fiche membre.
+  const displayName = invitation.displayName ?? null;
 
   const membership = createMembership({
     workspaceId: invitation.workspaceId,
@@ -408,6 +628,8 @@ export async function acceptInvitation({ invitation, identity, consultantId: _ig
     consultantId: verifiedConsultantId,
     role: invitation.role,
     googleSubject: googleId,
+    displayName,
+    scope: verifiedScope,
   });
 
   const joinBytes = new TextEncoder().encode(
@@ -604,10 +826,40 @@ export async function verifyRevocation(revocation, { registry } = {}) {
 // vérifiées).
 // ---------------------------------------------------------------------------
 
+/**
+ * CORRECTIF SÉCURITÉ (contrariant round 3, repro `attack-p3-critical-deepequal.mjs`,
+ * CASSÉ->TENU — AUCUN attaquant requis) : compare en CONTENU CANONIQUE (clés
+ * d'objet triées récursivement, via `canonicalJsonStringify` ci-dessous —
+ * DÉJÀ utilisée pour la même raison par la déduplication anti-usurpation
+ * round 1, jamais une 2e implémentation qui pourrait diverger), JAMAIS un
+ * `JSON.stringify` brut (sensible à l'ORDRE d'insertion des clés).
+ *
+ * Sur `GoogleDriveStorageAdapter`, `putImmutable` sérialise via une forme
+ * CANONIQUE (clés triées) AVANT écriture (`google-drive-adapter.js
+ * #canonicalStringify`, §9d) — un `publicKeyJwk` RELU depuis Drive a donc
+ * TOUJOURS ses clés triées alphabétiquement, alors que l'export WebCrypto
+ * natif d'une identité LOCALE (`crypto.subtle.exportKey('jwk', ...)`,
+ * `newMemberIdentity()`), jamais repassée par le stockage, garde son ORDRE
+ * NATIF (ex: `key_ops, ext, alg, crv, x, kty` sous Node) — deux
+ * représentations SÉMANTIQUEMENT identiques de LA MÊME clé, dont le
+ * `JSON.stringify` brut diffère pourtant. `deepEqualJson(a,b)` était donc
+ * `false` pour le PROPRE owner légitime dès qu'un manifeste avait transité
+ * par Drive : `planPromotion` (via `sameOwner`) et `genesisMismatchReason`
+ * (fiche genèse) répondaient toutes deux à tort « propriétaire différent »/
+ * « genèse forgée » — un faux conflit PERMANENT (le manifeste est write-once,
+ * l'ordre de ses clés ne change jamais), sans aucune fiche hostile à retirer
+ * (ce n'est pas une intrusion, seulement un bug de comparaison). Corrigé une
+ * fois ICI : `deepEqualJson` est utilisée par `planPromotion` (`sameOwner`)
+ * ET `genesisMismatchReason` (owner de la fiche genèse) — ce correctif
+ * durcit donc aussi la racine de la chaîne de confiance, pas seulement Lot 2.
+ *
+ * Deux objets réellement DIFFÉRENTS restent différents (le contenu, lui, n'a
+ * pas changé) ; deux objets ÉGAUX à l'ordre des clés près deviennent égaux.
+ * `canonicalJsonStringify` gère déjà correctement `null`/primitives/tableaux
+ * (ordre des TABLEAUX conservé — seul l'ordre des CLÉS D'OBJET est ignoré).
+ */
 function deepEqualJson(a, b) {
-  // Comparaison suffisante ici : publicKeyJwk est un objet JSON "plat" issu
-  // d'un seul export WebCrypto (pas de fonctions/cycles/Map/Set à comparer).
-  return JSON.stringify(a) === JSON.stringify(b);
+  return canonicalJsonStringify(a) === canonicalJsonStringify(b);
 }
 
 /** Registre de confiance interne — expose l'interface `getPublicKey` attendue
@@ -1229,6 +1481,31 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
     const verifiedConsultantId = isGenesis
       ? (manifest.ownerConsultantId ?? null)
       : (record.authorization.invitation.consultantId ?? null);
+    // Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) — MÊME LISTE BLANCHE
+    // que `consultantId` juste au-dessus, pour EXACTEMENT la même raison :
+    // `scope` (marqueur "utilisateur global") ne doit JAMAIS venir de
+    // `record.membership.scope` (auto-déclaré par l'accepteur, non couvert
+    // par `joinProof`) — sinon n'importe quel membre invité comme simple
+    // `user` rattaché à un consultant pourrait publier une fiche avec
+    // `membership.scope:"global"` et obtenir la vue/écriture métier complète
+    // sans jamais avoir été invité comme tel (escalade de privilège).
+    //   - genèse   : jamais "global" — le owner est déjà admin (super-ensemble
+    //     de "global"), aucun manifeste n'ancre de scope pour lui, et un
+    //     scope inventé sur une fiche genèse divergente n'a de toute façon
+    //     aucune incidence (le rôle "owner" court-circuite `isGlobalUser`).
+    //   - sinon    : EXCLUSIVEMENT `record.authorization.invitation.scope`,
+    //     tel qu'ANNONCÉ par l'invitation dont l'authenticité (émetteur
+    //     owner/admin actif, `proof` couvrant `scope` depuis
+    //     `invitations.js#canonicalPayload`) a déjà été établie par
+    //     `verifyInvitation` plus haut dans la BFS (passe 1) — un `scope`
+    //     modifié après signature invaliderait déjà `invCheck.ok` et la
+    //     fiche entière serait rejetée avant d'atteindre ce point. `null`
+    //     ("non global") si l'invitation n'en portait pas, ou toute valeur
+    //     différente de la seule valeur reconnue "global" (défense en
+    //     profondeur : jamais le plus permissif par défaut).
+    const verifiedScope = isGenesis
+      ? null
+      : (record.authorization.invitation.scope === "global" ? "global" : null);
     const status = revokedSet.has(record.memberId) ? "revoked" : "active";
     registry._add(record.memberId, record.publicKeyJwk, verifiedRole, status);
     membershipStore.add({
@@ -1236,10 +1513,16 @@ export async function buildTrustedMembership({ manifest, memberRecords = [], rev
       memberId: record.memberId,
       role: verifiedRole,
       consultantId: verifiedConsultantId,
+      scope: verifiedScope,
       status,
       // Champs non sécuritaires (jamais consultés par une décision — voir ci-dessus) :
       googleSubject: record.membership.googleSubject ?? null,
       email: record.membership.email ?? null,
+      // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : IDEM pour
+      // `displayName` — simple libellé auto-déclaré par l'accepteur (recopié
+      // depuis l'invitation reçue, elle-même non signée sur ce champ), au
+      // même titre que `googleSubject`/`email` juste au-dessus.
+      displayName: record.membership.displayName ?? null,
     });
   }
 

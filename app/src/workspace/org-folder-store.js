@@ -112,6 +112,133 @@ export async function writeMemberRecord(adapter, record) {
   return blob;
 }
 
+// ---------------------------------------------------------------------------
+// CORRECTIF SÉCURITÉ (contrariant, round 2 — « empoisonnement du slot
+// write-once de l'owner par un tiers », repro `attack2-poisoned-owner-slot.mjs`,
+// docs/next/ORG_TRUST_HARDENING_CONTRACT.md §3) — PARCOURS_IDENTITE_CONTRACT.md
+// Lot 2, « Partager cet espace » : le round 1 (« promotion interrompue »)
+// répare une fiche owner MANQUANTE en la republiant (`piloteo-org-bridge.mjs
+// #promoteToOrg`, cas `"complete-owner"`) ; mais `writeManifest` publie
+// `ownerMemberId`/`ownerPublicKeyJwk` en CLAIR (le modèle « dossier de
+// confiance » ne chiffre rien, CLAUDE.md §4) : n'IMPORTE QUEL AUTRE écrivain
+// du dossier peut les lire SANS aucune clé privée et déposer, AVANT le retry
+// légitime, une fiche `kind:"member"` sous CE MÊME `memberId` mais avec SA
+// PROPRE clé — occupant le slot write-once irréversiblement. Sans ce
+// correctif, `writeMemberRecord` de la réparation collisionne, l'erreur était
+// AVALÉE sans vérifier le contenu déjà présent, et le dossier restait bloqué
+// à vie (même symptôme que le round 1, « n'est pas membre »), pour un tiers
+// n'ayant besoin d'AUCUNE signature.
+//
+// Principe (même esprit que §1 du contrat, round 1 : jamais une décision de
+// sécurité sur `createdTime`/l'ordre — ici sur la simple PRÉSENCE d'un
+// fichier) : une collision write-once sur `(kind:"member", memberId)`
+// n'est un no-op sûr QUE si le contenu déjà présent est EXACTEMENT celui
+// qu'on voulait publier (même clé, même contenu canonique — la fiche owner
+// est déterministe, `promoteSoloToOrg` est pure). Un contenu DIVERGENT est
+// un slot CONTESTÉ (tiers/hostile) : jamais avalé silencieusement, jamais
+// laissé à `openOrgEngine` comme arbitre final (dont le message « n'est pas
+// membre » redeviendrait indiscernable d'une simple panne réseau non
+// réparée) — signalé par une erreur EXPLICITE et actionnable (§3 du contrat :
+// un DoS d'écrivain hostile doit rester détectable et récupérable, jamais un
+// blocage silencieux ; la récupération elle-même — retirer la fiche hostile —
+// reste hors du périmètre logiciel, elle relève des permissions du dossier
+// partagé, CLAUDE.md §4).
+// ---------------------------------------------------------------------------
+
+/**
+ * CORRECTIF SÉCURITÉ (contrariant round 3 — « collision non détectée en
+ * Drive », même repro/axe que le round 2 mais transport différent) : le
+ * catch de `"complete-owner"` (`piloteo-org-bridge.mjs#promoteToOrg`)
+ * reconnaissait une collision write-once UNIQUEMENT via le message
+ * `/write-once/i` — exact pour `FolderStorageAdapter`/`InMemoryStorageAdapter`
+ * (§ leur propre message « write-once violé »), mais `GoogleDriveStorageAdapter
+ * #putImmutable` lève `ImmutableConflictError` (`google-drive-adapter.js`),
+ * dont le message dit `IMMUTABLE_CONFLICT` — SANS jamais le mot « write-once ».
+ * Sans cette fonction, une collision RÉELLE sur Drive n'aurait JAMAIS
+ * déclenché la comparaison de contenu (round 2) : `promoteToOrg` aurait
+ * traité toute collision Drive comme une erreur ordinaire — pas un faux
+ * succès, mais pas non plus le diagnostic « owner contesté » actionnable,
+ * ni la republication idempotente d'une collision légitime (ma propre fiche).
+ * Duck-typée à dessein (jamais un `instanceof` qui obligerait ce module,
+ * storage-agnostique, à importer un adapter concret) : reconnaît le message
+ * `write-once` (Folder/InMemory) ET le NOM d'erreur `ImmutableConflictError`
+ * (Drive) — les deux SEULS signaux de « ce slot est déjà occupé » que les
+ * adapters committés produisent réellement.
+ * @param {*} err
+ * @returns {boolean}
+ */
+export function isWriteOnceCollision(err) {
+  if (!err) return false;
+  if (err.name === "ImmutableConflictError") return true;
+  const msg = String(err.message || err);
+  return /write-once/i.test(msg);
+}
+
+/** Sérialisation canonique (clés d'objet triées récursivement, ordre des
+ *  tableaux conservé) — même algorithme que `org-runtime.js#canonicalJsonStringify`/
+ *  `google-drive-adapter.js#canonicalStringify`, réimplémentée ICI plutôt
+ *  qu'importée (aucune des deux n'est exportée, et ce module dépend déjà de
+ *  `org-runtime.js` dans l'autre sens — `buildTrustedMembership` ci-dessous —
+ *  jamais l'inverse). Utile pour comparer deux fiches SANS faux "divergent"
+ *  dû à un simple réordonnancement de clés survenu en transit (Drive). */
+function canonicalStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(canonicalStringify).join(",") + "]";
+  const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalStringify(value[k])).join(",") + "}";
+}
+
+/**
+ * Lit TOUS les candidats physiques déjà publiés au slot `(kind:"member", id)`
+ * — réutilise EXACTEMENT la même stratégie que `listGovernance` ci-dessous
+ * (round 1 du durcissement, DRIVE_ONBOARDING_CONTRACT.md) : `getAllCandidates`
+ * quand l'adapter l'expose (Drive, collisions physiques possibles SANS
+ * signature ni rôle requis — un tiers avec accès Éditeur brut peut y déposer
+ * un second fichier homonyme), repli sur `get()` best-effort sinon
+ * (`FolderStorageAdapter` : write-once garanti par le filesystem, UN SEUL
+ * candidat physiquement possible — mais un slot illisible/corrompu ne doit
+ * jamais faire lever cette fonction, jamais plus qu'ailleurs dans ce module).
+ * Ne lève JAMAIS : `[]` si le slot est vide/illisible/l'adapter en échec.
+ * @param {import("../storage/storage-adapter.js").StorageAdapter} adapter
+ * @param {string} memberId
+ * @returns {Promise<Array<object>>}
+ */
+export async function getMemberCandidates(adapter, memberId) {
+  if (typeof adapter.getAllCandidates === "function") {
+    try {
+      return await adapter.getAllCandidates("member", memberId);
+    } catch {
+      return [];
+    }
+  }
+  try {
+    const blob = await adapter.get("member", memberId);
+    return blob ? [blob] : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Vrai si `candidate` (la fiche membre qu'on VOULAIT publier — typiquement
+ * `org.memberRecord` recalculé par `promoteSoloToOrg`, déterministe) est
+ * DÉJÀ présente, à l'identique (contenu canonique, `kind:"member"` inclus,
+ * exactement ce que `writeMemberRecord` aurait écrit), parmi les candidats
+ * réellement publiés au même slot. `false` si le slot est vide (rien à
+ * comparer — pas le cas d'usage visé ici, une collision suppose un candidat)
+ * OU si tout candidat présent DIVERGE (clé publique et/ou contenu différents
+ * — signature d'un tiers/hostile, cf. en-tête ci-dessus).
+ * @param {import("../storage/storage-adapter.js").StorageAdapter} adapter
+ * @param {object} candidate fiche membre attendue (mêmes champs qu'un `memberRecord` d'`org-runtime.js`)
+ * @returns {Promise<boolean>}
+ */
+export async function memberRecordAlreadyPublished(adapter, candidate) {
+  if (!candidate || !candidate.memberId) return false;
+  const candidates = await getMemberCandidates(adapter, candidate.memberId);
+  const expected = canonicalStringify({ ...candidate, kind: "member" });
+  return candidates.some((blob) => canonicalStringify(blob) === expected);
+}
+
 /**
  * Publie une fiche de révocation SOUS LE MÊME kind de stockage `"member"`
  * (aucun nouveau kind — §1 du contrat), avec un id distinct

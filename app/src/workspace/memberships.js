@@ -1,8 +1,13 @@
 // src/workspace/memberships.js
 //
 // Modèle membership — CONTRACTS §8 :
-//   membership: { workspaceId, memberId, googleSubject, email, consultantId,
-//                 role:"owner|admin|user", status:"active|revoked" }
+//   membership: { workspaceId, memberId, googleSubject, email, displayName,
+//                 consultantId, role:"owner|admin|user", status:"active|revoked" }
+//
+// `displayName` (docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 4) : au même
+// titre que `googleSubject`/`email`, un simple LIBELLÉ d'affichage — jamais
+// consulté par `core/permissions.js` ni par une décision de sécurité
+// quelconque (voir `org-runtime.js#buildTrustedMembership`, liste blanche).
 //
 // Décisions / hypothèses :
 // 1. CRUD **en mémoire** uniquement (LocalStore/IndexedDB, CONTRACTS §9, hors
@@ -32,9 +37,11 @@ export function createMembership({
   memberId,
   googleSubject = null,
   email = null,
+  displayName = null,
   consultantId,
   role = "user",
   status = "active",
+  scope = null,
 } = {}) {
   if (!workspaceId) throw new Error("createMembership: 'workspaceId' requis");
   if (!memberId) throw new Error("createMembership: 'memberId' requis");
@@ -45,7 +52,16 @@ export function createMembership({
   if (consultantId === undefined) throw new Error("createMembership: 'consultantId' requis (passer explicitement 'null' si aucun consultant n'est encore lié)");
   if (!VALID_ROLES.has(role)) throw new Error(`createMembership: rôle invalide '${role}'`);
   if (!VALID_STATUSES.has(status)) throw new Error(`createMembership: statut invalide '${status}'`);
-  return { workspaceId, memberId, googleSubject, email, consultantId, role, status };
+  // Lot 3 (PARCOURS_IDENTITE_CONTRACT.md) : `scope` porte le marqueur
+  // "utilisateur global" (`"global"` ou `null`, jamais autre chose) — la
+  // valeur de CONFIANCE ne vient jamais de ce constructeur lui-même (une
+  // simple structure de données, sans notion de preuve) mais UNIQUEMENT de
+  // `org-runtime.js#buildTrustedMembership`, qui ne l'alimente que depuis
+  // l'invitation SIGNÉE vérifiée (jamais une fiche membre auto-déclarée).
+  if (scope !== null && scope !== "global") {
+    throw new Error(`createMembership: scope invalide '${scope}' (seule 'global' ou null est supportée)`);
+  }
+  return { workspaceId, memberId, googleSubject, email, displayName, consultantId, role, status, scope };
 }
 
 /**

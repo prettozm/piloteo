@@ -108,6 +108,25 @@ export function isAdmin(membership) {
   return !!membership && (membership.role === "admin" || membership.role === "owner");
 }
 
+// docs/next/PARCOURS_IDENTITE_CONTRACT.md (Lot 3) — « utilisateur global » :
+// non-admin (ne gère PAS la gouvernance d'organisation — inviter/révoquer,
+// c'est gardé ailleurs par `org-runtime.js` sur le rôle réel `owner`/`admin`,
+// jamais ici) MAIS voit/écrit les données MÉTIER sans restriction de
+// `consultantId`, comme un admin. Représentation : `role==="user"` +
+// `scope==="global"`. Cette valeur ne doit JAMAIS être considérée comme une
+// preuve en elle-même par ce module : la seule construction qui a le droit de
+// la poser sur un membership de confiance est
+// `org-runtime.js#buildTrustedMembership`, qui ne la lit QUE depuis
+// l'invitation SIGNÉE vérifiée (liste blanche, jamais `record.membership.*`
+// auto-déclaré) — voir org-runtime.js pour l'anti-escalade. `permissions.js`
+// se contente de FAIRE CONFIANCE au `actorMembership` qu'on lui passe, exactement
+// comme il fait déjà confiance à `role`/`consultantId` : ce n'est pas ce
+// module qui vérifie l'authenticité de la portée, c'est celui qui construit
+// le membership.
+export function isGlobalUser(membership) {
+  return !!membership && membership.role === "user" && membership.scope === "global";
+}
+
 function s(v) {
   return v === undefined || v === null ? "" : String(v);
 }
@@ -158,7 +177,17 @@ export function affairIdsForUser(projection, consultantId) {
 export function evaluate({ actorMembership, projection, event, payload } = {}) {
   if (!actorMembership) return "reject";
   if (isRevoked(actorMembership)) return "reject";
-  if (isAdmin(actorMembership)) return "accept";
+  // Lot 3 : un « utilisateur global » a, pour les DROITS métier, exactement
+  // les mêmes règles qu'un admin (mêmes données, mêmes collections
+  // ADMIN_ONLY — « éditer les données métier de référence n'est pas de
+  // l'administration au sens de ce modèle », PARCOURS_IDENTITE_CONTRACT.md
+  // Lot 3). Ce module n'a AUCUNE notion de gouvernance d'organisation
+  // (inviter/révoquer/rôles) : ces opérations ne transitent jamais par
+  // `evaluate()`, elles sont gardées par `org-runtime.js` (`inviteMember`/
+  // `createRevocation`) sur le rôle RÉEL (`owner`/`admin` actif requis) — un
+  // « utilisateur global » (`role:"user"`) échoue déjà cette garde-là sans
+  // qu'aucune ligne ne soit nécessaire ici.
+  if (isAdmin(actorMembership) || isGlobalUser(actorMembership)) return "accept";
 
   if (!event || !event.entityType || !event.operation) return "reject";
 
@@ -296,7 +325,11 @@ export function filterProjectionForRole(projection, membership) {
     return emptyView();
   }
 
-  if (isAdmin(membership)) {
+  // Lot 3 : un « utilisateur global » voit TOUTE la projection métier, comme
+  // un admin (mêmes règles de lecture) — seule la gouvernance d'organisation
+  // (hors du ressort de ce module, voir `evaluate()` ci-dessus) lui reste
+  // fermée.
+  if (isAdmin(membership) || isGlobalUser(membership)) {
     const full = emptyView();
     for (const t of ENTITY_TYPES) full[t] = clone(proj[t] || {});
     return full;

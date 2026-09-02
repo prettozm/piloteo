@@ -85,11 +85,21 @@ import { openOrgEngine } from "./src/workspace/org-engine.js";
 import {
   newMemberIdentity,
   createOrganization,
+  promoteSoloToOrg,
+  planPromotion,
   inviteMember,
   acceptInvitation,
   createRevocation,
 } from "./src/workspace/org-runtime.js";
-import { writeManifest, writeMemberRecord, writeRevocation } from "./src/workspace/org-folder-store.js";
+import {
+  writeManifest,
+  writeMemberRecord,
+  writeRevocation,
+  readManifest,
+  loadTrust,
+  memberRecordAlreadyPublished,
+  isWriteOnceCollision,
+} from "./src/workspace/org-folder-store.js";
 import * as cryptoService from "./src/crypto/crypto-service.js";
 
 // ---------------------------------------------------------------------------
@@ -300,6 +310,209 @@ async function activateOrgStorageMode(handle) {
 }
 
 /**
+ * CORRECTIF SÉCURITÉ (contrariant, « promotion interrompue qui brique le
+ * dossier à vie », repro `attack1-interrupted-promotion.mjs`) — vérifie que
+ * l'owner (`identity`) visé par `manifest` est RÉELLEMENT admis dans
+ * `membershipStore` (rôle `owner`, statut `active`), via la chaîne de
+ * confiance COMPLÈTE (`org-folder-store.js#loadTrust`, qui compose
+ * `listGovernance` + `buildTrustedMembership` — aucune logique de confiance
+ * dupliquée ici). PAS une simple présence de fichier : `buildTrustedMembership`
+ * doit avoir effectivement admis la fiche genèse (elle peut être absente,
+ * ou publiée mais invalide — `genesisMismatchReason`). Ne lève jamais :
+ * `false` sur toute erreur (dossier illisible, pas encore de gouvernance),
+ * ce qui est le choix SÛR ici (pousse vers `"complete-owner"`/republication,
+ * jamais vers un faux `"already-promoted"`).
+ * @returns {Promise<boolean>}
+ */
+async function isOwnerAdmitted(adapter, workspaceId, identity) {
+  try {
+    const trust = await loadTrust(adapter);
+    if (trust.manifest.workspaceId !== workspaceId) return false;
+    const membership = trust.membershipStore.get(workspaceId, identity.memberId);
+    return !!(membership && membership.role === "owner" && membership.status === "active");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * PARCOURS_IDENTITE_CONTRACT.md, Lot 2 — « Partager cet espace » : promeut EN
+ * PLACE un workspace SOLO existant (`workspaceId` fourni par l'appelant —
+ * `local-backend.js`, identité solo FIXE de cet appareil) sur `handle`
+ * (dossier déjà choisi). Symétrique de `createOrg` ci-dessus, avec DEUX
+ * différences volontaires :
+ * 1. `workspace(Id)` N'EST JAMAIS généré ici : c'est CELUI fourni
+ *    (`promoteSoloToOrg`, org-runtime.js) — « W-001 Local -> W-001 Shared »,
+ *    jamais un nouveau workspace/export déguisé.
+ * 2. Un manifeste PEUT déjà exister sur ce dossier (reprise après un premier
+ *    appel réussi, une promotion INTERROMPUE en cours de route, ou après une
+ *    bascule retournée en solo) : `planPromotion` (org-runtime.js, pur)
+ *    décide AVANT toute écriture, à partir du manifeste ET de l'admission
+ *    RÉELLE de l'owner (`isOwnerAdmitted` ci-dessus, jamais une simple
+ *    présence de fichier — CORRECTIF ci-dessus) :
+ *    - `{kind:"promote"}` : aucun manifeste -> publie manifeste + fiche owner.
+ *    - `{kind:"complete-owner"}` : manifeste présent (même workspace/owner)
+ *      mais owner PAS ADMIS (ex: `writeMemberRecord` avait échoué lors d'un
+ *      appel précédent, APRÈS que `writeManifest`, lui, avait réussi —
+ *      write-once, irréversible) -> republie UNIQUEMENT la fiche owner
+ *      (JAMAIS un second manifeste) : la fiche est déterministe
+ *      (`promoteSoloToOrg` est pure, mêmes entrées -> même sortie), la
+ *      republier répare le dossier sans jamais le corrompre. CORRECTIF round
+ *      2 (repro `attack2-poisoned-owner-slot.mjs`) : une collision write-once
+ *      sur CETTE republication n'est avalée QUE si le contenu déjà présent
+ *      au slot est EXACTEMENT `org.memberRecord` (`memberRecordAlreadyPublished`,
+ *      org-folder-store.js — ma propre fiche, publiée par une tentative
+ *      antérieure dont seule la confirmation avait été perdue). Un contenu
+ *      DIVERGENT (un TIERS a occupé le slot `(member, ownerMemberId)` AVANT
+ *      ce retry — `ownerMemberId`/`ownerPublicKeyJwk` sont PUBLICS dans le
+ *      manifeste dès `writeManifest`, AUCUNE clé privée requise pour ça) fait
+ *      lever une erreur EXPLICITE et DISTINCTE (« owner contesté »), jamais
+ *      avalée ni laissée à `openOrgEngine` comme arbitre final silencieux —
+ *      sinon le dossier resterait bloqué à vie de façon indiscernable d'une
+ *      simple panne réseau non réparée, alors que CE cas EST récupérable
+ *      (retirer la fiche hostile via les permissions du dossier, puis
+ *      réessayer — ORG_TRUST_HARDENING_CONTRACT.md §3 : un DoS d'écrivain
+ *      hostile doit rester détectable et récupérable, jamais un blocage
+ *      silencieux).
+ *    - `{kind:"already-promoted"}` : manifeste présent, MÊME owner, ET déjà
+ *      RÉELLEMENT admis -> NO-OP sûr (rien n'est publié).
+ *    - `{kind:"conflict"}` : dossier étranger ou owner différent -> lève
+ *      AVANT toute écriture (inchangé, anti-usurpation non affectée par ce
+ *      correctif : `ownerAdmitted` n'intervient QUE quand workspace/owner
+ *      correspondent déjà).
+ * Ordre D'ÉCRITURE robuste et volontairement figé : `writeManifest` est
+ * TOUJOURS la toute première écriture d'une genèse (jamais l'inverse — une
+ * fiche membre sans manifeste n'a aucun sens, `writeMemberRecord` exige une
+ * genèse déjà ancrée) ; une réparation ne fait donc QUE rejouer la SECONDE
+ * moitié (`writeMemberRecord`), jamais retoucher au manifeste déjà publié.
+ * Après (re)publication RÉELLEMENT ACCEPTÉE (round 2 : jamais après une
+ * collision hostile, qui lève AVANT d'atteindre ce point), `openOrgEngine`
+ * (qui échoue explicitement si l'owner n'est toujours pas membre) sert de
+ * VÉRIFICATION FINALE avant de considérer la promotion réussie — jamais un
+ * succès annoncé sans un engine réellement ouvrable.
+ * Ne bascule PAS `piloteo_storage_mode` (même report qu'`createOrg`, voir sa
+ * décision : `local-backend.js` doit d'abord republier les événements solo
+ * existants — Point 5, `piloteo-migration-bridge.mjs` — et vérifier le
+ * round-trip AVANT `activateOrgStorageMode()`).
+ * @param {{handle:*, workspaceId:string, name:string, consultantId?:string, identity?:object}} params
+ * @returns {Promise<{engine:object, adapter:object, manifest:object, alreadyPromoted:boolean, completedOwnerRecord:boolean}>}
+ */
+async function promoteToOrg({ handle, workspaceId, name, consultantId, identity } = {}) {
+  if (!handle) throw new Error("promoteToOrg: 'handle' requis (sélecteur de dossier déjà effectué).");
+  if (!workspaceId) throw new Error("promoteToOrg: 'workspaceId' requis (identité solo d'origine à conserver).");
+  const adapter = buildAdapter(handle);
+  await adapter.connect();
+  const id = identity || (await getOrCreateIdentity());
+
+  const existingManifest = await readManifest(adapter);
+  // `isOwnerAdmitted` n'a de sens (et n'a besoin d'être calculé) QUE si un
+  // manifeste existe déjà — sur un dossier vierge, `ownerAdmitted` reste à
+  // son défaut sûr (`false`, ignoré de toute façon par `planPromotion` quand
+  // `existingManifest` est `null`).
+  const ownerAdmitted = existingManifest ? await isOwnerAdmitted(adapter, workspaceId, id) : false;
+  const plan = planPromotion({ existingManifest, workspaceId, identity: id, ownerAdmitted });
+  if (plan.kind === "conflict") {
+    throw new Error(`promoteToOrg: ${plan.reason}`);
+  }
+  if (plan.kind === "promote" || plan.kind === "complete-owner") {
+    const org = promoteSoloToOrg({ workspaceId, name, identity: id, consultantId });
+    if (plan.kind === "promote") {
+      // CORRECTIF défensif (contrariant round 3) : `readManifest` traite TOUT
+      // échec de lecture — y compris un slot manifeste CONTESTÉ sur Drive
+      // (plusieurs candidats divergents/illisibles, `ImmutableConflictError`)
+      // — comme « aucun manifeste » (décision 3, org-folder-store.js,
+      // délibérément conservée telle quelle : la modifier risquerait de
+      // régresser tout appelant qui dépend de « pas de manifeste -> null »,
+      // ex. `loadTrust`). `plan.kind==="promote"` pourrait donc, à tort,
+      // tenter une écriture sur un slot en réalité déjà occupé : PLUTÔT que
+      // de laisser `writeManifest` échouer avec un message confus (une
+      // collision sur un manifeste qu'on croyait absent), on vérifie
+      // EXPLICITEMENT ici, sur un adapter qui expose `getAllCandidates`
+      // (Drive — seul transport où cette contestation physique est possible ;
+      // `FolderStorageAdapter`/write-once garantit qu'aucun candidat ne peut
+      // exister sans que `readManifest` l'ait vu). Un slot occupé fait lever
+      // AVANT toute tentative d'écriture, avec un message qui NOMME le
+      // problème réel — jamais une écriture confuse vouée à l'échec.
+      if (typeof adapter.getAllCandidates === "function") {
+        let contestedManifestCandidates = [];
+        try {
+          contestedManifestCandidates = await adapter.getAllCandidates("workspace", "manifest");
+        } catch {
+          contestedManifestCandidates = [];
+        }
+        if (contestedManifestCandidates.length > 0) {
+          throw new Error(
+            "promoteToOrg: le slot manifeste de ce dossier est occupé (candidats illisibles ou " +
+            "divergents) alors qu'aucun manifeste exploitable n'a pu être lu — vérifiez le dossier " +
+            "partagé (permissions/contenu) avant de réessayer de partager cet espace."
+          );
+        }
+      }
+      await writeManifest(adapter, org.manifest);
+    }
+    try {
+      await writeMemberRecord(adapter, org.memberRecord);
+    } catch (err) {
+      // "complete-owner" seulement : une collision write-once ICI est
+      // ATTENDUE (c'est précisément le cas que ce correctif répare) — mais
+      // elle a DEUX causes possibles, jamais confondues (CORRECTIF round 2,
+      // repro `attack2-poisoned-owner-slot.mjs`, ORG_TRUST_HARDENING_CONTRACT.md
+      // §3) :
+      //  (a) légitime : ma PROPRE fiche a déjà été publiée par une tentative
+      //      précédente dont seule la CONFIRMATION réseau avait été perdue —
+      //      contenu canonique IDENTIQUE à `org.memberRecord` (déterministe,
+      //      `promoteSoloToOrg` est pure) -> avaler, continuer (idempotent).
+      //  (b) hostile : un TIERS (aucune clé privée requise — `ownerMemberId`/
+      //      `ownerPublicKeyJwk` sont PUBLICS dans le manifeste dès
+      //      `writeManifest`) a occupé le slot AVANT ce retry, avec un
+      //      contenu DIVERGENT -> ne JAMAIS avaler silencieusement : lever
+      //      une erreur EXPLICITE et DISTINCTE, actionnable (retirer la
+      //      fiche hostile via les permissions du dossier), plutôt que de
+      //      laisser `openOrgEngine` ci-dessous devenir l'arbitre final —
+      //      son « n'est pas membre » redeviendrait indiscernable d'une
+      //      simple panne réseau non réparée, alors que CE cas EST réparable
+      //      (dès que la fiche hostile est retirée). Pour "promote" (fiche
+      //      fraîche sur un manifeste tout juste écrit PAR CET APPEL), une
+      //      collision reste TOUJOURS anormale : jamais avalée (voir le
+      //      `throw` inconditionnel ci-dessous pour ce cas).
+      if (plan.kind !== "complete-owner") throw err;
+      // Ne tenter la distinction (a)/(b) ci-dessus QUE pour une VRAIE
+      // collision write-once — `isWriteOnceCollision` (org-folder-store.js,
+      // CORRECTIF round 3) reconnaît les DEUX signaux réels : le message
+      // `write-once` (`FolderStorageAdapter`/`InMemoryStorageAdapter`) ET le
+      // NOM `ImmutableConflictError` (`GoogleDriveStorageAdapter` — dont le
+      // message dit `IMMUTABLE_CONFLICT`, jamais « write-once » : sans ce
+      // correctif, une collision RÉELLE sur Drive n'aurait jamais déclenché
+      // cette distinction). Toute AUTRE erreur (panne réseau/FS persistante,
+      // permission refusée, etc. — rien n'a été écrit, aucun tiers en cause)
+      // reste une erreur ORDINAIRE, remontée TELLE QUELLE, jamais reformulée
+      // en un faux « owner contesté » qui égarerait l'utilisateur.
+      if (!isWriteOnceCollision(err)) throw err;
+      const mine = await memberRecordAlreadyPublished(adapter, org.memberRecord);
+      if (!mine) {
+        throw new Error(
+          "promoteToOrg: le slot owner de ce dossier est occupé par une fiche tierce/hostile " +
+          "(memberId owner contesté). Retirez cette fiche du dossier partagé (permissions du " +
+          "dossier) avant de réessayer de partager cet espace."
+        );
+      }
+      // (a) : collision légitime, déjà publiée — no-op, on continue vers la
+      // vérification finale (`openOrgEngine`).
+    }
+  }
+  // plan.kind === "already-promoted" : rien à publier (write-once déjà en
+  // place, owner déjà admis) — on rouvre simplement l'organisation existante.
+  const engine = await openOrgEngine({ adapter, identity: id, consultantId });
+  return {
+    engine: withFolderName(engine, handle),
+    adapter,
+    manifest: engine.manifest,
+    alreadyPromoted: plan.kind === "already-promoted",
+    completedOwnerRecord: plan.kind === "complete-owner",
+  };
+}
+
+/**
  * Rejoint une organisation sur `handle` via un code d'invitation (produit par
  * `invite`) : consomme l'invitation, publie la fiche membre du nouvel
  * arrivant, active le mode org pour ce navigateur. Renvoie
@@ -368,8 +581,15 @@ async function resumeOrg(opts) {
  * Invite un futur membre (owner/admin uniquement — `inviteMember` lève sinon).
  * Ne publie RIEN sur le dossier (voir en-tête) : renvoie `{invitation, code}`,
  * `code` étant le JSON base64url à transmettre hors bande (copier-coller/lien).
+ *
+ * Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : `consultantId`/`scope`
+ * (SIGNÉS dans l'invitation, `org-runtime.js#inviteMember`) et `displayName`
+ * (libellé d'affichage, NON signé — voir `inviteMember`) transitent tels
+ * quels jusqu'à `inviteMember`, qui reste l'unique porte d'entrée/de décision
+ * (autorité de l'émetteur, unicité du rôle "owner", etc.) — ce pont n'ajoute
+ * aucune logique.
  */
-async function invite({ engine, adapter, role, ttlDays, identity } = {}) {
+async function invite({ engine, adapter, role, ttlDays, identity, consultantId, scope, displayName } = {}) {
   if (!engine || !engine.manifest || !engine.membership) {
     throw new Error("invite: 'engine' invalide (openOrgEngine attendu).");
   }
@@ -381,6 +601,9 @@ async function invite({ engine, adapter, role, ttlDays, identity } = {}) {
     issuerMembership: engine.membership,
     signer: makeSigner(id),
     ttlMs: ttlDays ? ttlDays * 24 * 60 * 60 * 1000 : undefined,
+    consultantId,
+    scope,
+    displayName,
   });
   return { invitation, code: encodeInvitationCode(invitation) };
 }
@@ -455,6 +678,7 @@ window.PiloteoOrg = {
   pickDirectory,
   getOrCreateIdentity,
   createOrg,
+  promoteToOrg,
   activateOrgStorageMode,
   joinOrg,
   openOrg,

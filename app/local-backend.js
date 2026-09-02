@@ -166,6 +166,22 @@
     if (!s.consultants.length) s.consultants = [defaultConsultant()];
     return s;
   }
+
+  // Lot 2 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : workspaceId FIXE de
+  // l'espace solo « cet appareil », généré et persisté au premier besoin
+  // (idempotent — un appel ultérieur relit TOUJOURS la même valeur, jamais
+  // un nouveau). C'est CET identifiant que « Partager cet espace » conserve
+  // (§ Lot 2, promotion en place) — jamais un nouveau workspace.
+  function getOrCreateSoloWorkspaceId() {
+    return idbGet(SOLO_WORKSPACE_KEY).then(function (rec) {
+      if (rec && typeof rec.workspaceId === "string" && rec.workspaceId) return rec.workspaceId;
+      var id = (window.crypto && typeof window.crypto.randomUUID === "function")
+        ? window.crypto.randomUUID()
+        : "solo-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+      return idbPut(SOLO_WORKSPACE_KEY, { workspaceId: id }).then(function () { return id; });
+    });
+  }
+
   // --- Point 1b (docs/next/CONVERGENCE_CONTRACT.md §6bis) : indirection ----
   // ADDITIF, réversible : tant que `activeEngine` n'est pas posé, `/api/state`
   // suit EXACTEMENT le chemin KV ci-dessus (getRecord/idbPut) — inchangé bit à
@@ -175,6 +191,17 @@
   // `{load, commit}` qui rend directement la forme attendue par `handle()`.
   var STORAGE_MODE_KEY = "piloteo_storage_mode"; // localStorage : "folder" | "org" | absent (= cet appareil)
   var ORG_NAME_KEY = "piloteo_org_name";          // localStorage : nom d'affichage de l'org (best-effort, cf. §Organisation)
+  // Lot 2 (docs/next/PARCOURS_IDENTITE_CONTRACT.md, « Partager cet espace ») :
+  // identité FIXE du workspace solo « cet appareil », symétrique de celle du
+  // mode Dossier (`src/integration/solo-store.js` : « un workspaceId/actorId
+  // FIXES, persistés une fois par le backend »). Le mode « cet appareil »
+  // (STATE_KEY ci-dessus) n'a jamais eu besoin d'un `workspaceId` jusqu'ici
+  // (aucun moteur événementiel dessous) — cette clé en persiste UN, généré
+  // paresseusement au premier besoin (voir `getOrCreateSoloWorkspaceId`),
+  // pour que « Partager cet espace » puisse PROMOUVOIR en place (§ Lot 2 :
+  // « W-001 Local -> W-001 Shared ») plutôt que de fabriquer une organisation
+  // sans lien avec l'espace solo existant.
+  var SOLO_WORKSPACE_KEY = "solo_workspace_identity"; // IndexedDB (store "kv", base piloteo-solo) : { workspaceId }
   // --- Point 3 (docs/next/AUTH_SESSION_CONTRACT.md) : session / verrou d'appareil --
   var SESSION_KEY = "piloteo_session"; // IndexedDB (store "kv", même base piloteo-solo) : {status,pin,failedAttempts,lockedUntil,lockOnOpen}
   var sessionState = null;             // cache en mémoire du record ci-dessus, une fois chargé (ensureSessionReady)
@@ -685,6 +712,65 @@
     });
   }
 
+  // Lot 2 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : « Partager cet espace »
+  // — promotion EN PLACE du workspace solo « cet appareil » (§ Lot 2 :
+  // « W-001 Local -> W-001 Shared »). SYMÉTRIQUE d'`activateCreateOrg`
+  // ci-dessus (même geste : choisir un dossier -> migrer -> vérifier ->
+  // activer), avec UNE différence : `window.PiloteoOrg.promoteToOrg(...)`
+  // reçoit le `workspaceId` FIXE de cet appareil (`getOrCreateSoloWorkspaceId`)
+  // au lieu de laisser `createOrg` en générer un nouveau — c'est CE
+  // `workspaceId` que le manifeste de genèse porte (org-runtime.js
+  // `promoteSoloToOrg`), donc CE MÊME workspace que republie ensuite le
+  // pipeline de migration Point 5 (`decideAndRunMigration`, réutilisé tel
+  // quel, non dupliqué). Un échec de vérification/écriture ne bascule RIEN
+  // (même garde que `activateCreateOrg`) : cet appareil reste actif en solo,
+  // ses données restent intactes.
+  function activateShareSpace(name) {
+    if (!window.PiloteoOrg) return Promise.reject(new Error("Le pont Organisation n'a pas chargé (rechargez la page)."));
+    if (!window.PiloteoOrg.hasFileSystemAccess) return Promise.reject(new Error("Navigateur non compatible (Chrome/Edge/Opera sur ordinateur requis)."));
+    var pickedHandle = null;
+    return window.PiloteoOrg.pickDirectory().then(function (handle) {
+      pickedHandle = handle;
+      return getOrCreateSoloWorkspaceId().then(function (soloWorkspaceId) {
+        return stateRecord().then(function (rec) {
+          var solo = ensureUsable(rec.state);
+          var cs = solo.consultants || [];
+          var i = adminConsultantIndex(cs);
+          var consultantId = i >= 0 ? cs[i].id : null;
+          var targetLabel = "l'espace partagé" + (name ? " « " + name + " »" : "");
+          return window.PiloteoOrg.promoteToOrg({ handle: handle, workspaceId: soloWorkspaceId, name: name, consultantId: consultantId }).then(function (result) {
+            return decideAndRunMigration(result.engine, solo, targetLabel).then(function (migration) {
+              return { result: result, migration: migration };
+            }).catch(function (e) {
+              // Jamais de mode org actif si la migration n'a pas été vérifiée
+              // (contrat §1/§2 point 4) : cet appareil reste solo, données intactes.
+              // La genèse ÉVENTUELLEMENT déjà écrite sur le dossier choisi (write-once,
+              // comme `activateCreateOrg`) reste en l'état — une reprise ultérieure de
+              // « Partager cet espace » sur ce MÊME dossier est un no-op sûr
+              // (`planPromotion` -> "already-promoted", org-runtime.js), jamais une
+              // seconde genèse.
+              throw new Error(((e && e.message) || "Migration impossible.") +
+                " Retour à cet appareil : vos données ne sont pas perdues.");
+            });
+          });
+        });
+      });
+    }).then(function (r) {
+      var result = r.result, migration = r.migration;
+      return window.PiloteoOrg.activateOrgStorageMode(pickedHandle).then(function () {
+        activeEngine = result.engine;
+        activeOrgAdapter = result.adapter || null;
+        orgNeedsPermission = false;
+        storageMode = "org";
+        try { localStorage.setItem(STORAGE_MODE_KEY, "org"); } catch (e) {}
+        try { if (name) localStorage.setItem(ORG_NAME_KEY, name); } catch (e) {}
+        _orgReady = Promise.resolve();
+        _lastMigrationResult = migration;
+        return Object.assign({}, result, { migration: migration });
+      });
+    });
+  }
+
   // Ouvre le sélecteur natif (dossier partagé de l'organisation à rejoindre)
   // puis rejoint via le code d'invitation collé (`codeText`) et active le
   // mode org.
@@ -1118,124 +1204,130 @@
       c.appendChild(el("div", "font-size:.85rem;opacity:.75;", desc));
       return c;
     }
-    function darkInput(input) {
-      input.setAttribute("style", input.getAttribute("style") + "background:#0d1a22;color:#eaf1f4;border-color:rgba(255,255,255,.22);");
-      return input;
-    }
+    // docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 1 — accueil à DEUX choix,
+    // exactement (jamais une 3e carte « Créer une organisation » ici : la
+    // création/le partage d'un espace existant devient l'action « Partager
+    // cet espace », Lot 2, accessible depuis Réglages UNE FOIS qu'on
+    // travaille en solo — voir `renderShareSpaceDialog` ci-dessous). Aucune
+    // question de rôle : « Travailler seul » -> owner solo, « Rejoindre » ->
+    // le rôle vient de l'invitation.
 
     // Carte 1 — compte indépendant (mode classique actuel).
-    var c1 = card("Utiliser seul (cet appareil)", "Vos données restent dans ce navigateur, hors ligne. Vous pourrez créer ou rejoindre une organisation plus tard, depuis Réglages.");
+    var c1 = card("Travailler seul (cet appareil)", "Vos données restent dans ce navigateur, hors ligne. Vous pourrez partager cet espace ou rejoindre une organisation plus tard, depuis Réglages.");
     c1.appendChild(mkBtn("Continuer", function () { ov.remove(); }, true));
     grid.appendChild(c1);
 
-    // Carte 2 — créer une organisation. Point Drive onboarding lot A
-    // (DRIVE_ONBOARDING_CONTRACT.md §2) : DEUX emplacements possibles quand
-    // `window.PiloteoDrive.isAvailable` — « Un dossier (ordinateur) »
-    // (existant, File System Access) ou « Google Drive (recommandé sur
-    // mobile) », l'OAuth Google étant déclenché DANS le clic du bouton
-    // « Créer l'organisation » (activation utilisateur requise). Sans
-    // `PiloteoDrive.isAvailable`, seul le dossier reste proposé (radio Drive
-    // restée cachée) — comportement inchangé.
-    var c2 = card("Créer une organisation", "Choisissez où vivront les données de votre organisation.");
-    var nameIn = fieldInput("Nom de l'organisation", "text");
-    darkInput(nameIn.input);
-    c2.appendChild(nameIn.wrap);
-
-    var locWrap = el("div", "display:flex;flex-direction:column;gap:7px;margin:2px 0 6px;");
-    function locOption(value, label, checked) {
-      var lab = document.createElement("label");
-      lab.setAttribute("style", "display:flex;align-items:center;gap:8px;font-size:.84rem;cursor:pointer;");
-      var radio = document.createElement("input");
-      radio.type = "radio"; radio.name = "piloteo-org-location"; radio.value = value; radio.checked = !!checked;
-      lab.appendChild(radio);
-      lab.appendChild(document.createTextNode(label));
-      locWrap.appendChild(lab);
-      return { wrap: lab, radio: radio };
-    }
-    var locFolder = locOption("folder", "Un dossier (ordinateur)", true);
-    var locDrive = locOption("drive", "Google Drive (recommandé sur mobile)", false);
-    locDrive.wrap.hidden = true; // révélé plus bas SI window.PiloteoDrive.isAvailable
-    c2.appendChild(locWrap);
-
+    // Carte 2 — rejoindre une organisation.
+    var c2 = card("Rejoindre une organisation", "Choisissez le dossier partagé de l'organisation, puis collez le code d'invitation reçu.");
+    var codeIn = document.createElement("textarea");
+    codeIn.placeholder = "Coller le code d'invitation ici";
+    codeIn.setAttribute("style", "width:100%;box-sizing:border-box;min-height:64px;padding:8px 10px;border-radius:8px;" +
+      "border:1px solid rgba(255,255,255,.22);background:#0d1a22;color:#eaf1f4;font:inherit;font-size:12px;resize:vertical;");
+    c2.appendChild(codeIn);
     var msg2 = el("div", "font-size:12.5px;color:#f6d685;min-height:16px;");
-    var b2 = mkBtn("Créer l'organisation", function () {
-      var name = nameIn.input.value.trim();
-      if (!name) { msg2.textContent = "Indiquez un nom d'organisation."; return; }
-      var useDrive = locDrive.radio.checked;
-      msg2.textContent = useDrive ? "Connexion à Google…" : "Sélection du dossier…";
-      // IMPORTANT : appelé SYNCHRONEMENT dans ce clic (jamais différé après un
-      // `await`) — l'OAuth Google exige une activation utilisateur, exactement
-      // comme pickDirectory() pour le dossier. `activateCreateOrgDrive`
-      // consomme elle-même ce geste EN TOUT PREMIER (avant tout autre await —
-      // voir son en-tête ci-dessus) ; ce n'est pas juste cet appel-ci qui doit
-      // être synchrone, mais aussi le PREMIER await À L'INTÉRIEUR de la
-      // fonction appelée.
-      var activation = useDrive ? activateCreateOrgDrive(name) : activateCreateOrg(name);
-      activation.then(function () {
-        alert("Organisation créée. L'application va se recharger.");
+    var b2 = mkBtn("Choisir le dossier et rejoindre", function () {
+      var code = codeIn.value.trim();
+      if (!code) { msg2.textContent = "Collez le code d'invitation reçu."; return; }
+      msg2.textContent = "Sélection du dossier…";
+      activateJoinOrg(code).then(function () {
+        alert("Vous avez rejoint l'organisation. L'application va se recharger.");
         location.reload();
       }).catch(function (e) { msg2.textContent = "Échec : " + ((e && e.message) || e); });
     }, true);
     c2.appendChild(b2); c2.appendChild(msg2);
     grid.appendChild(c2);
 
-    // Carte 3 — rejoindre une organisation.
-    var c3 = card("Rejoindre une organisation", "Choisissez le dossier partagé de l'organisation, puis collez le code d'invitation reçu.");
-    var codeIn = document.createElement("textarea");
-    codeIn.placeholder = "Coller le code d'invitation ici";
-    codeIn.setAttribute("style", "width:100%;box-sizing:border-box;min-height:64px;padding:8px 10px;border-radius:8px;" +
-      "border:1px solid rgba(255,255,255,.22);background:#0d1a22;color:#eaf1f4;font:inherit;font-size:12px;resize:vertical;");
-    c3.appendChild(codeIn);
-    var msg3 = el("div", "font-size:12.5px;color:#f6d685;min-height:16px;");
-    var b3 = mkBtn("Choisir le dossier et rejoindre", function () {
-      var code = codeIn.value.trim();
-      if (!code) { msg3.textContent = "Collez le code d'invitation reçu."; return; }
-      msg3.textContent = "Sélection du dossier…";
-      activateJoinOrg(code).then(function () {
-        alert("Vous avez rejoint l'organisation. L'application va se recharger.");
-        location.reload();
-      }).catch(function (e) { msg3.textContent = "Échec : " + ((e && e.message) || e); });
-    }, true);
-    c3.appendChild(b3); c3.appendChild(msg3);
-    grid.appendChild(c3);
-
-    // Sur navigateur sans File System Access, options 2/3 désactivées + explication
-    // (contrat §3), SAUF si Google Drive est disponible (DRIVE_ONBOARDING_CONTRACT.md
-    // §2) : dans ce cas, la carte 2 (créer) reste utilisable via l'emplacement
-    // Drive — seule la carte 3 (rejoindre, hors scope Drive de ce lot, cf. Google
-    // Picker = lot B) reste désactivée sans File System Access. `window.PiloteoOrg`/
-    // `window.PiloteoDrive` peuvent ne pas être chargés ENCORE (modules différés) :
-    // on attend un court instant avant de trancher, jamais un blocage définitif de
-    // l'écran (garde-fou déjà appliqué ailleurs, cf. ensureOrgReady/ensureDriveOrgReady).
-    Promise.all([waitForPiloteoOrg(4000), waitForPiloteoDrive(4000)]).then(function (r) {
-      var PO = r[0], PD = r[1];
+    // Sur navigateur sans File System Access, « Rejoindre » est désactivé +
+    // explication (contrat §3 — rejoindre une organisation Google Drive via
+    // Google Picker est hors scope de ce lot). `window.PiloteoOrg` peut ne
+    // pas être chargé ENCORE (module différé) : on attend un court instant
+    // avant de trancher, jamais un blocage définitif de l'écran (garde-fou
+    // déjà appliqué ailleurs, cf. ensureOrgReady).
+    waitForPiloteoOrg(4000).then(function (PO) {
       var fsaAvailable = !!(PO && PO.hasFileSystemAccess);
-      var driveAvailable = !!(PD && PD.isAvailable);
       var fsaNote = "Nécessite Chrome/Edge/Opera sur ordinateur (File System Access).";
+      b2.disabled = !fsaAvailable;
+      b2.style.opacity = fsaAvailable ? "" : ".45";
+      b2.style.cursor = fsaAvailable ? "" : "not-allowed";
+      if (!fsaAvailable) c2.appendChild(el("div", "font-size:12px;color:#f6d685;", fsaNote));
+    });
+  }
 
-      if (driveAvailable) {
-        locDrive.wrap.hidden = false;
-        if (!fsaAvailable) locDrive.radio.checked = true;
-      }
-      locFolder.radio.disabled = !fsaAvailable;
-      if (!fsaAvailable) locFolder.wrap.style.opacity = ".5";
+  // --- Petit overlay modal réutilisable pour les DEUX dialogues Réglages ---
+  // (Lot 1/Lot 2, docs/next/PARCOURS_IDENTITE_CONTRACT.md) : même style clair
+  // que le reste du panneau Réglages (contrairement à `renderWelcomeScreen`,
+  // sombre) — un titre, un corps fourni par l'appelant, Annuler/Action.
+  function renderSmallDialog(id, title, buildBody) {
+    if (document.getElementById(id)) return;
+    var ov = el("div", "position:fixed;inset:0;z-index:2147483006;background:rgba(8,14,18,.6);" +
+      "display:flex;align-items:center;justify-content:center;padding:20px;" +
+      "font:400 14px/1.45 system-ui,-apple-system,sans-serif;");
+    ov.id = id;
+    var box = el("div", "background:#fff;color:#14212b;border-radius:14px;padding:22px;max-width:440px;width:100%;" +
+      "box-shadow:0 12px 40px rgba(0,0,0,.28);");
+    box.appendChild(el("div", "font-size:1.05rem;font-weight:700;margin-bottom:10px;", title));
+    buildBody(box, function close() { ov.remove(); });
+    ov.appendChild(box);
+    document.body.appendChild(ov);
+    return ov;
+  }
 
-      var canCreate = fsaAvailable || driveAvailable;
-      b2.disabled = !canCreate;
-      b2.style.opacity = canCreate ? "" : ".45";
-      b2.style.cursor = canCreate ? "" : "not-allowed";
-      if (!canCreate) c2.appendChild(el("div", "font-size:12px;color:#f6d685;", fsaNote));
+  // docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 2 — dialogue Réglages
+  // « Partager cet espace » : nom + choix du dossier, appelle
+  // `activateShareSpace` (promotion en place, workspaceId conservé).
+  function renderShareSpaceDialog() {
+    renderSmallDialog("piloteo-share-space", "Partager cet espace", function (box, close) {
+      box.appendChild(el("p", "margin:0 0 14px;font-size:.86rem;color:#5b6b76;",
+        "Vos données actuelles restent intactes et deviennent accessibles à d'autres membres, dans le dossier " +
+        "(ou Google Drive) que vous choisissez. Vous en resterez propriétaire."));
+      var nameIn = fieldInput("Nom de l'organisation", "text");
+      box.appendChild(nameIn.wrap);
+      var msg = el("div", "font-size:12.5px;color:#5b6b76;min-height:16px;margin-top:8px;");
+      var actions = el("div", "display:flex;gap:8px;margin-top:10px;justify-content:flex-end;");
+      actions.appendChild(mkBtn("Annuler", close));
+      actions.appendChild(mkBtn("Partager", function () {
+        var name = nameIn.input.value.trim();
+        if (!name) { msg.style.color = "#8a3b2f"; msg.textContent = "Indiquez un nom d'organisation."; return; }
+        msg.style.color = "#5b6b76";
+        msg.textContent = "Sélection du dossier…";
+        activateShareSpace(name).then(function () {
+          alert("Espace partagé. L'application va se recharger.");
+          location.reload();
+        }).catch(function (e) { msg.style.color = "#8a3b2f"; msg.textContent = "Échec : " + ((e && e.message) || e); });
+      }, true));
+      box.appendChild(actions);
+      box.appendChild(msg);
+    });
+  }
 
-      // « Rejoindre » (b3) reste sur File System Access seul : rejoindre une
-      // organisation Google Drive (Google Picker) est explicitement le lot B,
-      // hors scope de ce contrat.
-      b3.disabled = !fsaAvailable;
-      b3.style.opacity = fsaAvailable ? "" : ".45";
-      b3.style.cursor = fsaAvailable ? "" : "not-allowed";
-      if (!fsaAvailable) {
-        c3.appendChild(el("div", "font-size:12px;color:#f6d685;",
-          driveAvailable ? fsaNote + " (rejoindre une organisation Google Drive arrive bientôt)" : fsaNote));
-      }
+  // docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 1 — dialogue Réglages
+  // « Rejoindre une organisation » : même flux que la carte de l'écran
+  // d'accueil (dossier + code d'invitation), accessible directement depuis
+  // Réglages (sans repasser par l'écran d'accueil).
+  function renderJoinOrgDialog() {
+    renderSmallDialog("piloteo-join-org", "Rejoindre une organisation", function (box, close) {
+      box.appendChild(el("p", "margin:0 0 10px;font-size:.86rem;color:#5b6b76;",
+        "Choisissez le dossier partagé de l'organisation, puis collez le code d'invitation reçu."));
+      var codeIn = document.createElement("textarea");
+      codeIn.placeholder = "Coller le code d'invitation ici";
+      codeIn.setAttribute("style", "width:100%;box-sizing:border-box;min-height:64px;padding:8px 10px;border-radius:8px;" +
+        "border:1px solid #d5dde2;font:inherit;font-size:12px;resize:vertical;");
+      box.appendChild(codeIn);
+      var msg = el("div", "font-size:12.5px;color:#5b6b76;min-height:16px;margin-top:8px;");
+      var actions = el("div", "display:flex;gap:8px;margin-top:10px;justify-content:flex-end;");
+      actions.appendChild(mkBtn("Annuler", close));
+      actions.appendChild(mkBtn("Rejoindre", function () {
+        var code = codeIn.value.trim();
+        if (!code) { msg.style.color = "#8a3b2f"; msg.textContent = "Collez le code d'invitation reçu."; return; }
+        msg.style.color = "#5b6b76";
+        msg.textContent = "Sélection du dossier…";
+        activateJoinOrg(code).then(function () {
+          alert("Vous avez rejoint l'organisation. L'application va se recharger.");
+          location.reload();
+        }).catch(function (e) { msg.style.color = "#8a3b2f"; msg.textContent = "Échec : " + ((e && e.message) || e); });
+      }, true));
+      box.appendChild(actions);
+      box.appendChild(msg);
     });
   }
 
@@ -1429,7 +1521,22 @@
     // (même forme d'`activeEngine.membership`, seul le stockage sous-jacent change).
     if ((storageMode === "org" || storageMode === "org-drive") && activeEngine && activeEngine.membership) {
       var m = activeEngine.membership;
-      role = (m.role === "owner" || m.role === "admin") ? "admin" : "user";
+      // Lot 3 (docs/next/PARCOURS_IDENTITE_CONTRACT.md, mapping ARRÊTÉ) : un
+      // « utilisateur global » (rôle org RÉEL "user" + scope:"global", venant
+      // EXCLUSIVEMENT de l'invitation signée vérifiée par
+      // `buildTrustedMembership` — jamais d'une fiche falsifiable) est
+      // présenté à app.js avec role:"admin" pour que sa navigation métier soit
+      // complète (app.js:627 n'a qu'une visibilité binaire admin/non-admin —
+      // vérifié, non modifié, cf. rapport du maker). C'est un choix
+      // D'AFFICHAGE UNIQUEMENT : la seule enforcement réelle des droits reste
+      // `src/core/permissions.js` (chaque écriture passe par /api/state ->
+      // moteur org -> `evaluate()`), qui lit le VRAI rôle org
+      // (`activeEngine.membership.role/scope`), jamais ce mapping. La
+      // gouvernance d'organisation (Réglages > Membres, ~1884/1910 ci-dessous)
+      // lit elle aussi `orgEngineRef.membership.role` (le vrai rôle, "user"
+      // pour un global) — PAS `/api/me` — donc un utilisateur global n'y voit
+      // ni Inviter ni Révoquer, exactement comme un user rattaché.
+      role = (m.role === "owner" || m.role === "admin" || (m.role === "user" && m.scope === "global")) ? "admin" : "user";
       if (m.consultantId && consultants.some(function (c) { return c && c.id === m.consultantId; })) {
         consultantId = m.consultantId;
       }
@@ -1896,15 +2003,52 @@
         body.appendChild(membersBox);
         membersBox.appendChild(el("div", "font-size:12.5px;color:#5b6b76;", "Chargement des membres…"));
 
+        // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : consultants de la
+        // PROJECTION org courante (state.consultants du dossier/Drive actif,
+        // même chemin de lecture que `getIdentity`/`stateRecord` ailleurs
+        // dans ce fichier) — utilisés (a) pour peupler le sélecteur
+        // « Rattaché à un consultant » de l'invite UI, (b) pour afficher un
+        // nom lisible plutôt qu'un id brut dans la liste des membres.
+        // PUREMENT pour l'affichage : ne participe à AUCUNE décision de
+        // sécurité (la portée réelle d'un membre vient de son `membership`,
+        // vérifié — `consultantId`/`scope`, jamais de cette liste).
+        function loadConsultants() {
+          return orgEngineRef.load().then(function (rec) {
+            return (rec.state && rec.state.consultants) || [];
+          }).catch(function () { return []; });
+        }
+        function consultantLabel(id, list) {
+          var c = (list || []).find(function (x) { return x && x.id === id; });
+          return (c && (c.nom || c.trigramme)) || id;
+        }
+        // Libellé rôle/portée (Lot 3 mapping ARRÊTÉ + Lot 4) : distingue
+        // Administrateur / Utilisateur (consultant X) / Utilisateur (accès
+        // global) — lit `m.role`/`m.scope`/`m.consultantId` TELS QUE renvoyés
+        // par `engine.members()` (eux-mêmes issus du membership VÉRIFIÉ,
+        // `buildTrustedMembership`), jamais d'un champ auto-déclaré non couvert.
+        function memberRoleLabel(m, consultantsList) {
+          if (m.role === "owner") return "Propriétaire";
+          if (m.role === "admin") return "Administrateur";
+          if (m.role === "user" && m.scope === "global") return "Utilisateur (accès global)";
+          if (m.role === "user" && m.consultantId) return "Utilisateur (consultant " + consultantLabel(m.consultantId, consultantsList) + ")";
+          return "Utilisateur";
+        }
         function renderMembers(myMemberId) {
-          orgEngineRef.members().then(function (members) {
+          Promise.all([orgEngineRef.members(), loadConsultants()]).then(function (r) {
+            var members = r[0], consultantsList = r[1];
             membersBox.innerHTML = "";
             members.forEach(function (m) {
               var row = el("div", "display:flex;align-items:center;gap:8px;font-size:.85rem;padding:7px 9px;" +
                 "border:1px solid #eef1f3;border-radius:8px;margin-bottom:6px;flex-wrap:wrap;");
-              row.appendChild(el("span", "flex:1;min-width:120px;", (m.consultantId || m.memberId) + (m.memberId === myMemberId ? " (vous)" : "")));
+              // `m.displayName` (Lot 4) : LIBELLÉ saisi par l'émetteur à
+              // l'invitation, jamais vérifié, purement informatif — affiché À
+              // CÔTÉ de l'identifiant technique (consultantId/memberId),
+              // jamais À LA PLACE (pour ne rien perdre en cas d'homonymie).
+              var idLabel = (m.consultantId || m.memberId) + (m.memberId === myMemberId ? " (vous)" : "");
+              var nameLabel = m.displayName ? (m.displayName + " — " + idLabel) : idLabel;
+              row.appendChild(el("span", "flex:1;min-width:120px;", nameLabel));
               row.appendChild(el("span", "font-size:.72rem;color:#5b6b76;text-transform:uppercase;letter-spacing:.03em;",
-                m.role === "owner" ? "Propriétaire" : m.role === "admin" ? "Administrateur" : "Membre"));
+                memberRoleLabel(m, consultantsList)));
               row.appendChild(el("span", "font-size:.7rem;font-weight:700;color:" + (m.status === "revoked" ? "#8a3b2f" : "#137a3f") + ";",
                 m.status === "revoked" ? "Révoqué" : "Actif"));
               var canRevoke = (myRole === "owner" || myRole === "admin") && m.status === "active" && m.memberId !== myMemberId;
@@ -1935,26 +2079,79 @@
         }
 
         if (myRole === "owner" || myRole === "admin") {
+          // Lot 4 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : invite UI
+          // enrichie — Nom (affichage), Rôle (Administrateur/Utilisateur),
+          // et pour un Utilisateur : Rattaché à un consultant OU Accès
+          // global (XOR — jamais les deux, jamais pour un Administrateur).
+          var GLOBAL_VALUE = "__global__";
           var inviteRow = el("div", "display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0;");
+
+          var nameIn = document.createElement("input");
+          nameIn.type = "text"; nameIn.id = "piloteo-invite-name"; nameIn.placeholder = "Nom (facultatif)";
+          nameIn.setAttribute("style", "padding:8px 10px;border:1px solid #d5dde2;border-radius:8px;font:inherit;background:#fff;color:#14212b;flex:1;min-width:120px;");
+          inviteRow.appendChild(nameIn);
+
           var roleSel = document.createElement("select");
+          roleSel.id = "piloteo-invite-role";
           roleSel.setAttribute("style", "padding:8px 10px;border:1px solid #d5dde2;border-radius:8px;font:inherit;background:#fff;color:#14212b;");
-          [["user", "Membre"], ["admin", "Administrateur"]].forEach(function (pair) {
+          [["user", "Utilisateur"], ["admin", "Administrateur"]].forEach(function (pair) {
             var o = document.createElement("option"); o.value = pair[0]; o.textContent = pair[1]; roleSel.appendChild(o);
           });
           inviteRow.appendChild(roleSel);
+
+          // Sélecteur consultant/global : visible SEULEMENT pour "Utilisateur"
+          // (un "Administrateur" n'a ni l'un ni l'autre, cf. contrat).
+          // Peuplé de façon asynchrone depuis la projection courante ;
+          // n'influence AUCUNE décision de sécurité (affichage/choix source,
+          // la valeur choisie devient `consultantId`/`scope` — VÉRIFIÉS et
+          // SIGNÉS côté `inviteMember`/`invitations.js`, pas ce menu lui-même).
+          var targetSel = document.createElement("select");
+          targetSel.id = "piloteo-invite-target";
+          targetSel.setAttribute("style", "padding:8px 10px;border:1px solid #d5dde2;border-radius:8px;font:inherit;background:#fff;color:#14212b;");
+          inviteRow.appendChild(targetSel);
+          function updateTargetVisibility() { targetSel.style.display = roleSel.value === "user" ? "" : "none"; }
+          roleSel.addEventListener("change", updateTargetVisibility);
+          updateTargetVisibility();
+          loadConsultants().then(function (list) {
+            list.forEach(function (c) {
+              if (!c || !c.id) return;
+              var o = document.createElement("option"); o.value = c.id; o.textContent = c.nom || c.trigramme || c.id;
+              targetSel.appendChild(o);
+            });
+            var go = document.createElement("option");
+            go.value = GLOBAL_VALUE; go.textContent = "Accès global";
+            targetSel.appendChild(go);
+          });
+
           var inviteMsg = el("div", "font-size:12.5px;color:#5b6b76;flex-basis:100%;min-height:16px;");
-          inviteRow.appendChild(mkBtn("Inviter", function () {
+          var inviteBtn = mkBtn("Inviter", function () {
             inviteMsg.textContent = "Génération du code…";
-            window.PiloteoOrg.invite({ engine: orgEngineRef, adapter: orgAdapterRef, role: roleSel.value, ttlDays: 14 }).then(function (r) {
+            var role = roleSel.value;
+            var params = { engine: orgEngineRef, adapter: orgAdapterRef, role: role, ttlDays: 14 };
+            var name = nameIn.value.trim();
+            if (name) params.displayName = name;
+            // XOR consultant/global : uniquement pour "Utilisateur" ;
+            // "Administrateur" (role !== "user") ne pose ni l'un ni l'autre.
+            if (role === "user") {
+              if (targetSel.value === GLOBAL_VALUE) {
+                params.scope = "global";
+              } else if (targetSel.value) {
+                params.consultantId = targetSel.value;
+              }
+            }
+            window.PiloteoOrg.invite(params).then(function (r) {
               inviteMsg.textContent = "Code généré (valable 14 jours) — à transmettre au futur membre :";
               var ta = document.createElement("textarea");
-              ta.readOnly = true; ta.value = r.code;
+              ta.readOnly = true; ta.value = r.code; ta.id = "piloteo-invite-code";
               ta.setAttribute("style", "width:100%;box-sizing:border-box;min-height:70px;margin-top:6px;font-family:ui-monospace,monospace;" +
                 "font-size:11px;padding:8px;border:1px solid #d5dde2;border-radius:8px;");
               inviteRow.appendChild(ta);
               ta.addEventListener("click", function () { ta.select(); });
             }).catch(function (e) { inviteMsg.textContent = "Échec : " + ((e && e.message) || e); });
-          }, true));
+          }, true);
+          inviteBtn.id = "piloteo-invite-btn";
+          inviteRow.appendChild(inviteBtn);
+          inviteRow.appendChild(inviteMsg);
           body.appendChild(inviteRow);
         }
 
@@ -1966,7 +2163,19 @@
       } else {
         body.appendChild(el("p", "margin:2px 0 8px;font-size:.86rem;color:#5b6b76;",
           "Travaillez à plusieurs sur les mêmes données, dans un dossier partagé (OneDrive, SharePoint, Drive…)."));
-        body.appendChild(mkBtn("Créer / rejoindre une organisation", function () { close(); renderWelcomeScreen(); }));
+        var orgEntries = el("div", "display:flex;gap:8px;flex-wrap:wrap;");
+        // docs/next/PARCOURS_IDENTITE_CONTRACT.md, Lot 1/Lot 2 : DEUX entrées
+        // distinctes (remplace l'ancien bouton unique « Créer / rejoindre une
+        // organisation », qui rouvrait l'écran d'accueil en entier). « Partager
+        // cet espace » (promotion en place, Lot 2) n'a de sens QUE depuis le
+        // solo « cet appareil » (`!activeEngine`) — en mode Dossier, cette
+        // action n'est pas proposée ici (hors périmètre de ce lot : le mode
+        // Dossier a déjà sa propre section « Un dossier » ci-dessus).
+        if (!activeEngine) {
+          orgEntries.appendChild(mkBtn("Partager cet espace", renderShareSpaceDialog, true));
+        }
+        orgEntries.appendChild(mkBtn("Rejoindre une organisation", renderJoinOrgDialog));
+        body.appendChild(orgEntries);
       }
 
       // Section 4 — Session / Sécurité (Point 3, AUTH_SESSION_CONTRACT.md §4).
@@ -2340,6 +2549,16 @@
     // « Créer une organisation » (migration comprise) sans passer par l'écran
     // d'accueil/Réglages.
     _createOrg: activateCreateOrg,
+    // Lot 2 (docs/next/PARCOURS_IDENTITE_CONTRACT.md) : hooks de TEST pour
+    // « Partager cet espace » — symétriques de `_createOrg` ci-dessus.
+    // `_shareSpace` exerce le chemin complet (choisir dossier -> promouvoir EN
+    // PLACE -> migrer -> vérifier -> activer) sans passer par le dialogue
+    // Réglages ; `_getSoloWorkspaceId` expose l'identité FIXE de l'espace
+    // solo « cet appareil » (générée/persistée paresseusement), pour qu'un
+    // e2e puisse l'observer AVANT la promotion et vérifier qu'elle est
+    // exactement celle portée par le manifeste APRÈS (workspaceId inchangé).
+    _shareSpace: activateShareSpace,
+    _getSoloWorkspaceId: getOrCreateSoloWorkspaceId,
     // `_runGuardedMigration(engine, soloSnapshot)` : accès DIRECT à
     // l'orchestration de migration (sauvegarde -> plan -> seed -> vérification),
     // sans passer par le sélecteur natif ni par `activateFolder`/`_createOrg`.
