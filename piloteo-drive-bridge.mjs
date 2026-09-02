@@ -508,15 +508,35 @@ async function promoteOrgOnAdapter({ adapter, workspaceId, name, consultantId, i
  * cache MÉMOIRE, aucune 2e popup (même schéma que `createDriveOrg`/
  * `activateCreateOrgDrive`).
  *
- * Persistance (même choix qu'`createDriveOrg`, pour que le rollback de
- * l'appelant — `local-backend.js#activateShareSpaceDrive` — puisse réutiliser
- * TEL QUEL le mécanisme déjà éprouvé d'`activateCreateOrgDrive` : nettoyer
- * `piloteo_storage_mode`/`piloteo_drive_root_folder_id` si la republication
- * des événements solo — Point 5, `verifyRoundTrip` — échoue ENSUITE) :
- * `persistDriveOrgMode(rootFolderId)` est appelée ICI dès la promotion
- * publiée avec succès (write-once, déjà irréversible côté Drive à ce stade) —
- * PAS une activation définitive du navigateur (`local-backend.js` ne bascule
- * son `storageMode` JS/l'affichage qu'APRÈS avoir vérifié le round-trip).
+ * Persistance — CORRECTIF contrariant (axe 4, « persist-avant-vérif ») :
+ * cette fonction n'appelle PLUS `persistDriveOrgMode(rootFolderId)`.
+ * Initialement câblée comme `createDriveOrg` ci-dessous (qui, LUI, persiste
+ * `piloteo_storage_mode="org-drive"` dès la genèse écrite), ce choix ouvrait
+ * une fenêtre de reboot cassée SPÉCIFIQUE à la promotion : `decideAndRunMigration`
+ * (appelé par `local-backend.js#activateShareSpaceDrive` APRÈS cette
+ * fonction) affiche `showMigrationIntroStep`, qui ATTEND un clic utilisateur
+ * (« Continuer ») avant de republier le moindre event solo. Un rechargement/
+ * une fermeture d'onglet PENDANT cette attente tue le JS avant que le
+ * `.catch` de rollback de l'appelant ne s'exécute : au reboot suivant, le
+ * mode aurait déjà été "org-drive" (posé ICI), `resumeDriveOrg` aurait rouvert
+ * avec succès (owner légitimement admis, PAS d'usurpation) mais un espace
+ * TOUJOURS VIDE (events jamais republiés) -> `app.js` refuse le démarrage
+ * (« Compte non rattaché à un consultant »), un symptôme SANS RAPPORT avec la
+ * cause réelle, ni (A) données republiées ni (B) erreur explicite au moment
+ * de l'échec. EXACTEMENT le piège que le mode Dossier (Lot 2, `promoteToOrg`)
+ * évite déjà par construction (il ne pose PAS `piloteo_storage_mode` non plus
+ * — voir sa docstring). Correctif : cette fonction se contente d'écrire la
+ * genèse sur Drive (write-once, irréversible dès ce point — un rechargement
+ * après ce point laisse une genèse Drive ORPHELINE mais INOFFENSIVE : un
+ * nouveau « Partager » sur le MÊME dossier la répare via `complete-owner`/
+ * `already-promoted`, un nouveau dossier racine est tout aussi acceptable) —
+ * elle NE bascule PAS le mode ; c'est à `local-backend.js#activateShareSpaceDrive`
+ * de persister `piloteo_storage_mode`/`piloteo_drive_root_folder_id`
+ * UNIQUEMENT dans son `.then` FINAL, APRÈS que `decideAndRunMigration` a
+ * réussi (round-trip vérifié) — exactement comme `activateShareSpace` le fait
+ * déjà pour le dossier. `rootFolderId` est renvoyé à l'appelant (jamais
+ * persisté ici) pour qu'il puisse le persister lui-même une fois la
+ * republication vérifiée.
  * @param {{workspaceId:string, name:string, consultantId?:string, identity?:object}} params
  * @returns {Promise<{engine:object, adapter:GoogleDriveStorageAdapter, manifest:object, identity:object, alreadyPromoted:boolean, completedOwnerRecord:boolean, rootFolderId:string, webViewLink:string|null}>}
  */
@@ -531,7 +551,8 @@ async function promoteDriveOrg({ workspaceId, name, consultantId, identity } = {
   const { rootFolderId, webViewLink } = await createDriveRootFolder(name);
   const adapter = new GoogleDriveStorageAdapter({ oauthTokenProvider, rootFolderId });
   const result = await promoteOrgOnAdapter({ adapter, workspaceId, name, consultantId, identity });
-  persistDriveOrgMode(rootFolderId);
+  // PAS de persistDriveOrgMode() ici (voir docstring) — l'appelant active le
+  // mode UNIQUEMENT après vérification du round-trip de la migration.
   return Object.assign({}, result, { rootFolderId, webViewLink });
 }
 

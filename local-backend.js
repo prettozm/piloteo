@@ -786,17 +786,30 @@
   // l'activation utilisateur transitoire du clic avant que la popup OAuth ne
   // s'ouvre (Safari/WebKit, mobile — précisément la cible de ce lot).
   //
-  // Migration (Point 5) + rollback : réutilise `decideAndRunMigration` tel
-  // quel (engine-agnostique). Un échec de vérification ne laisse JAMAIS ce
-  // navigateur actif sur une organisation Drive non fiable — le drapeau
-  // `piloteo_storage_mode`/`piloteo_drive_root_folder_id` déjà posé par
-  // `promoteDriveOrg` (même choix que `createDriveOrg`, voir son en-tête) est
-  // alors explicitement nettoyé (MÊME mécanisme que le catch
-  // d'`activateCreateOrgDrive`, réutilisé à l'identique) ; la genèse reste
-  // publiée sur Drive (write-once, comme pour le dossier) mais ce navigateur
-  // retourne à « cet appareil », données intactes — une reprise ultérieure de
-  // « Partager cet espace » sur ce MÊME dossier Drive est un no-op sûr
-  // (`planPromotion` -> "already-promoted"), jamais une seconde genèse.
+  // CORRECTIF contrariant (axe 4, « persist-avant-vérif », repro
+  // attack-persist-before-verify-drive.mjs, CASSÉ->TENU) : `promoteDriveOrg`
+  // (piloteo-drive-bridge.mjs) NE persiste PLUS `piloteo_storage_mode`/
+  // `piloteo_drive_root_folder_id` — cette fonction est désormais la SEULE à
+  // le faire, et UNIQUEMENT dans le `.then` FINAL ci-dessous, APRÈS que
+  // `decideAndRunMigration` a réussi (round-trip vérifié). EXACTEMENT le même
+  // ordre qu'`activateShareSpace` (mode Dossier) : `decideAndRunMigration`
+  // affiche `showMigrationIntroStep`, qui ATTEND un clic utilisateur
+  // (« Continuer ») avant de republier le moindre event solo — un
+  // rechargement/une fermeture d'onglet PENDANT cette attente tue le JS AVANT
+  // que le `.catch` ci-dessous ne s'exécute. Si le drapeau de mode avait déjà
+  // été posé à ce moment-là (comme c'était le cas avant ce correctif), le
+  // reboot suivant aurait rouvert un espace-org-drive VIDE (events jamais
+  // republiés) et `app.js` aurait refusé le démarrage avec un message SANS
+  // RAPPORT (« Compte non rattaché à un consultant »). En ne posant le
+  // drapeau QU'ICI, un tel rechargement laisse `piloteo_storage_mode`
+  // INCHANGÉ (toujours solo/absent) : le reboot suivant reste solo, données
+  // solo intactes — la genèse Drive déjà écrite (write-once, irréversible)
+  // reste ORPHELINE mais INOFFENSIVE (un nouveau « Partager » sur le MÊME
+  // dossier la répare via `complete-owner`/`already-promoted` ; un nouveau
+  // dossier racine est tout aussi acceptable). Le `.catch` qui nettoie
+  // `piloteo_storage_mode`/`piloteo_drive_root_folder_id` reste en place
+  // comme SÉCURITÉ SECONDAIRE (défense en profondeur si un appelant futur les
+  // posait plus tôt), mais n'est plus la garantie principale.
   function activateShareSpaceDrive(name) {
     if (!window.PiloteoDrive) return Promise.reject(new Error("Le pont Google Drive n'a pas chargé (rechargez la page)."));
     if (!window.PiloteoDrive.isAvailable) return Promise.reject(new Error("Google Drive n'est pas disponible (configuration Google absente)."));
@@ -814,12 +827,13 @@
               return { result: result, migration: migration };
             }).catch(function (e) {
               // Jamais de mode org-drive actif si la migration n'a pas été
-              // vérifiée (contrat §1/§2 point 4, symétrique du mode dossier ET
-              // d'activateCreateOrgDrive) : on annule le drapeau déjà posé par
-              // promoteDriveOrg (ET le rootFolderId associé, qui resterait
-              // sinon orphelin en localStorage sans que le mode "org-drive" ne
-              // pointe plus dessus) ; l'espace partagé reste créé sur Drive
-              // (write-once) mais n'est pas activé sur cet appareil.
+              // vérifiée (contrat §1/§2 point 4, symétrique du mode dossier).
+              // Sécurité SECONDAIRE (voir en-tête) : le drapeau n'a normalement
+              // PAS encore été posé à ce stade (posé UNIQUEMENT dans le `.then`
+              // final, après ce catch) — ce nettoyage n'a donc rien à faire en
+              // temps normal, mais reste en défense en profondeur. La genèse
+              // reste publiée sur Drive (write-once, comme pour le dossier)
+              // mais n'est pas activée sur cet appareil.
               try { localStorage.removeItem(STORAGE_MODE_KEY); } catch (e2) {}
               try { localStorage.removeItem("piloteo_drive_root_folder_id"); } catch (e2) {}
               throw new Error(((e && e.message) || "Migration impossible.") +
@@ -834,7 +848,11 @@
       activeOrgAdapter = result.adapter || null;
       orgDriveNeedsAuth = false;
       storageMode = "org-drive";
+      // SEUL point où le mode org-drive est activé (voir en-tête) : APRÈS
+      // decideAndRunMigration réussi (round-trip vérifié) — `rootFolderId`
+      // vient de `promoteDriveOrg` (qui ne le persiste plus lui-même).
       try { localStorage.setItem(STORAGE_MODE_KEY, "org-drive"); } catch (e) {}
+      try { localStorage.setItem("piloteo_drive_root_folder_id", result.rootFolderId); } catch (e) {}
       try { if (name) localStorage.setItem(ORG_NAME_KEY, name); } catch (e) {}
       _driveOrgReady = Promise.resolve();
       _lastMigrationResult = migration;

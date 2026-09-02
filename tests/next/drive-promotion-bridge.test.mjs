@@ -431,7 +431,7 @@ test("promoteDriveOrg : rejette EXPLICITEMENT si 'workspaceId' est absent, AVANT
   await assert.rejects(() => PiloteoDrive.promoteDriveOrg({ name: "X" }), /workspaceId/);
 });
 
-test("promoteDriveOrg (chemin PUBLIC, Lot 5) : OAuth-first, crée le dossier racine Drive, promeut EN PLACE le workspace solo fourni, persiste piloteo_storage_mode/rootFolderId, identité PARTAGÉE, events solo republiés sans perte", async () => {
+test("promoteDriveOrg (chemin PUBLIC, Lot 5) : OAuth-first, crée le dossier racine Drive, promeut EN PLACE le workspace solo fourni, identité PARTAGÉE, events solo republiés sans perte", async () => {
   stubGis();
   const drive = new FakeDrive();
   const restoreFetch = routeFetchToDrive(drive);
@@ -450,12 +450,59 @@ test("promoteDriveOrg (chemin PUBLIC, Lot 5) : OAuth-first, crée le dossier rac
     assert.ok(rootNode && rootNode.name.indexOf("Pilotéo - Cabinet Mobile Drive") === 0, "le dossier racine porte bien le nom d'affichage demandé (createDriveRootFolder)");
     assert.equal(identityBefore.memberId, result.identity.memberId, "identité PARTAGÉE avec piloteo-org-bridge.mjs — jamais une 2e identité créée par le câblage Drive");
 
-    assert.equal(localStorage.getItem("piloteo_storage_mode"), "org-drive", "piloteo_storage_mode persisté après promotion réussie (même choix que createDriveOrg)");
-    assert.equal(localStorage.getItem("piloteo_drive_root_folder_id"), result.rootFolderId);
+    // CORRECTIF contrariant (axe 4, « persist-avant-vérif ») : promoteDriveOrg
+    // NE persiste PLUS piloteo_storage_mode/piloteo_drive_root_folder_id —
+    // c'est à l'appelant (local-backend.js#activateShareSpaceDrive) de le
+    // faire, UNIQUEMENT après avoir vérifié la republication des events (voir
+    // le test dédié plus bas et tests/e2e/attack-persist-before-verify-drive.mjs).
+    // Sans ce correctif, un rechargement PENDANT l'attente utilisateur de
+    // decideAndRunMigration (APRÈS ce point) aurait laissé un mode "org-drive"
+    // pointant sur un espace Drive VIDE (events jamais republiés).
+    assert.equal(localStorage.getItem("piloteo_storage_mode"), null,
+      "promoteDriveOrg N'ACTIVE PAS le mode org-drive lui-même (corrige la fenêtre de reboot cassée)");
+    assert.equal(localStorage.getItem("piloteo_drive_root_folder_id"), null,
+      "promoteDriveOrg NE persiste PAS rootFolderId lui-même (idem)");
 
     const soloSnapshot = { ...emptySnapshot(), consultants: [consultant("c-mobile", "Mobile")], saisies: [saisie("s-mobile-1", "c-mobile")] };
     const { commit } = await republishAndVerify(result.engine, soloSnapshot, workspaceId, identityBefore.memberId);
     assert.equal(commit.applied.count, 2, "les 2 entités solo (1 consultant + 1 saisie) sont republiées sur Drive via le chemin public promoteDriveOrg");
+
+    // Simule l'activation FINALE que fait local-backend.js#activateShareSpaceDrive
+    // (son SEUL .then final, APRÈS republication vérifiée ci-dessus) : le
+    // mode n'est posé QU'ICI, jamais avant.
+    localStorage.setItem("piloteo_storage_mode", "org-drive");
+    localStorage.setItem("piloteo_drive_root_folder_id", result.rootFolderId);
+    assert.equal(localStorage.getItem("piloteo_storage_mode"), "org-drive");
+    assert.equal(localStorage.getItem("piloteo_drive_root_folder_id"), result.rootFolderId);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("promoteDriveOrg (chemin PUBLIC, Lot 5) : CORRECTIF axe 4 (persist-avant-vérif) — la genèse Drive écrite AVANT toute activation locale reste ORPHELINE mais RÉCUPÉRABLE (un 'Partager' ultérieur sur le MÊME rootFolderId la répare, jamais un second owner)", async () => {
+  stubGis();
+  const drive = new FakeDrive();
+  const restoreFetch = routeFetchToDrive(drive);
+  try {
+    const workspaceId = globalThis.crypto.randomUUID();
+    const identity = await PiloteoOrg.getOrCreateIdentity();
+    localStorage.removeItem("piloteo_storage_mode");
+    localStorage.removeItem("piloteo_drive_root_folder_id");
+
+    // "Reload avant activation" simulé : promoteDriveOrg s'exécute (genèse
+    // écrite sur Drive) mais on n'active JAMAIS le mode ensuite (comme un
+    // rechargement pendant decideAndRunMigration l'aurait fait) — le mode
+    // reste solo/absent (déjà prouvé ci-dessus). Un "Partager" ultérieur
+    // recommence proprement sur le MÊME dossier.
+    const first = await PiloteoDrive.promoteDriveOrg({ workspaceId, name: "Cabinet Orphelin", consultantId: null });
+    assert.equal(localStorage.getItem("piloteo_storage_mode"), null, "mode toujours PAS activé (simule le reboot solo après un reload)");
+
+    const adapterAgain = new GoogleDriveStorageAdapter({
+      oauthTokenProvider: async () => "fake-access-token", rootFolderId: first.rootFolderId, fetchImpl: drive.fetch, sleepFn: async () => {},
+    });
+    const second = await PiloteoDrive.__promoteOrgOnAdapter({ adapter: adapterAgain, workspaceId, name: "Cabinet Orphelin", consultantId: null, identity });
+    assert.equal(second.alreadyPromoted, true, "la genèse orpheline (déjà écrite) est reconnue -> no-op sûr, jamais un second owner");
+    assert.deepEqual(second.manifest, first.manifest);
   } finally {
     restoreFetch();
   }
