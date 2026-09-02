@@ -91,7 +91,14 @@ import {
   acceptInvitation,
   createRevocation,
 } from "./src/workspace/org-runtime.js";
-import { writeManifest, writeMemberRecord, writeRevocation, readManifest, loadTrust } from "./src/workspace/org-folder-store.js";
+import {
+  writeManifest,
+  writeMemberRecord,
+  writeRevocation,
+  readManifest,
+  loadTrust,
+  memberRecordAlreadyPublished,
+} from "./src/workspace/org-folder-store.js";
 import * as cryptoService from "./src/crypto/crypto-service.js";
 
 // ---------------------------------------------------------------------------
@@ -349,7 +356,23 @@ async function isOwnerAdmitted(adapter, workspaceId, identity) {
  *      write-once, irréversible) -> republie UNIQUEMENT la fiche owner
  *      (JAMAIS un second manifeste) : la fiche est déterministe
  *      (`promoteSoloToOrg` est pure, mêmes entrées -> même sortie), la
- *      republier répare le dossier sans jamais le corrompre.
+ *      republier répare le dossier sans jamais le corrompre. CORRECTIF round
+ *      2 (repro `attack2-poisoned-owner-slot.mjs`) : une collision write-once
+ *      sur CETTE republication n'est avalée QUE si le contenu déjà présent
+ *      au slot est EXACTEMENT `org.memberRecord` (`memberRecordAlreadyPublished`,
+ *      org-folder-store.js — ma propre fiche, publiée par une tentative
+ *      antérieure dont seule la confirmation avait été perdue). Un contenu
+ *      DIVERGENT (un TIERS a occupé le slot `(member, ownerMemberId)` AVANT
+ *      ce retry — `ownerMemberId`/`ownerPublicKeyJwk` sont PUBLICS dans le
+ *      manifeste dès `writeManifest`, AUCUNE clé privée requise pour ça) fait
+ *      lever une erreur EXPLICITE et DISTINCTE (« owner contesté »), jamais
+ *      avalée ni laissée à `openOrgEngine` comme arbitre final silencieux —
+ *      sinon le dossier resterait bloqué à vie de façon indiscernable d'une
+ *      simple panne réseau non réparée, alors que CE cas EST récupérable
+ *      (retirer la fiche hostile via les permissions du dossier, puis
+ *      réessayer — ORG_TRUST_HARDENING_CONTRACT.md §3 : un DoS d'écrivain
+ *      hostile doit rester détectable et récupérable, jamais un blocage
+ *      silencieux).
  *    - `{kind:"already-promoted"}` : manifeste présent, MÊME owner, ET déjà
  *      RÉELLEMENT admis -> NO-OP sûr (rien n'est publié).
  *    - `{kind:"conflict"}` : dossier étranger ou owner différent -> lève
@@ -361,10 +384,11 @@ async function isOwnerAdmitted(adapter, workspaceId, identity) {
  * fiche membre sans manifeste n'a aucun sens, `writeMemberRecord` exige une
  * genèse déjà ancrée) ; une réparation ne fait donc QUE rejouer la SECONDE
  * moitié (`writeMemberRecord`), jamais retoucher au manifeste déjà publié.
- * Après (re)publication, `openOrgEngine` (qui échoue explicitement si
- * l'owner n'est toujours pas membre) sert de VÉRIFICATION FINALE avant de
- * considérer la promotion réussie — jamais un succès annoncé sans un engine
- * réellement ouvrable.
+ * Après (re)publication RÉELLEMENT ACCEPTÉE (round 2 : jamais après une
+ * collision hostile, qui lève AVANT d'atteindre ce point), `openOrgEngine`
+ * (qui échoue explicitement si l'owner n'est toujours pas membre) sert de
+ * VÉRIFICATION FINALE avant de considérer la promotion réussie — jamais un
+ * succès annoncé sans un engine réellement ouvrable.
  * Ne bascule PAS `piloteo_storage_mode` (même report qu'`createOrg`, voir sa
  * décision : `local-backend.js` doit d'abord republier les événements solo
  * existants — Point 5, `piloteo-migration-bridge.mjs` — et vérifier le
@@ -397,16 +421,47 @@ async function promoteToOrg({ handle, workspaceId, name, consultantId, identity 
     try {
       await writeMemberRecord(adapter, org.memberRecord);
     } catch (err) {
-      // "complete-owner" seulement : une collision write-once ICI peut être
-      // legitime (la fiche a en réalité déjà été publiée par une tentative
-      // précédente dont seule la CONFIRMATION réseau avait été perdue — cas
-      // exactement symétrique de celui que ce correctif répare). On ne
-      // masque JAMAIS une vraie erreur : `openOrgEngine` juste après reste
-      // l'arbitre final (si l'owner n'est toujours pas admis, il lève, et
-      // CETTE erreur — pas celle-ci — remonte). Pour "promote" (fiche fraîche
-      // sur un manifeste tout juste écrit PAR CET APPEL), une collision est
-      // en revanche TOUJOURS anormale : ne jamais l'avaler.
+      // "complete-owner" seulement : une collision write-once ICI est
+      // ATTENDUE (c'est précisément le cas que ce correctif répare) — mais
+      // elle a DEUX causes possibles, jamais confondues (CORRECTIF round 2,
+      // repro `attack2-poisoned-owner-slot.mjs`, ORG_TRUST_HARDENING_CONTRACT.md
+      // §3) :
+      //  (a) légitime : ma PROPRE fiche a déjà été publiée par une tentative
+      //      précédente dont seule la CONFIRMATION réseau avait été perdue —
+      //      contenu canonique IDENTIQUE à `org.memberRecord` (déterministe,
+      //      `promoteSoloToOrg` est pure) -> avaler, continuer (idempotent).
+      //  (b) hostile : un TIERS (aucune clé privée requise — `ownerMemberId`/
+      //      `ownerPublicKeyJwk` sont PUBLICS dans le manifeste dès
+      //      `writeManifest`) a occupé le slot AVANT ce retry, avec un
+      //      contenu DIVERGENT -> ne JAMAIS avaler silencieusement : lever
+      //      une erreur EXPLICITE et DISTINCTE, actionnable (retirer la
+      //      fiche hostile via les permissions du dossier), plutôt que de
+      //      laisser `openOrgEngine` ci-dessous devenir l'arbitre final —
+      //      son « n'est pas membre » redeviendrait indiscernable d'une
+      //      simple panne réseau non réparée, alors que CE cas EST réparable
+      //      (dès que la fiche hostile est retirée). Pour "promote" (fiche
+      //      fraîche sur un manifeste tout juste écrit PAR CET APPEL), une
+      //      collision reste TOUJOURS anormale : jamais avalée (voir le
+      //      `throw` inconditionnel ci-dessous pour ce cas).
       if (plan.kind !== "complete-owner") throw err;
+      // Ne tenter la distinction (a)/(b) ci-dessus QUE pour une VRAIE
+      // collision write-once (même détection que `writeManifest` ci-dessus,
+      // `/write-once/i`) : toute AUTRE erreur (panne réseau/FS persistante,
+      // permission refusée, etc. — rien n'a été écrit, aucun tiers en cause)
+      // reste une erreur ORDINAIRE, remontée TELLE QUELLE, jamais reformulée
+      // en un faux « owner contesté » qui égarerait l'utilisateur.
+      const msg = String((err && err.message) || err);
+      if (!/write-once/i.test(msg)) throw err;
+      const mine = await memberRecordAlreadyPublished(adapter, org.memberRecord);
+      if (!mine) {
+        throw new Error(
+          "promoteToOrg: le slot owner de ce dossier est occupé par une fiche tierce/hostile " +
+          "(memberId owner contesté). Retirez cette fiche du dossier partagé (permissions du " +
+          "dossier) avant de réessayer de partager cet espace."
+        );
+      }
+      // (a) : collision légitime, déjà publiée — no-op, on continue vers la
+      // vérification finale (`openOrgEngine`).
     }
   }
   // plan.kind === "already-promoted" : rien à publier (write-once déjà en

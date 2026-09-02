@@ -34,9 +34,17 @@ import {
   promoteSoloToOrg,
   planPromotion,
 } from "../../src/workspace/org-runtime.js";
-import { writeManifest, writeMemberRecord, readManifest, loadTrust } from "../../src/workspace/org-folder-store.js";
+import {
+  writeManifest,
+  writeMemberRecord,
+  readManifest,
+  loadTrust,
+  memberRecordAlreadyPublished,
+  getMemberCandidates,
+} from "../../src/workspace/org-folder-store.js";
 import { openOrgEngine } from "../../src/workspace/org-engine.js";
 import { snapshotToSeedEvents, verifyRoundTrip, diffSnapshots, planMigration } from "../../src/integration/migration.js";
+import { createMembership } from "../../src/workspace/memberships.js";
 
 const COLLECTIONS = [
   "consultants", "organisations", "affaires", "methodes", "typesTerritoire",
@@ -86,17 +94,23 @@ async function isOwnerAdmitted(adapter, workspaceId, identity) {
 
 /**
  * Réimplémentation FIDÈLE de la séquence CORRIGÉE de
- * `piloteo-org-bridge.mjs#promoteToOrg` (Lot 2 + correctif contrariant
- * « promotion interrompue qui brique le dossier à vie ») : lit le manifeste
- * déjà publié (s'il existe), calcule l'admission RÉELLE de l'owner
- * (`isOwnerAdmitted`, jamais déduite d'une simple présence de fichier),
- * délègue la DÉCISION à `planPromotion` (pure), et n'écrit QUE si la
- * décision l'autorise — `"promote"` publie manifeste + fiche owner,
- * `"complete-owner"` republie UNIQUEMENT la fiche owner manquante (JAMAIS un
- * second manifeste), `"already-promoted"` ne publie rien. Ne construit/ouvre
- * l'engine QUE si la promotion n'est pas un conflit ; `openOrgEngine` sert de
- * VÉRIFICATION FINALE (il échoue explicitement si l'owner n'est toujours pas
- * membre) avant de considérer la promotion réussie.
+ * `piloteo-org-bridge.mjs#promoteToOrg` (Lot 2 + correctifs contrariant
+ * round 1 « promotion interrompue » et round 2 « empoisonnement du slot
+ * owner par un tiers ») : lit le manifeste déjà publié (s'il existe), calcule
+ * l'admission RÉELLE de l'owner (`isOwnerAdmitted`, jamais déduite d'une
+ * simple présence de fichier), délègue la DÉCISION à `planPromotion` (pure),
+ * et n'écrit QUE si la décision l'autorise — `"promote"` publie manifeste +
+ * fiche owner, `"complete-owner"` republie UNIQUEMENT la fiche owner
+ * manquante (JAMAIS un second manifeste), `"already-promoted"` ne publie
+ * rien. Round 2 : une collision write-once pendant `"complete-owner"` n'est
+ * avalée QUE si le contenu déjà présent au slot est EXACTEMENT ma propre
+ * fiche (`memberRecordAlreadyPublished`, org-folder-store.js) — un contenu
+ * DIVERGENT (tiers/hostile) fait lever une erreur EXPLICITE et DISTINCTE,
+ * jamais laissée à `openOrgEngine` comme arbitre final. Ne construit/ouvre
+ * l'engine QUE si la promotion n'est ni un conflit ni un slot contesté ;
+ * `openOrgEngine` sert de VÉRIFICATION FINALE (il échoue explicitement si
+ * l'owner n'est toujours pas membre) avant de considérer la promotion
+ * réussie.
  */
 async function promoteToOrg({ adapter, workspaceId, name, identity, consultantId }) {
   const existingManifest = await readManifest(adapter);
@@ -113,11 +127,26 @@ async function promoteToOrg({ adapter, workspaceId, name, identity, consultantId
     try {
       await writeMemberRecord(adapter, org.memberRecord);
     } catch (err) {
-      // "complete-owner" seulement : une collision write-once ici peut être
-      // légitime (fiche déjà publiée par une tentative précédente dont seule
-      // la confirmation réseau avait été perdue) — `openOrgEngine` ci-dessous
-      // reste l'arbitre final, jamais un succès silencieux masqué.
+      // "complete-owner" seulement : une collision write-once ici est
+      // ATTENDUE, mais deux causes possibles, jamais confondues (CORRECTIF
+      // round 2) : (a) ma propre fiche déjà publiée (contenu canonique
+      // IDENTIQUE) -> avaler, continuer ; (b) un tiers/hostile a occupé le
+      // slot avec un contenu DIVERGENT -> erreur EXPLICITE et DISTINCTE,
+      // jamais avalée, jamais laissée à `openOrgEngine` comme arbitre final
+      // silencieux.
       if (plan.kind !== "complete-owner") throw err;
+      // Ne tenter la distinction "ma fiche"/"tierce" QUE pour une VRAIE
+      // collision write-once — toute autre erreur (panne persistante, etc.)
+      // reste remontée TELLE QUELLE, jamais reformulée à tort.
+      const msg = String((err && err.message) || err);
+      if (!/write-once/i.test(msg)) throw err;
+      const mine = await memberRecordAlreadyPublished(adapter, org.memberRecord);
+      if (!mine) {
+        throw new Error(
+          "promoteToOrg: le slot owner de ce dossier est occupé par une fiche tierce/hostile " +
+          "(memberId owner contesté). Retirez cette fiche du dossier partagé avant de réessayer."
+        );
+      }
     }
   }
   // plan.kind === "already-promoted" : NO-OP volontaire, rien n'est publié.
@@ -512,6 +541,175 @@ test("CORRECTIF (promotion interrompue) : la collision write-once pendant 'compl
     const trust = await loadTrust(adapter);
     assert.equal(trust.membershipStore.get(soloWorkspaceId, identity.memberId), null,
       "l'owner reste non admis tant que sa fiche n'a pas été RÉELLEMENT publiée");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 5ter. CORRECTIF CONTRARIANT ROUND 2 — repro `attack2-poisoned-owner-slot.mjs`
+//    (CASSÉ->TENU) : « empoisonnement du slot write-once de l'owner par un
+//    tiers ». `writeManifest` publie `ownerMemberId`/`ownerPublicKeyJwk` EN
+//    CLAIR (modèle « dossier de confiance », CLAUDE.md §4) : N'IMPORTE QUEL
+//    AUTRE écrivain du dossier peut les lire SANS aucune clé privée et
+//    déposer, AVANT le retry légitime, une fiche `kind:"member"` sous CE
+//    MÊME `memberId` mais avec SA PROPRE clé — occupant le slot write-once
+//    irréversiblement. Avant ce correctif, le `try/catch` de "complete-owner"
+//    avalait TOUTE collision write-once sans vérifier le contenu déjà
+//    présent : le vrai owner ne pouvait plus JAMAIS être admis (même symptôme
+//    que le round 1, "n'est pas membre", pour une cause différente).
+//
+//    Le correctif (org-folder-store.js#memberRecordAlreadyPublished) compare
+//    le contenu déjà présent au slot à la fiche owner ATTENDUE (déterministe) :
+//    - identique -> collision légitime (ma propre fiche), avalée, succès ;
+//    - divergent -> erreur EXPLICITE et DISTINCTE ("owner contesté"), JAMAIS
+//      avalée, JAMAIS laissée à `openOrgEngine` comme arbitre final —
+//      DÉTECTABLE et RÉCUPÉRABLE (ORG_TRUST_HARDENING_CONTRACT.md §3) : une
+//      fois la fiche hostile retirée (permissions du dossier), un nouveau
+//      retry doit RÉUSSIR.
+// ---------------------------------------------------------------------------
+
+test("CORRECTIF ROUND 2 (slot owner empoisonné) : un tiers occupe (member, ownerMemberId) avec une AUTRE clé -> erreur EXPLICITE distincte de 'n'est pas membre', PUIS récupérable après retrait de la fiche hostile", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piloteo-org-promotion-poisoned-"));
+  try {
+    const adapter = new FolderStorageAdapter({ fsPort: new NodeFsPort(root), label: "promotion-poisoned-test" });
+    await adapter.connect();
+    const identity = await newMemberIdentity();
+    const soloWorkspaceId = soloWorkspaceIdFixture();
+
+    // 1) Panne EXACTEMENT entre writeManifest et writeMemberRecord (état
+    //    identique au round 1, juste AVANT réparation).
+    const realPutImmutable = adapter.putImmutable.bind(adapter);
+    adapter.putImmutable = (kind, id, blob) => {
+      if (kind === "member") return Promise.reject(new Error("panne réseau simulée"));
+      return realPutImmutable(kind, id, blob);
+    };
+    await assert.rejects(
+      () => promoteToOrg({ adapter, workspaceId: soloWorkspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" }),
+      /panne réseau simulée/
+    );
+    adapter.putImmutable = realPutImmutable;
+
+    const manifestAfterFailure = await readManifest(adapter);
+    assert.ok(manifestAfterFailure, "manifeste publié (write-once, écrit avant la panne)");
+
+    // 2) L'ATTAQUANT — AUCUNE clé privée requise, memberId/ownerPublicKeyJwk
+    //    sont PUBLICS dans le manifeste — dépose une fiche "member" sous le
+    //    MÊME ownerMemberId, avec SA PROPRE clé, AVANT le retry légitime.
+    const attacker = await newMemberIdentity();
+    const hostileMembership = createMembership({
+      workspaceId: soloWorkspaceId, memberId: identity.memberId, consultantId: null, role: "owner",
+    });
+    const hostileRecord = {
+      kind: "member",
+      memberId: identity.memberId,          // usurpe le SLOT de l'owner légitime
+      publicKeyJwk: attacker.publicKeyJwk,   // MAIS avec SA PROPRE clé
+      membership: hostileMembership,
+      authorization: { genesis: true },
+    };
+    await writeMemberRecord(adapter, hostileRecord);
+
+    // 3) Retry légitime (même owner, même dossier) : DOIT donner une erreur
+    //    EXPLICITE et DISTINCTE de "n'est pas membre" — jamais un succès
+    //    silencieux, jamais une confusion avec une simple panne réseau.
+    await assert.rejects(
+      () => promoteToOrg({ adapter, workspaceId: soloWorkspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" }),
+      (err) => {
+        assert.match(err.message, /tierce|hostile|contest/i, "erreur EXPLICITE nommant le slot contesté");
+        assert.doesNotMatch(err.message, /n'est pas membre/i, "JAMAIS confondue avec le message générique 'n'est pas membre' (round 1)");
+        return true;
+      }
+    );
+
+    // Owner légitime toujours PAS admis (le slot est occupé par l'attaquant).
+    const trustAfterAttack = await loadTrust(adapter);
+    assert.equal(trustAfterAttack.membershipStore.get(soloWorkspaceId, identity.memberId), null,
+      "l'owner légitime n'est pas admis tant que le slot est occupé par la fiche hostile");
+    // L'attaquant, lui, n'est PAS admis non plus (clé publique ne correspond
+    // pas au manifeste — `genesisMismatchReason`, non régressé) : aucune
+    // usurpation réussie, juste un DoS détecté.
+    assert.equal(trustAfterAttack.rejected.length > 0, true);
+
+    // Un 2e, 3e retry SANS intervention reste bloqué de la MÊME façon
+    // explicite (jamais une boucle qui finit par "réussir" par hasard, ni un
+    // message qui se dégrade en "n'est pas membre").
+    await assert.rejects(
+      () => promoteToOrg({ adapter, workspaceId: soloWorkspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice" }),
+      /tierce|hostile|contest/i
+    );
+
+    // 4) RÉCUPÉRATION (ORG_TRUST_HARDENING_CONTRACT.md §3) : l'utilisateur
+    //    retire la fiche hostile via les permissions du DOSSIER RÉEL (hors
+    //    périmètre logiciel — CLAUDE.md §4 : supprimer le fichier physique
+    //    est exactement ce qu'un accès au dossier partagé permet).
+    await rm(join(root, "members", `${identity.memberId}.piloteo`), { force: true });
+
+    // Un nouveau retry doit désormais RÉUSSIR : republier la vraie fiche
+    // owner, l'admettre, et permettre l'écriture.
+    const { engine, plan } = await promoteToOrg({
+      adapter, workspaceId: soloWorkspaceId, name: "Cabinet Alice", identity, consultantId: "c-alice",
+    });
+    assert.equal(plan.kind, "complete-owner", "la réparation republie la fiche owner manquante, une fois le slot libéré");
+    assert.equal(engine.manifest.workspaceId, soloWorkspaceId);
+
+    const trustFinal = await loadTrust(adapter);
+    const ownerMembership = trustFinal.membershipStore.get(soloWorkspaceId, identity.memberId);
+    assert.ok(ownerMembership, "l'owner LÉGITIME est enfin admis après retrait de la fiche hostile");
+    assert.equal(ownerMembership.role, "owner");
+    assert.equal(ownerMembership.status, "active");
+
+    const loaded = await engine.load();
+    const commit = await engine.commit({
+      ...loaded.state,
+      consultants: [...loaded.state.consultants, { id: "c-alice", nom: "Alice", trigramme: "ALI", statut: "en poste", admin: true, tempsPartiel: [] }],
+    });
+    assert.equal(commit.ok, true, "l'owner réparé peut désormais ÉCRIRE dans son propre workspace");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("org-folder-store#memberRecordAlreadyPublished : vrai pour un contenu IDENTIQUE, faux pour un contenu DIVERGENT ou un slot vide", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piloteo-org-promotion-alreadypub-"));
+  try {
+    const adapter = new FolderStorageAdapter({ fsPort: new NodeFsPort(root), label: "alreadypub-test" });
+    await adapter.connect();
+    const identity = await newMemberIdentity();
+    const soloWorkspaceId = soloWorkspaceIdFixture();
+    const org = promoteSoloToOrg({ workspaceId: soloWorkspaceId, name: "X", identity, consultantId: null });
+
+    // Slot vide : jamais "déjà publiée".
+    assert.equal(await memberRecordAlreadyPublished(adapter, org.memberRecord), false);
+    assert.deepEqual(await getMemberCandidates(adapter, identity.memberId), []);
+
+    await writeMemberRecord(adapter, org.memberRecord);
+    assert.equal(await memberRecordAlreadyPublished(adapter, org.memberRecord), true,
+      "contenu canonique identique -> reconnu comme déjà publié");
+    assert.equal((await getMemberCandidates(adapter, identity.memberId)).length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("org-folder-store#memberRecordAlreadyPublished : un slot occupé par un TIERS (clé différente) n'est JAMAIS reconnu comme 'déjà publié'", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piloteo-org-promotion-alreadypub-hostile-"));
+  try {
+    const adapter = new FolderStorageAdapter({ fsPort: new NodeFsPort(root), label: "alreadypub-hostile-test" });
+    await adapter.connect();
+    const owner = await newMemberIdentity();
+    const attacker = await newMemberIdentity();
+    const soloWorkspaceId = soloWorkspaceIdFixture();
+    const ownerOrg = promoteSoloToOrg({ workspaceId: soloWorkspaceId, name: "X", identity: owner, consultantId: null });
+
+    const hostileMembership = createMembership({ workspaceId: soloWorkspaceId, memberId: owner.memberId, consultantId: null, role: "owner" });
+    const hostileRecord = {
+      kind: "member", memberId: owner.memberId, publicKeyJwk: attacker.publicKeyJwk,
+      membership: hostileMembership, authorization: { genesis: true },
+    };
+    await writeMemberRecord(adapter, hostileRecord);
+
+    assert.equal(await memberRecordAlreadyPublished(adapter, ownerOrg.memberRecord), false,
+      "la fiche hostile (clé différente) n'est JAMAIS confondue avec la vraie fiche owner");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
