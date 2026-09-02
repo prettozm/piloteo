@@ -198,6 +198,65 @@ nom, NI consultant/scope.
 
 ---
 
+## Lot 5 — « Partager cet espace » vers Google Drive (promotion en place, mobile)
+
+**Constat.** Le Lot 2 a livré la promotion en place (MÊME `workspaceId`) pour le
+mode **dossier** uniquement (`promoteToOrg` construit un `FolderStorageAdapter`
+via `buildAdapter(handle)`). Le cœur (`promoteSoloToOrg`/`planPromotion` +
+collision selon le contenu + comparaison canonique + garde manifeste) est déjà
+DURCI et testé pour Drive (rounds contrariant). Il ne manque que le **câblage
+Drive** : offrir Google Drive comme destination de « Partager cet espace », pour
+promouvoir un espace solo EXISTANT vers Drive (utilisable sur mobile, là où File
+System Access échoue). Créer une org NEUVE sur Drive existe déjà (`createDriveOrg`).
+
+**Exigence.** Dans le dialogue « Partager cet espace » (Réglages, solo), proposer
+Dossier ET Google Drive (comme l'ancien onboarding « Créer une organisation »).
+Le chemin Drive :
+1. **Ordre OAuth d'abord** (préserver l'activation utilisateur — leçon Drive
+   onboarding) : `oauthTokenProvider()` est le PREMIER await, DANS le geste
+   utilisateur, avant tout accès IndexedDB (workspaceId solo) qui consommerait
+   l'activation. Réutiliser le patron de `createDriveOrg`/`ensureDriveOrgReady`.
+2. `createDriveRootFolder(name)` → `GoogleDriveStorageAdapter`.
+3. Exécuter la MÊME logique de promotion que le mode dossier, en réutilisant le
+   cœur `promoteToOrg`/`promoteSoloToOrg`/`planPromotion` — factoriser si besoin
+   pour que le cœur accepte un `adapter` (ou une fonction qui le fournit) au lieu
+   d'un `handle` codé en dur. Le `workspaceId` solo (via
+   `getOrCreateSoloWorkspaceId`) est PRÉSERVÉ ; les events solo sont republiés
+   sur le `GoogleDriveStorageAdapter` (pipeline Point 5, `verifyRoundTrip` avant
+   bascule) ; owner = identité solo.
+4. Bascule `piloteo_storage_mode` sur `org-drive` APRÈS aller-retour vérifié ;
+   échec ⇒ rollback (rester solo, données intactes, `piloteo_drive_root_folder_id`
+   nettoyé comme le fait déjà le rollback de `createDriveOrg`).
+
+**Invariants (oracle) — identiques au Lot 2, en Drive :** `workspaceId` préservé ;
+aucune perte/duplication ; manifeste write-once + idempotence (`complete-owner`
+en cas d'interruption) ; collision de slot owner par un tiers → erreur explicite
+détectable+récupérable (JAMAIS brick silencieux ni usurpation) ; comparaison de
+clés canonique (pas de faux « propriétaire différent » en Drive). Toute la
+robustesse déjà bâtie au Lot 2 doit s'appliquer telle quelle, PAS être
+ré-implémentée ni affaiblie.
+
+**Contrainte.** `app.js`/`server.py` intacts. Réutiliser au MAXIMUM le cœur
+existant (`piloteo-org-bridge.mjs#promoteToOrg` et ses helpers) — le câblage Drive
+ne doit PAS dupliquer la logique de décision `planPromotion` ni la gestion de
+collision : soit le cœur est rendu adapter-agnostique et le pont Drive lui passe
+un `GoogleDriveStorageAdapter`, soit `piloteo-drive-bridge.mjs` importe et appelle
+le même cœur. `createDriveOrg` (org neuve) reste inchangé et fonctionnel.
+
+**Tests.**
+- unit (`tests/next/`) : promotion vers Drive via `GoogleDriveStorageAdapter`
+  (+ `FakeDrive`) — workspaceId préservé, events republiés, owner = identité
+  solo, idempotence/`complete-owner`, collision tierce → erreur explicite
+  récupérable, canonical (pas de faux conflict). Réutiliser/étendre
+  `org-promotion.test.mjs`.
+- e2e (Chromium) : le dialogue « Partager cet espace » propose Drive ; un flux
+  Drive stubbé (réseau) promeut sans perte, `storageMode` = `org-drive` après
+  succès, rollback si échec (solo intact) — style `org-onboarding-drive.mjs`.
+- non-régression : promotion dossier (Lot 2) et `createDriveOrg` inchangés ;
+  `npm run test:next` vert.
+
+---
+
 ## Contraintes transverses (toutes les lots)
 - `app.js`/`server.py` INTACTS. Aucun secret dans le dépôt.
 - `npm run test:next` reste vert (435 actuellement) ; e2e Chromium verts.
