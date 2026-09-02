@@ -375,8 +375,10 @@ function createDriveEngine({ rootFolderId, driveId } = {}) {
 //   déclencher `requestAccessToken()`. JAMAIS d'appel interactif hors geste.
 // ---------------------------------------------------------------------------
 
-const DRIVE_STORAGE_MODE_KEY = "piloteo_storage_mode"; // partagé avec les autres ponts (un seul mode actif à la fois)
-const DRIVE_ROOT_FOLDER_ID_KEY = "piloteo_drive_root_folder_id"; // localStorage : id Drive du dossier racine de l'org active
+// "piloteo_storage_mode" (partagé avec les autres ponts) n'a plus de constante
+// dédiée ici (CORRECTIF axe 4) : ce module ne l'écrit plus jamais lui-même —
+// voir le commentaire au-dessus de `loadStoredRootFolderId` ci-dessous.
+const DRIVE_ROOT_FOLDER_ID_KEY = "piloteo_drive_root_folder_id"; // localStorage : id Drive du dossier racine de l'org active (LECTURE seule ici)
 
 /** `window.PiloteoOrg`, si chargé — jamais mis en cache (lookup à chaque appel, cf. décision ci-dessus). */
 function orgBridge() {
@@ -395,10 +397,13 @@ async function getSharedIdentity() {
   return PO.getOrCreateIdentity();
 }
 
-function persistDriveOrgMode(rootFolderId) {
-  try { localStorage.setItem(DRIVE_STORAGE_MODE_KEY, "org-drive"); } catch (e) { /* localStorage indisponible : dégradé, pas bloquant */ }
-  try { localStorage.setItem(DRIVE_ROOT_FOLDER_ID_KEY, rootFolderId); } catch (e) { /* idem */ }
-}
+// CORRECTIF contrariant (axe 4, « persist-avant-vérif ») : il n'existe plus
+// de fonction `persistDriveOrgMode` dans ce module — NI `createDriveOrg` NI
+// `promoteDriveOrg` ne persistent plus `piloteo_storage_mode`/
+// `piloteo_drive_root_folder_id` elles-mêmes (voir leurs docstrings
+// respectives) : c'est `local-backend.js` (`activateCreateOrgDrive`/
+// `activateShareSpaceDrive`) qui le fait, UNIQUEMENT dans son `.then` final,
+// APRÈS que la migration Point 5 a été vérifiée — jamais avant.
 function loadStoredRootFolderId() {
   try { return localStorage.getItem(DRIVE_ROOT_FOLDER_ID_KEY) || null; } catch (e) { return null; }
 }
@@ -561,7 +566,34 @@ async function promoteDriveOrg({ workspaceId, name, consultantId, identity } = {
  * `oauthTokenProvider()` (déclenche le consentement si besoin, DANS le geste
  * utilisateur qui a appelé cette fonction) → `createDriveRootFolder(name)` →
  * `GoogleDriveStorageAdapter` → même chaîne d'org que `createOrgOnAdapter`.
- * Persiste `piloteo_storage_mode="org-drive"` + `rootFolderId` pour la reprise.
+ *
+ * Persistance — CORRECTIF contrariant (axe 4, « persist-avant-vérif »,
+ * appliqué ici en second temps après le même correctif sur `promoteDriveOrg`
+ * ci-dessus — décision : le défaut était IDENTIQUE sur ce chemin, un chemin
+ * LIVE testé sur mobile) : cette fonction n'appelle PLUS
+ * `persistDriveOrgMode(rootFolderId)`. Avant ce correctif, le drapeau
+ * `piloteo_storage_mode="org-drive"`/`piloteo_drive_root_folder_id` était posé
+ * DÈS la genèse écrite sur Drive — AVANT que `local-backend.js#activateCreateOrgDrive`
+ * n'ait republié les événements solo via `decideAndRunMigration` (Point 5),
+ * qui affiche `showMigrationIntroStep` et ATTEND un clic utilisateur
+ * (« Continuer »). Un rechargement/une fermeture d'onglet PENDANT cette
+ * attente tue le JS avant que le `.catch` de rollback de l'appelant ne
+ * s'exécute : au reboot, le mode aurait déjà été "org-drive"
+ * (`resumeDriveOrg` aurait réussi, owner légitimement admis, PAS
+ * d'usurpation) mais l'org aurait été VIDE (events jamais republiés) ->
+ * `app.js` aurait refusé le démarrage (« Compte non rattaché à un
+ * consultant »), un symptôme SANS RAPPORT avec la cause réelle. Cette
+ * fonction se contente désormais d'écrire la genèse sur Drive (write-once,
+ * irréversible dès ce point — un rechargement après ce point laisse une
+ * genèse Drive ORPHELINE mais INOFFENSIVE : un nouveau « Créer une
+ * organisation » recommence proprement, `openOrgEngine`/`buildTrustedMembership`
+ * admettent l'owner sans qu'aucune fiche/mode ne pointe encore dessus) et
+ * RENVOIE `rootFolderId`/`webViewLink` à l'appelant — c'est à
+ * `local-backend.js#activateCreateOrgDrive` de persister
+ * `piloteo_storage_mode`/`piloteo_drive_root_folder_id` UNIQUEMENT dans son
+ * `.then` FINAL, APRÈS que `decideAndRunMigration` a réussi (round-trip
+ * vérifié) — exactement comme `activateShareSpaceDrive`/`activateShareSpace`
+ * le font déjà.
  * @returns {Promise<{engine:object, adapter:GoogleDriveStorageAdapter, manifest:object, rootFolderId:string, webViewLink:string|null}>}
  */
 async function createDriveOrg({ name, consultantId, identity } = {}) {
@@ -572,7 +604,8 @@ async function createDriveOrg({ name, consultantId, identity } = {}) {
   const { rootFolderId, webViewLink } = await createDriveRootFolder(name);
   const adapter = new GoogleDriveStorageAdapter({ oauthTokenProvider, rootFolderId });
   const result = await createOrgOnAdapter({ adapter, name, consultantId, identity });
-  persistDriveOrgMode(rootFolderId);
+  // PAS de persistDriveOrgMode() ici (voir docstring, CORRECTIF axe 4) —
+  // l'appelant active le mode UNIQUEMENT après vérification du round-trip.
   return Object.assign({}, result, { rootFolderId, webViewLink });
 }
 
